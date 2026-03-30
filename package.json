@@ -1,0 +1,33 @@
+{
+  "name": "universal-pos",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "generate:openapi": "turbo run generate:openapi --filter=@universal-pos/api",
+    "db:migrate": "turbo run db:migrate --filter=@universal-pos/database-schema",
+    "db:seed": "turbo run db:seed --filter=@universal-pos/database-schema",
+    "db:generate": "turbo run db:generate --filter=@universal-pos/database-schema"
+  },
+  "devDependencies": {
+    "prettier": "^3.x",
+    "turbo": "^2.x",
+    "typescript": "^5.x"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "packageManager": "npm@10.0.0",
+  "dependencies": {
+    "rxjs": "^7.8.1"
+  }
+}

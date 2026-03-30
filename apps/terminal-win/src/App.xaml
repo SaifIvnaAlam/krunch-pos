@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="TerminalWin.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:TerminalWin.Converters">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:InverseBoolConverter x:Key="InverseBoolConverter" />
+            <converters:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+            <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <converters:HexColorToBrushConverter x:Key="HexColorToBrushConverter" />
+            <converters:BoolToBrushConverter x:Key="BoolToBrushConverter" />
+            <converters:StringMatchToBrushConverter x:Key="StringMatchToBrush" />
+            <converters:StringMatchToFgConverter x:Key="StringMatchToFg" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

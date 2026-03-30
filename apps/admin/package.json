@@ -1,0 +1,44 @@
+{
+  "name": "@universal-pos/admin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "jest"
+  },
+  "dependencies": {
+    "next": "^14.x",
+    "react": "^18.x",
+    "react-dom": "^18.x",
+    "next-auth": "^4.x",
+    "@tanstack/react-query": "^5.x",
+    "zustand": "^4.x",
+    "recharts": "^2.x",
+    "@radix-ui/react-dialog": "^1.x",
+    "@radix-ui/react-dropdown-menu": "^2.x",
+    "@radix-ui/react-select": "^2.x",
+    "@radix-ui/react-tabs": "^1.x",
+    "@radix-ui/react-toast": "^1.x",
+    "@radix-ui/react-switch": "^1.x",
+    "@radix-ui/react-label": "^2.x",
+    "@radix-ui/react-slot": "^1.x",
+    "tailwindcss": "^3.x",
+    "autoprefixer": "^10.x",
+    "postcss": "^8.x",
+    "class-variance-authority": "^0.7.x",
+    "clsx": "^2.x",
+    "tailwind-merge": "^2.x",
+    "lucide-react": "^0.x"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/react": "^18.x",
+    "@types/react-dom": "^18.x",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.x",
+    "typescript": "^5.x"
+  }
+}

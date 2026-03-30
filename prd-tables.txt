@@ -1,0 +1,868 @@
+=== TABLE 1 ===
+Version | 4.0 ΓÇö Auth, RBAC & Permission System
+Status | Approved for Development
+Date | 2025
+Database | Supabase (PostgreSQL 16)
+Desktop | WinUI 3 (.NET 8)  +  Qt 6 (C++)
+Mobile | SwiftUI (Swift / iPad)
+Backend | NestJS Microservices (TypeScript)
+Auth Method | PIN + NFC Card + Face ID / Touch ID
+Auth Tokens | JWT Access (15min) + Refresh (8hr shift)
+Permissions | Branch-scoped RBAC + Custom Roles + Elevation
+Arch | Native-First, Contract-Driven Monorepo
+
+=== TABLE 2 ===
+App | Language | Framework | Use Case
+terminal-win | C# | WinUI 3 / .NET 8 | Modern Windows 10/11 POS terminals
+terminal-qt | C++ | Qt 6 / QML | Low-spec, ARM, Linux POS hardware
+ios | Swift | SwiftUI | iPad roaming server / mobile POS
+api | TypeScript | NestJS | Cloud microservices backend
+admin | TypeScript | Next.js 14 | Owner / multi-branch web dashboard
+
+=== TABLE 3 ===
+< 50ms
+Local Latency | 100%
+Offline Uptime | < 10s
+Resync Time | 60fps
+UI Frame Rate
+
+=== TABLE 4 ===
+CLOUD LAYER
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+NestJS Microservices (Node.js / TypeScript)
+Auth | RBAC | Orders | Menu | Inventory | Payments | Sync
+
+Supabase ΓÇö PostgreSQL 16
+Primary DB + Read Replicas + Realtime + Row Level Security
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+REST + WebSocket (OpenAPI contract)
+ΓöîΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö¼ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÉ
+Γû╝                  Γû╝                  Γû╝
+WinUI 3 / C#        Qt 6 / C++        SwiftUI / Swift
+PIN + NFC login     PIN + NFC login   PIN + Face ID
+JWT token cache     JWT token cache   JWT token cache
+SQLite offline      SQLite offline    SQLite offline
+
+=== TABLE 5 ===
+Staff ΓåÆ Terminal (PIN/NFC/Biometric)
+Γöé
+Γû╝
+Auth Service  ΓöÇΓöÇΓû║ Supabase staff table (verify PIN hash)
+Γöé
+Γû╝
+Issue JWT pair: { accessToken (15min), refreshToken (8hr) }
+Γöé
+Γö£ΓöÇΓöÇΓû║ Store encrypted in terminal SQLite (offline cache)
+Γöé
+Γû╝
+All API calls include: Authorization: Bearer <accessToken>
+Γöé
+Γû╝
+RBAC Guard on every microservice
+ΓööΓöÇΓöÇ Validate token signature
+ΓööΓöÇΓöÇ Check role + branch scope
+ΓööΓöÇΓöÇ Check permission flags
+ΓööΓöÇΓöÇ Allow or 403 Forbidden
+
+=== TABLE 6 ===
+Concern | WinUI 3 | Qt 6 | SwiftUI | Backend
+Login UI | XAML PIN pad | QML PIN pad | SwiftUI PIN pad | ΓÇö
+NFC login | Windows.SmartCards | Qt6::Nfc | CoreNFC | ΓÇö
+Biometric | Windows Hello | ΓÇö | Face ID/Touch ID | ΓÇö
+Token cache | Encrypted SQLite | Encrypted SQLite | Encrypted SQLite | Issues tokens
+Offline auth | PBKDF2 hash verify | PBKDF2 hash verify | PBKDF2 hash verify | N/A
+Permission check | Local role cache | Local role cache | Local role cache | RBAC Guard
+CRDT Sync | C# impl | C++ impl | Swift impl | TS reference
+
+=== TABLE 7 ===
+Package | Version | Purpose
+@nestjs/core | ^10.x | Core framework
+@nestjs/swagger | ^7.x | OpenAPI spec generation ΓÇö critical for all clients
+@nestjs/jwt | ^10.x | JWT signing and verification
+@nestjs/passport | ^10.x | Authentication strategy middleware
+passport-local | ^1.x | PIN/password authentication strategy
+@nestjs/microservices | ^10.x | Service-to-service communication
+@nestjs/websockets | ^10.x | WebSocket CRDT sync gateway
+@nestjs/bull | ^10.x | Queue: orders, kitchen, token refresh
+@prisma/client | ^5.x | Supabase / PostgreSQL ORM
+prisma | ^5.x | Schema management and migrations
+ioredis | ^5.x | Redis ΓÇö pub/sub, token blacklist, session store
+socket.io | ^4.x | WebSocket with auto-reconnect
+bcrypt | ^5.x | PIN hashing (cost factor 10)
+zod | ^3.x | Runtime schema validation
+jose | ^5.x | JWT low-level operations
+@casl/ability | ^6.x | Fine-grained permission evaluation library
+
+=== TABLE 8 ===
+Package | Version | Purpose
+Microsoft.WindowsAppSDK | ^1.5 | WinUI 3 ΓÇö DirectX renderer
+NSwag.MSBuild | ^14.x | C# API client from OpenAPI spec
+Microsoft.Data.Sqlite | ^8.x | SQLite ΓÇö token cache + offline queue
+CommunityToolkit.Mvvm | ^8.x | MVVM pattern, observable properties
+System.IdentityModel.Tokens.Jwt | ^7.x | Offline JWT signature validation
+Windows.Devices.SmartCards | native | NFC / smart card reader access
+Microsoft.AspNetCore.SignalR.Client | ^8.x | WebSocket sync client
+SkiaSharp | ^2.x | 2D graphics, receipt rendering
+Stripe.net | ^44.x | Stripe Terminal .NET SDK
+System.IO.Ports | ^8.x | Serial / USB peripheral access
+
+=== TABLE 9 ===
+Library | Version | Purpose
+Qt6::Core + Qt6::Quick | ^6.6 | Core framework + QML renderer
+Qt6::Network + Qt6::WebSockets | ^6.6 | HTTP + WebSocket sync
+Qt6::Sql (QSQLITE) | ^6.6 | SQLite ΓÇö token cache + offline queue
+Qt6::Nfc | ^6.6 | NFC card reading for staff login
+Qt6::SerialPort | ^6.6 | USB / serial peripheral access
+libjwt | ^1.x | JWT validation for offline auth
+openapi-generator (cpp-qt) | ^7.x | C++ API client generation
+libcurl | ^8.x | HTTP client fallback
+
+=== TABLE 10 ===
+Package | Version | Purpose
+SwiftUI | Native | Primary UI ΓÇö Metal / CoreAnimation
+GRDB.swift | ^6.x | SQLite ΓÇö token cache + offline queue
+Starscream | ^4.x | WebSocket sync client
+openapi-generator (swift5) | ^7.x | Swift API client generation
+LocalAuthentication (native) | Native | Face ID / Touch ID biometric login
+CoreNFC (native) | Native | NFC staff card reading
+stripe-ios | ^23.x | Stripe Terminal iOS SDK
+StarIO_Extension | latest | Star Micronics printer SDK
+CoreHaptics (native) | Native | Rich haptic feedback patterns
+
+=== TABLE 11 ===
+universal-pos/
+Γö£ΓöÇΓöÇ Makefile
+Γö£ΓöÇΓöÇ turbo.json                    # JS/TS pipeline only (api + admin)
+Γö£ΓöÇΓöÇ openapi.json                  # Auto-generated ΓÇö NEVER EDIT MANUALLY
+Γöé
+Γö£ΓöÇΓöÇ apps/
+Γöé   Γö£ΓöÇΓöÇ api/
+Γöé   Γöé   ΓööΓöÇΓöÇ src/modules/
+Γöé   Γöé       Γö£ΓöÇΓöÇ auth/             # Login, JWT issue, refresh, logout
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ auth.service.ts
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ auth.controller.ts
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ jwt.strategy.ts
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ pin.strategy.ts
+Γöé   Γöé       Γöé   ΓööΓöÇΓöÇ offline-token.service.ts
+Γöé   Γöé       Γö£ΓöÇΓöÇ rbac/             # Roles, permissions, branch scope
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ rbac.module.ts
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ roles.service.ts
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ permissions.service.ts
+Γöé   Γöé       Γöé   ΓööΓöÇΓöÇ rbac.guard.ts
+Γöé   Γöé       Γö£ΓöÇΓöÇ staff/            # Staff profiles, shifts, multi-role
+Γöé   Γöé       Γö£ΓöÇΓöÇ audit/            # Immutable action audit log
+Γöé   Γöé       Γö£ΓöÇΓöÇ orders/
+Γöé   Γöé       Γö£ΓöÇΓöÇ menu/
+Γöé   Γöé       Γö£ΓöÇΓöÇ inventory/
+Γöé   Γöé       Γö£ΓöÇΓöÇ payments/
+Γöé   Γöé       Γö£ΓöÇΓöÇ branches/
+Γöé   Γöé       Γö£ΓöÇΓöÇ kitchen/
+Γöé   Γöé       ΓööΓöÇΓöÇ sync/
+Γöé   Γöé
+Γöé   Γö£ΓöÇΓöÇ terminal-win/             # WinUI 3 / C# / .NET 8
+Γöé   Γöé   ΓööΓöÇΓöÇ src/
+Γöé   Γöé       Γö£ΓöÇΓöÇ Auth/
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ PinLoginView.xaml
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ NfcLoginService.cs
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ OfflineTokenCache.cs
+Γöé   Γöé       Γöé   ΓööΓöÇΓöÇ SessionManager.cs
+Γöé   Γöé       Γö£ΓöÇΓöÇ Views/
+Γöé   Γöé       Γö£ΓöÇΓöÇ Services/
+Γöé   Γöé       ΓööΓöÇΓöÇ Generated/        # NSwag ΓÇö DO NOT EDIT
+Γöé   Γöé
+Γöé   Γö£ΓöÇΓöÇ terminal-qt/              # Qt 6 / C++
+Γöé   Γöé   ΓööΓöÇΓöÇ src/
+Γöé   Γöé       Γö£ΓöÇΓöÇ auth/
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ PinLoginView.qml
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ NfcLoginService.cpp
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ OfflineTokenCache.cpp
+Γöé   Γöé       Γöé   ΓööΓöÇΓöÇ SessionManager.cpp
+Γöé   Γöé       Γö£ΓöÇΓöÇ views/
+Γöé   Γöé       Γö£ΓöÇΓöÇ services/
+Γöé   Γöé       ΓööΓöÇΓöÇ generated/        # openapi-gen ΓÇö DO NOT EDIT
+Γöé   Γöé
+Γöé   Γö£ΓöÇΓöÇ ios/
+Γöé   Γöé   ΓööΓöÇΓöÇ Sources/
+Γöé   Γöé       Γö£ΓöÇΓöÇ Auth/
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ PinLoginView.swift
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ BiometricAuthService.swift
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ NfcLoginService.swift
+Γöé   Γöé       Γöé   Γö£ΓöÇΓöÇ OfflineTokenCache.swift
+Γöé   Γöé       Γöé   ΓööΓöÇΓöÇ SessionManager.swift
+Γöé   Γöé       Γö£ΓöÇΓöÇ Views/
+Γöé   Γöé       Γö£ΓöÇΓöÇ Services/
+Γöé   Γöé       ΓööΓöÇΓöÇ Generated/        # openapi-gen ΓÇö DO NOT EDIT
+Γöé   Γöé
+Γöé   ΓööΓöÇΓöÇ admin/
+Γöé       ΓööΓöÇΓöÇ app/
+Γöé           Γö£ΓöÇΓöÇ (auth)/login/
+Γöé           Γö£ΓöÇΓöÇ dashboard/
+Γöé           Γö£ΓöÇΓöÇ staff/
+Γöé           Γöé   Γö£ΓöÇΓöÇ page.tsx      # Staff list
+Γöé           Γöé   Γö£ΓöÇΓöÇ [id]/page.tsx # Edit staff, assign roles
+Γöé           Γöé   ΓööΓöÇΓöÇ roles/        # Role & permission management
+Γöé           Γöé       Γö£ΓöÇΓöÇ page.tsx
+Γöé           Γöé       ΓööΓöÇΓöÇ [roleId]/page.tsx
+Γöé           Γö£ΓöÇΓöÇ branches/
+Γöé           Γö£ΓöÇΓöÇ menu-builder/
+Γöé           ΓööΓöÇΓöÇ reports/
+Γöé
+ΓööΓöÇΓöÇ packages/
+Γö£ΓöÇΓöÇ types/
+Γöé   ΓööΓöÇΓöÇ src/
+Γöé       Γö£ΓöÇΓöÇ auth.types.ts     # Token, session, login method types
+Γöé       Γö£ΓöÇΓöÇ rbac.types.ts     # Role, permission, scope types
+Γöé       Γö£ΓöÇΓöÇ order.types.ts
+Γöé       Γö£ΓöÇΓöÇ menu.types.ts
+Γöé       ΓööΓöÇΓöÇ sync.types.ts
+Γö£ΓöÇΓöÇ sync-spec/                # CRDT algorithm spec + reference impl
+ΓööΓöÇΓöÇ database-schema/          # Prisma schema
+
+=== TABLE 12 ===
+Method | Platform | Speed | Works Offline | Best For
+4ΓÇô6 digit PIN | All platforms | < 3s | Yes | Universal ΓÇö all staff
+NFC Staff Card | WinUI 3, Qt | < 1s | Yes | Counter staff, high-turnover QSR
+Face ID / Touch ID | iOS only | < 1s | Yes (cached) | Roaming servers on iPad
+
+=== TABLE 13 ===
+STEP 1 ΓÇö Staff enters PIN on terminal login screen
+
+STEP 2 ΓÇö Terminal sends:
+POST /api/v1/auth/login
+Body: { staffId: "uuid", pin: "1234", terminalId: "uuid", branchId: "uuid" }
+
+STEP 3 ΓÇö Auth Service:
+a. Look up staff record in Supabase
+b. Verify bcrypt(pin, storedHash) = true
+c. Check staff is active and shift is currently valid
+d. Load staff roles and permissions for this branch
+e. Issue JWT pair:
+accessToken:  { staffId, branchId, roles[], permissions[], exp: now+15min }
+refreshToken: { staffId, branchId, exp: now+8hr (one shift) }
+
+STEP 4 ΓÇö Response to terminal:
+{ accessToken, refreshToken, staffProfile, roles[], permissions[] }
+
+STEP 5 ΓÇö Terminal stores in encrypted SQLite:
+{ accessToken, refreshToken, pinHash (PBKDF2), roles, permissions, expiresAt }
+
+STEP 6 ΓÇö Terminal renders home screen filtered by the staff member's permissions
+
+=== TABLE 14 ===
+STEP 1 ΓÇö Staff taps NFC card on reader
+
+STEP 2 ΓÇö Terminal reads card UID (unique hardware identifier)
+
+STEP 3 ΓÇö Terminal sends:
+POST /api/v1/auth/login/nfc
+Body: { cardUid: "hex-string", terminalId: "uuid", branchId: "uuid" }
+
+STEP 4 ΓÇö Auth Service:
+a. Look up staff record by cardUid in Supabase
+b. Verify card is active and not revoked
+c. Check shift validity
+d. Issue JWT pair (same as PIN flow above)
+
+STEP 5ΓÇô6 ΓÇö Same as PIN flow
+
+=== TABLE 15 ===
+STEP 1 ΓÇö Staff taps their avatar on the iPad login screen
+
+STEP 2 ΓÇö iOS LocalAuthentication framework triggers Face ID / Touch ID prompt
+
+STEP 3 ΓÇö On biometric success, retrieve stored refreshToken for this staff member
+from the iOS Keychain (encrypted hardware-backed storage)
+
+STEP 4 ΓÇö Terminal sends:
+POST /api/v1/auth/refresh
+Body: { refreshToken: "stored-token" }
+
+STEP 5 ΓÇö Auth Service issues new accessToken (15min)
+
+STEP 6 ΓÇö Terminal is now logged in ΓÇö no PIN required
+
+=== TABLE 16 ===
+STEP 1 ΓÇö Terminal detects OFFLINE_MODE (3s WebSocket timeout)
+Status bar shows amber offline indicator
+
+STEP 2 ΓÇö Staff enters PIN on login screen
+
+STEP 3 ΓÇö Terminal looks up staff in local SQLite offline_auth_cache:
+SELECT * FROM offline_auth_cache WHERE staffId = ?
+
+STEP 4 ΓÇö Verify PIN locally:
+a. Compute PBKDF2(enteredPin, storedSalt, 100000 iterations, SHA-256)
+b. Compare to stored PBKDF2 hash in SQLite
+c. If match: PASS. If no match: increment failCount.
+
+STEP 5 ΓÇö If failCount >= 5:
+a. Lock terminal for this staff member for 60 seconds
+b. Log failed attempt in offline_audit_log
+
+STEP 6 ΓÇö If PIN verified:
+a. Decode cached JWT (no network call needed ΓÇö just decode the payload)
+b. Check cached roles and permissions
+c. If cachedToken.exp < now AND > (now - 8hr grace):
+Allow login with cached permissions (grace period)
+d. If cachedToken.exp < (now - 8hr):
+Reject ΓÇö token too stale, manager PIN required to unlock
+
+STEP 7 ΓÇö All actions taken offline are tagged: { offlineAuth: true }
+These are included in the offline_log and synced on reconnection
+
+STEP 8 ΓÇö On reconnect: full online auth flow runs silently in background
+Fresh tokens replace cached tokens
+
+=== TABLE 17 ===
+Token | Expiry | Storage | Purpose
+Access Token | 15 minutes | Memory only (never disk) | Sent with every API call
+Refresh Token | 8 hours (1 shift) | Encrypted SQLite / iOS Keychain | Issues new access tokens
+Offline Cache Token | 8hr grace after expiry | Encrypted SQLite | Offline PIN verification only
+
+=== TABLE 18 ===
+Every API call checks: is accessToken expiring within 2 minutes?
+YES ΓåÆ  POST /api/v1/auth/refresh  { refreshToken }
+Response: { accessToken (new 15min) }
+Replace in memory silently ΓÇö staff sees nothing
+
+accessToken expires and no refresh possible (offline > 8hr):
+Show lock screen
+Require manager PIN to unlock terminal
+
+=== TABLE 19 ===
+STAFF LOGOUT (voluntary):
+1. Staff taps "Log Out" button
+2. Terminal clears accessToken from memory
+3. Terminal sends POST /api/v1/auth/logout { refreshToken }
+4. Server adds refreshToken to Redis blacklist (TTL = remaining expiry)
+5. Terminal returns to login screen
+
+SHIFT END (automatic):
+1. Shift end time reached (from staff schedule)
+2. Terminal triggers automatic logout flow above
+3. Any open orders are flagged for handover
+
+FORCE LOGOUT (manager action from admin dashboard):
+1. Manager clicks "Force Logout" on staff member in admin
+2. Server blacklists all active tokens for that staffId
+3. Terminal receives logout push via WebSocket sync gateway
+4. Terminal clears session immediately
+
+=== TABLE 20 ===
+Role | Scope | Description
+SUPER_ADMIN | Global | Full system access. Anthropic/vendor level. Cannot be assigned by owner.
+OWNER | Global | Full access across all branches. Assigns admins. Views all financials.
+ADMIN | Global | Manages staff, roles, menus across all branches. Cannot access financials.
+BRANCH_MANAGER | Branch-scoped | Full access within their assigned branch only.
+SERVER | Branch-scoped | Takes orders, manages own tables. Cannot void or discount.
+CASHIER | Branch-scoped | Counter orders, payments. No table management.
+KITCHEN | Branch-scoped | KDS view only. Cannot create or modify orders.
+AUDITOR | Global | Read-only access to all reports and audit logs. No write access.
+
+=== TABLE 21 ===
+Ali: roles = [SERVER (Branch A), BRANCH_MANAGER (Branch A ΓÇö weekends only)]
+
+On a weekday: Ali has SERVER permissions
+On a weekend: Ali has BRANCH_MANAGER permissions (union wins)
+
+Permission resolution: effectivePermissions = UNION(role1.perms, role2.perms, ...)
+
+=== TABLE 22 ===
+Permission | What It Allows
+orders:create | Create new orders
+orders:read | View orders
+orders:modify | Edit items on open orders
+orders:void | Void an entire order
+orders:void_item | Remove individual items from an order
+orders:hold | Place an order on hold
+orders:discount | Apply percentage or fixed discounts
+orders:price_override | Manually change an item price
+orders:split | Split a bill
+orders:merge | Merge two tables
+orders:transfer | Transfer order to another server
+
+=== TABLE 23 ===
+Permission | What It Allows
+payments:process | Process card and cash payments
+payments:refund | Issue full or partial refunds
+payments:void | Void a completed payment
+payments:view | View payment history
+payments:report | Access payment reports
+
+=== TABLE 24 ===
+Permission | What It Allows
+menu:read | View menu items and prices
+menu:edit | Edit item names, descriptions, prices
+menu:create | Add new menu items
+menu:delete | Remove menu items
+menu:86 | Mark items as sold out (86)
+inventory:read | View stock levels
+inventory:adjust | Manually adjust stock counts
+inventory:waste_log | Log waste entries
+
+=== TABLE 25 ===
+Permission | What It Allows
+staff:read | View staff list and profiles
+staff:create | Create new staff accounts
+staff:edit | Edit staff details
+staff:deactivate | Deactivate a staff member
+staff:assign_role | Assign or remove roles from staff
+roles:create | Create custom roles
+roles:edit | Edit custom roles
+roles:delete | Delete custom roles
+reports:branch | View branch-level reports
+reports:global | View reports across all branches
+audit:read | View the audit log
+system:config | Access system configuration
+
+=== TABLE 26 ===
+RBAC GUARD ΓÇö runs on every API request
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+1.  Extract JWT from Authorization header
+2.  Verify JWT signature (using public key)
+3.  Check JWT is not in Redis blacklist (logged out / force revoked)
+4.  Extract { staffId, branchId, roles[], permissions[] } from payload
+5.  Extract required permission from route decorator:
+@RequirePermission('orders:void')
+6.  Check branch scope:
+Is the requested resource in the same branchId as the token?
+If branchId mismatch AND role is not OWNER/ADMIN/AUDITOR ΓåÆ 403
+7.  Check permission:
+Is 'orders:void' in token.permissions[]? ΓåÆ ALLOW
+Is it not? ΓåÆ 403 Forbidden
+8.  Log action to audit service:
+{ staffId, action, resource, branchId, terminalId, timestamp, result }
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+All 403s are logged. Three 403s in 60s from same terminal triggers alert.
+
+=== TABLE 27 ===
+-- Supabase RLS policy example (orders table)
+CREATE POLICY "Branch isolation on orders"
+ON orders
+FOR ALL
+USING (
+branch_id = current_setting('app.current_branch_id')::uuid
+OR
+current_setting('app.staff_role') IN ('OWNER', 'ADMIN', 'AUDITOR')
+);
+
+=== TABLE 28 ===
+MANAGER OVERRIDE FLOW
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+1.  Server taps "Apply Discount" (requires orders:discount permission)
+2.  Terminal checks: server does NOT have orders:discount
+3.  Terminal shows OVERRIDE SCREEN:
+"This action requires manager approval.
+Manager PIN or NFC card required."
+4.  Manager enters their PIN or taps NFC card on the same terminal
+5.  Terminal sends:
+POST /api/v1/auth/override
+Body: { managerPin: "xxxx", action: "orders:discount",
+orderId: "uuid", staffId: "current-server-uuid" }
+6.  Auth Service:
+a. Verify manager PIN
+b. Check manager has orders:discount
+c. Issue short-lived OVERRIDE TOKEN: { exp: now+60s, action: "orders:discount" }
+7.  Terminal receives overrideToken
+8.  Terminal executes the action using overrideToken (single use)
+9.  Audit log records:
+{ action: "orders:discount", performedBy: serverStaffId,
+approvedBy: managerStaffId, overrideToken: used }
+10. Server's session unchanged ΓÇö they remain logged in as SERVER
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+Override tokens expire in 60 seconds and are single-use only.
+
+=== TABLE 29 ===
+EXAMPLE: Promote Ali to Shift Lead for tonight only
+
+In admin dashboard:
+Staff ΓåÆ Ali ΓåÆ Temporary Elevation
+Permission: orders:discount, orders:void_item
+Valid from: 17:00 today
+Expires:    23:59 today
+Approved by: Manager (requires manager auth to save)
+
+Server-side effect:
+A temporary_permissions record is created in Supabase:
+{ staffId, permissions[], branchId, validFrom, validUntil, grantedBy }
+
+Token refresh behaviour:
+On next token refresh, Auth Service includes temp permissions in JWT
+Permissions are automatically excluded after validUntil
+
+Audit trail:
+All actions taken under temporary elevation are flagged in audit log
+
+=== TABLE 30 ===
+model Role {
+id          String   @id @default(uuid())
+name        String
+description String?
+isSystem    Boolean  @default(false)    // true = built-in, cannot delete
+isCustom    Boolean  @default(false)    // true = owner/admin created
+branchId    String?                     // null = available chain-wide
+permissions String[]                    // array of permission strings
+createdBy   String                      // staffId of creator
+createdAt   DateTime @default(now())
+updatedAt   DateTime @updatedAt
+
+branch      Branch?  @relation(fields:[branchId], references:[id])
+staffRoles  StaffRole[]
+}
+
+=== TABLE 31 ===
+model StaffRole {
+id          String    @id @default(uuid())
+staffId     String
+roleId      String
+branchId    String?                     // null = applies to all branches
+validFrom   DateTime? @default(now())
+validUntil  DateTime?                   // null = permanent
+assignedBy  String                      // staffId of manager who assigned
+
+staff       Staff    @relation(fields:[staffId], references:[id])
+role        Role     @relation(fields:[roleId], references:[id])
+}
+
+=== TABLE 32 ===
+model Staff {
+id              String     @id @default(uuid())
+name            String
+email           String?    @unique
+pinHash         String                      // bcrypt hashed PIN
+pbkdf2Hash      String                      // for offline verification
+pbkdf2Salt      String
+nfcCardUid      String?    @unique          // NFC badge UID
+isActive        Boolean    @default(true)
+branchId        String?                     // primary branch
+createdAt       DateTime   @default(now())
+updatedAt       DateTime   @updatedAt
+
+branch          Branch?    @relation(fields:[branchId], references:[id])
+staffRoles      StaffRole[]
+shifts          Shift[]
+tempPermissions TempPermission[]
+auditLogs       AuditLog[]
+}
+
+model TempPermission {
+id          String   @id @default(uuid())
+staffId     String
+permissions String[]
+branchId    String
+validFrom   DateTime
+validUntil  DateTime
+grantedBy   String   // staffId of manager
+createdAt   DateTime @default(now())
+
+staff       Staff    @relation(fields:[staffId], references:[id])
+}
+
+model Shift {
+id          String   @id @default(uuid())
+staffId     String
+branchId    String
+startTime   DateTime
+endTime     DateTime
+isActive    Boolean  @default(true)
+
+staff       Staff    @relation(fields:[staffId], references:[id])
+}
+
+model AuditLog {
+id            String   @id @default(uuid())
+staffId       String
+action        String   // e.g. "orders:void"
+resource      String   // e.g. "order:uuid"
+branchId      String
+terminalId    String
+overrideBy    String?  // manager staffId if override was used
+offlineAuth   Boolean  @default(false)
+result        String   // "allowed" | "denied"
+metadata      Json?
+createdAt     DateTime @default(now())
+
+staff         Staff    @relation(fields:[staffId], references:[id])
+}
+
+=== TABLE 33 ===
+CREATE TABLE offline_auth_cache (
+staff_id      TEXT PRIMARY KEY,
+name          TEXT NOT NULL,
+pin_salt      TEXT NOT NULL,
+pin_hash      TEXT NOT NULL,         -- PBKDF2 hash for offline verify
+nfc_uid       TEXT,
+roles         TEXT NOT NULL,         -- JSON array of role names
+permissions   TEXT NOT NULL,         -- JSON array of permission strings
+branch_id     TEXT NOT NULL,
+cached_token  TEXT NOT NULL,         -- encrypted JWT
+token_exp     INTEGER NOT NULL,      -- unix timestamp
+fail_count    INTEGER DEFAULT 0,     -- wrong PIN attempts
+locked_until  INTEGER,               -- unix timestamp of lockout expiry
+synced_at     INTEGER NOT NULL
+);
+
+CREATE TABLE offline_audit_log (
+id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+staff_id      TEXT NOT NULL,
+action        TEXT NOT NULL,
+resource      TEXT,
+result        TEXT NOT NULL,
+offline_auth  INTEGER DEFAULT 1,
+created_at    INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec')),
+synced_at     INTEGER
+);
+
+=== TABLE 34 ===
+Field | Type | Purpose
+staffId | UUID | Who performed the action
+action | String | Permission string e.g. orders:void
+resource | String | What was acted on e.g. order:uuid
+branchId | UUID | Which branch
+terminalId | UUID | Which terminal device
+overrideBy | UUID (nullable) | Manager who approved override
+offlineAuth | Boolean | Was this action taken offline?
+result | Enum | allowed or denied
+createdAt | Timestamp | Exact time of action
+
+=== TABLE 35 ===
+Rule | Enforcement
+PINs never stored in plaintext | bcrypt on server, PBKDF2 in SQLite
+Access tokens never written to disk | Memory only, cleared on logout
+Refresh tokens encrypted at rest | AES-256 in SQLite / iOS Keychain
+Branch isolation enforced at 3 layers | JWT + RBAC Guard + Supabase RLS
+Override tokens single-use, 60s expiry | Redis key deleted after first use
+5 wrong PINs triggers 60s lockout | Enforced on terminal, synced to server
+Token older than 8hr offline requires manager | Enforced in offline auth flow
+Every action logged to audit trail | Server + offline_audit_log
+Three 403s in 60s triggers security alert | RBAC Guard monitors and alerts
+Force logout propagates via WebSocket | Manager triggers, terminal clears immediately
+
+=== TABLE 36 ===
+Endpoint | Method | Purpose
+POST /api/v1/auth/login | POST | PIN or NFC staff login
+POST /api/v1/auth/login/nfc | POST | NFC card login
+POST /api/v1/auth/refresh | POST | Exchange refresh token for new access token
+POST /api/v1/auth/logout | POST | Logout and blacklist refresh token
+POST /api/v1/auth/override | POST | Manager override ΓÇö issue single-use token
+GET /api/v1/staff/me | GET | Get current staff profile and permissions
+GET /api/v1/roles | GET | List all roles available to this branch
+POST /api/v1/roles | POST | Create a custom role (OWNER/ADMIN only)
+PATCH /api/v1/roles/:id | PATCH | Edit a custom role
+POST /api/v1/staff/:id/roles | POST | Assign role to staff member
+POST /api/v1/staff/:id/elevate | POST | Grant temporary permission elevation
+POST /api/v1/staff/:id/force-logout | POST | Force logout all sessions
+
+=== TABLE 37 ===
+# Step 1: Generate spec from NestJS
+cd apps/api && npm run generate:openapi    # outputs ../../openapi.json
+
+# Step 2: Generate C# client (WinUI 3)
+nswag openapi2csclient /input:openapi.json \
+/output:apps/terminal-win/src/Generated/ApiClient.cs
+
+# Step 3: Generate C++ client (Qt 6)
+openapi-generator generate -i openapi.json \
+-g cpp-qt-client -o apps/terminal-qt/src/generated
+
+# Step 4: Generate Swift client (iOS)
+openapi-generator generate -i openapi.json \
+-g swift5 -o apps/ios/Sources/Generated
+
+=== TABLE 38 ===
+# Cloud ΓÇö NestJS API
+DATABASE_URL=postgresql://postgres:[pw]@db.[ref].supabase.co:5432/postgres
+SUPABASE_URL=https://[ref].supabase.co
+SUPABASE_SERVICE_KEY=
+REDIS_URL=redis://host:6379
+JWT_ACCESS_SECRET=           # sign access tokens
+JWT_REFRESH_SECRET=          # sign refresh tokens (different key)
+JWT_ACCESS_EXPIRY=900        # 15 minutes in seconds
+JWT_REFRESH_EXPIRY=28800     # 8 hours in seconds
+OVERRIDE_TOKEN_EXPIRY=60     # 60 seconds
+BCRYPT_SALT_ROUNDS=10
+PBKDF2_ITERATIONS=100000
+
+# Branch terminals (local config)
+BRANCH_ID=uuid
+TERMINAL_ID=uuid
+API_BASE_URL=https://api.yourpos.com
+SYNC_GATEWAY_URL=wss://sync.yourpos.com
+SQLITE_PATH=./data/branch.db
+TOKEN_ENCRYPTION_KEY=        # AES-256 key for SQLite token encryption
+
+=== TABLE 39 ===
+Data Type | CRDT Strategy | Rationale
+Order Items | LWW-Register | Single editor per order at a time
+Inventory Counts | PN-Counter | Concurrent decrements from multiple stations
+Menu 86 Status | OR-Set | Atomic add/remove broadcast across all branches
+Table Status | LWW-Map | Single source of truth per table per branch
+Payment Records | Grow-Only Set | Payments are append-only, never deleted
+Permission Changes | LWW-Register | Latest permission assignment wins
+
+=== TABLE 40 ===
+NORMAL OPERATION (Connected)
+Terminal ΓöÇΓöÇWebSocketΓöÇΓöÇΓû║ Sync Gateway ΓöÇΓöÇΓû║ Supabase PostgreSQL
+ΓùäΓöÇΓöÇ Real-time state updates ΓùäΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+OUTAGE DETECTED (3-second WebSocket timeout)
+1.  SyncService sets OFFLINE_MODE = true
+2.  Amber dot appears in terminal status bar
+3.  All mutations ΓåÆ append to SQLite offline_log with vector clock
+4.  Auth continues using cached tokens (up to 8hr grace period)
+
+RECONNECTION
+5.  WebSocket reconnects, full online auth runs silently
+6.  CRDT merge resolves any conflicts
+7.  Audit logs for offline actions synced to server
+8.  Fresh tokens replace cached tokens
+
+=== TABLE 41 ===
+static merge(a: VectorClock, b: VectorClock): VectorClock {
+const merged: VectorClock = {};
+const allKeys = new Set([...Object.keys(a), ...Object.keys(b)]);
+for (const key of allKeys) {
+merged[key] = Math.max(a[key] ?? 0, b[key] ?? 0);
+}
+return merged;
+}
+
+=== TABLE 42 ===
+Concern | WinUI 3 | Qt 6 | SwiftUI
+Renderer | DirectX compositor | Qt Quick renderer | Metal / CoreAnimation
+Frame rate | 60fps | 60fps (graceful) | 60 / 120fps ProMotion
+Dark mode | RequestedTheme API | QGuiApplication colorScheme | @Environment colorScheme
+Haptics | Windows vibration API | Hardware-dependent | CoreHaptics ΓÇö full patterns
+Login screen | PIN pad + NFC prompt | PIN pad + NFC prompt | PIN pad + Face ID button
+
+=== TABLE 43 ===
+Interaction | Duration | Easing | GPU
+Screen transition | 280ms | Spring (300, 30) | Yes
+Button press | 80ms | EaseOut | Yes
+Item add to cart | 180ms | Spring (400, 28) | Yes
+Override modal entrance | 320ms | Spring (200, 25) | Yes
+PIN digit entry | 40ms | EaseOut | Yes
+
+=== TABLE 44 ===
+Event | Haptic | Intensity
+PIN digit tapped | UIImpactFeedbackStyle.light | 0.3
+Login success | UINotificationFeedbackType.success | ΓÇö
+Login failed / wrong PIN | UINotificationFeedbackType.error | ΓÇö
+Item added to order | UIImpactFeedbackStyle.light | 0.5
+Order sent to kitchen | UIImpactFeedbackStyle.medium | 0.7
+Payment confirmed | UIImpactFeedbackStyle.heavy | 1.0
+Override approved | UINotificationFeedbackType.success | ΓÇö
+
+=== TABLE 45 ===
+Feature | Cashier | Server | Kitchen | Br. Mgr | Owner | Admin
+Create orders | Γ£ô | Γ£ô | ΓÇö | Γ£ô | Γ£ô | Γ£ô
+Void items | ΓÇö | Self | ΓÇö | Γ£ô | Γ£ô | Γ£ô
+Apply discounts | ΓÇö | ΓÇö | ΓÇö | Γ£ô | Γ£ô | Γ£ô
+Override prices | ΓÇö | ΓÇö | ΓÇö | Γ£ô | Γ£ô | Γ£ô
+View reports | ΓÇö | ΓÇö | ΓÇö | Branch | All | All
+Manage menu | ΓÇö | ΓÇö | ΓÇö | Γ£ô | Γ£ô | Γ£ô
+Manage staff | ΓÇö | ΓÇö | ΓÇö | Branch | All | All
+Create/edit roles | ΓÇö | ΓÇö | ΓÇö | ΓÇö | Γ£ô | Γ£ô
+Refund payments | ΓÇö | ΓÇö | ΓÇö | Γ£ô | Γ£ô | Γ£ô
+View audit log | ΓÇö | ΓÇö | ΓÇö | Γ£ô | Γ£ô | Γ£ô
+Force logout staff | ΓÇö | ΓÇö | ΓÇö | Branch | All | All
+System config | ΓÇö | ΓÇö | ΓÇö | ΓÇö | Γ£ô | ΓÇö
+
+=== TABLE 46 ===
+Report | Frequency | Scope | Export
+Daily Sales Summary | Real-time | Branch / Group | PDF, CSV
+Hourly Revenue Heatmap | Daily | Branch | Dashboard
+Item Performance | Weekly | Menu item | CSV
+Server Performance | Daily | Per staff | Manager view
+Void & Discount Log | Daily | Branch | PDF, CSV
+Tax Report | Monthly | Legal entity | PDF
+Audit Trail Report | On demand | Branch / Global | PDF, CSV
+Multi-branch Comparison | Weekly | All branches | Dashboard
+
+=== TABLE 47 ===
+1. mDNS / Bonjour (_ipp._tcp.local)  ΓåÆ  returns { name, ip, port }
+2. USB enumeration (Epson 0x04B8 / Star 0x0519 / Citizen 0x1CBE)
+3. Static IP fallback (admin-configured, 30s health check)
+4. Alert manager if all three fail
+
+=== TABLE 48 ===
+Provider | Platform | Protocol | Readers | Offline
+Stripe Terminal | iOS | BT / LAN | M2, WisePOS E | Yes ΓÇö 48hr queue
+Adyen | Windows | Nexo Retail JSON | UX301, PAX A920 | Queue on reconnect
+
+=== TABLE 49 ===
+Platform | Hardware | Implementation
+WinUI 3 (Windows) | ACR122U, ACS ACR1252U | Windows.Devices.SmartCards API
+Qt 6 (Windows/Linux) | Any NFC reader | Qt6::Nfc module
+iOS (iPad) | iPhone 7+ built-in NFC | CoreNFC framework
+
+=== TABLE 50 ===
+Team | Stack | Owns
+Backend | TypeScript / NestJS | API, Auth Service, RBAC, Sync Gateway, OpenAPI spec
+Windows Primary | C# / .NET 8 | WinUI 3 ΓÇö UI, auth, sync, printing
+Windows Fallback | C++ / Qt 6 | Qt terminal ΓÇö same feature set
+iOS | Swift / SwiftUI | iPad app ΓÇö UI, biometric auth, Stripe
+Web / Admin | TypeScript / Next.js | Admin dashboard, role management UI
+Platform | All | OpenAPI pipeline, CI, test vectors, security review
+
+=== TABLE 51 ===
+On pull request:
+1.  api: lint + typecheck + unit tests
+2.  api: generate openapi.json
+3.  Fail if openapi.json changed but clients not regenerated
+4.  terminal-win: dotnet build + dotnet test
+5.  terminal-qt: cmake build + ctest
+6.  ios: xcodebuild test (macOS runner)
+7.  admin: next build + jest
+
+On merge to main:
+1.  All PR checks
+2.  Docker build + push (api)
+3.  WinUI 3 MSIX package + code sign
+4.  Qt installer (Windows + Linux)
+5.  iOS archive ΓåÆ TestFlight
+6.  admin ΓåÆ Vercel deploy
+
+=== TABLE 52 ===
+Metric | Target | Notes
+PIN login (online) | < 500ms | Hash verify + JWT issue
+PIN login (offline) | < 200ms | Local PBKDF2 verify only
+NFC login | < 300ms | Card read + server verify
+Order creation (local) | < 50ms | SQLite write + UI update
+Order creation (cloud) | < 200ms | Round-trip to API
+Payment end-to-end | < 3s | Card tap to receipt
+Offline resync (1,000 ops) | < 10s | On WebSocket reconnect
+UI frame rate | 60fps minimum | Native renderer
+86-item broadcast | < 3s | All active terminals
+Printer job | < 2s | Tap to receipt printed
+Core offline availability | 100% | Including auth + ordering
+
+=== TABLE 53 ===
+API Gateway (Kong / Fastify)
+Γö£ΓöÇΓöÇ Auth Service             PIN/NFC verify, JWT issue, refresh, blacklist
+Γö£ΓöÇΓöÇ RBAC Service             Role management, permission evaluation
+Γö£ΓöÇΓöÇ Staff Service            Profiles, shifts, multi-role management
+Γö£ΓöÇΓöÇ Audit Service            Immutable action log (append-only)
+Γö£ΓöÇΓöÇ Order Service            CRUD, modifiers, hold, fire
+Γöé   ΓööΓöÇΓöÇ Kitchen Service      KDS push, timer, station routing
+Γö£ΓöÇΓöÇ Menu Service             Pricing, modifiers, 86 broadcast
+Γö£ΓöÇΓöÇ Inventory Service        Stock counts, alerts
+Γö£ΓöÇΓöÇ Payment Service          Stripe + Adyen orchestration
+Γö£ΓöÇΓöÇ Branch Service           Multi-location config, floor plans
+Γö£ΓöÇΓöÇ Report Service           Aggregation, PDF/CSV export
+ΓööΓöÇΓöÇ Sync Gateway             WebSocket CRDT hub
+ΓööΓöÇΓöÇ Redis Pub/Sub        Cross-service events + token blacklist
+
+=== TABLE 54 ===
+Decision | Rejected | Reason
+WinUI 3 primary | Tauri + React | Webview ceiling on low-spec hardware
+Qt 6 fallback | Electron | Too heavy for ARM / 1GB RAM
+SwiftUI native | React Native | 120fps ProMotion, direct CoreHaptics
+Supabase | AWS RDS, Neon | Free tier + Prisma makes it replaceable
+PIN + NFC + Biometric | Email/password | Shared terminals need fast staff switching
+PBKDF2 in SQLite | Online-only auth | Must work during internet outages
+Branch-scoped JWT | Global JWT | Prevent cross-branch data leakage
+3-layer branch isolation | API guard only | Defence in depth for data security
+60s single-use override token | Permanent elevation | Minimise manager PIN abuse
+CASL for permissions | Manual if/else | Declarative, testable permission rules
+

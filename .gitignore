@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Turbo
+.turbo/
+
+# Prisma
+packages/database-schema/prisma/migrations/*.sql.bak
+
+# Generated API clients — never edit, always regenerated
+apps/terminal-win/src/Generated/
+apps/terminal-qt/src/generated/
+apps/ios/Sources/Generated/
+openapi.json
+
+# SQLite local databases
+*.db
+*.db-journal
+*.db-wal
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Native build artifacts
+apps/terminal-win/bin/
+apps/terminal-win/obj/
+apps/terminal-qt/build/
+apps/ios/DerivedData/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Secrets
+*.pem
+*.key

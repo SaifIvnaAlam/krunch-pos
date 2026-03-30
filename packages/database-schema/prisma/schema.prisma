@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Branch {
+  id          String   @id @default(uuid())
+  name        String
+  address     String?
+  timezone    String   @default("UTC")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  staff       Staff[]
+  orders      Order[]
+  menuItems   MenuItem[]
+}
+
+model Staff {
+  id              String     @id @default(uuid())
+  name            String
+  email           String?    @unique
+  /// Optional bcrypt hash for email/password (owner portal). PIN login uses pinHash.
+  passwordHash    String?
+  pinHash         String
+  pbkdf2Hash      String
+  pbkdf2Salt      String
+  nfcCardUid      String?    @unique
+  isActive        Boolean    @default(true)
+  primaryBranchId String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  primaryBranch   Branch?        @relation(fields: [primaryBranchId], references: [id])
+  staffRoles      StaffRole[]
+  shifts          Shift[]
+  tempPermissions TempPermission[]
+  auditLogs       AuditLog[]
+  orders          Order[]
+}
+
+model Role {
+  id          String      @id @default(uuid())
+  name        String
+  description String?
+  isSystem    Boolean     @default(false)
+  isCustom    Boolean     @default(false)
+  branchId    String?
+  permissions String[]
+  createdBy   String
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  staffRoles  StaffRole[]
+}
+
+model StaffRole {
+  id          String    @id @default(uuid())
+  staffId     String
+  roleId      String
+  branchId    String?
+  validFrom   DateTime  @default(now())
+  validUntil  DateTime?
+  assignedBy  String
+
+  staff       Staff     @relation(fields: [staffId], references: [id])
+  role        Role      @relation(fields: [roleId], references: [id])
+}
+
+model TempPermission {
+  id          String   @id @default(uuid())
+  staffId     String
+  permissions String[]
+  branchId    String
+  validFrom   DateTime
+  validUntil  DateTime
+  grantedBy   String
+  createdAt   DateTime @default(now())
+
+  staff       Staff    @relation(fields: [staffId], references: [id])
+}
+
+model Shift {
+  id        String   @id @default(uuid())
+  staffId   String
+  branchId  String
+  startTime DateTime
+  endTime   DateTime
+  isActive  Boolean  @default(true)
+
+  staff     Staff    @relation(fields: [staffId], references: [id])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  staffId     String
+  action      String
+  resource    String?
+  branchId    String
+  terminalId  String
+  overrideBy  String?
+  offlineAuth Boolean  @default(false)
+  result      String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  staff       Staff    @relation(fields: [staffId], references: [id])
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  branchId    String
+  staffId     String
+  tableNumber String?
+  status      OrderStatus @default(OPEN)
+  items       OrderItem[]
+  payments    Payment[]
+  totalAmount Decimal     @db.Decimal(10, 2)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  staff       Staff       @relation(fields: [staffId], references: [id])
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  orderId     String
+  menuItemId  String
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  modifiers   Json?
+  notes       String?
+  voidedAt    DateTime?
+  voidedBy    String?
+
+  order       Order    @relation(fields: [orderId], references: [id])
+  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
+}
+
+model MenuItem {
+  id          String      @id @default(uuid())
+  branchId    String
+  name        String
+  description String?
+  price       Decimal     @db.Decimal(10, 2)
+  category    String
+  isAvailable Boolean     @default(true)
+  is86d       Boolean     @default(false)
+  modifiers   Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  branch      Branch      @relation(fields: [branchId], references: [id])
+  orderItems  OrderItem[]
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String
+  method        PaymentMethod
+  amount        Decimal       @db.Decimal(10, 2)
+  status        PaymentStatus @default(PENDING)
+  stripeId      String?
+  adyenId       String?
+  idempotencyKey String       @unique
+  createdAt     DateTime      @default(now())
+
+  order         Order         @relation(fields: [orderId], references: [id])
+}
+
+enum OrderStatus {
+  OPEN
+  SENT_TO_KITCHEN
+  READY
+  PAID
+  VOIDED
+  HELD
+}
+
+enum PaymentMethod {
+  CASH
+  CARD_STRIPE
+  CARD_ADYEN
+  SPLIT
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+  VOIDED
+}

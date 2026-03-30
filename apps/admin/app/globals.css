@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Krunch pos — ServHQ-inspired admin marketing design system (dark only) */
+
+:root {
+  --page: #0a0a0a;
+  --section-alt: #0d0d0d;
+  --card: #111111;
+  --elevated: #161616;
+  --chip: #1a1a1a;
+
+  --bg: var(--page);
+  --surface: var(--card);
+
+  --ink: #ffffff;
+  --body-text: #888888;
+  --muted: #555555;
+  --label: #444444;
+  --caption: #666666;
+  --placeholder: #666666;
+
+  --border-0: rgba(255, 255, 255, 0.07);
+  --border-1: rgba(255, 255, 255, 0.14);
+  --border-2: rgba(255, 255, 255, 0.3);
+
+  --live: #22c55e;
+
+  --font-inter: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-dm-mono: 'DM Mono', 'Fira Mono', ui-monospace, monospace;
+
+  /* Pastels — only inside product mockups / embedded UI */
+  --sky-bg: #c8e4f5;
+  --sky-ink: #1a4a6c;
+  --mint-bg: #c8efe0;
+  --mint-ink: #1a5c40;
+  --peach-bg: #fce5c8;
+  --peach-ink: #7a4010;
+  --lav-bg: #ddd4f5;
+  --lav-ink: #3d2875;
+  --sage-bg: #d8edd0;
+  --sage-ink: #2a5020;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  color: var(--body-text);
+  background: var(--page);
+  font-family: var(--font-inter);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+@keyframes krunch-ticker {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.krunch-ticker-track {
+  display: flex;
+  width: max-content;
+  animation: krunch-ticker 14s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .krunch-ticker-track {
+    animation: none;
+  }
+  * {
+    scroll-behavior: auto !important;
+  }
+}
