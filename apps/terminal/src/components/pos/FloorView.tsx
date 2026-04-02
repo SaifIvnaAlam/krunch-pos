@@ -42,15 +42,12 @@ export function FloorView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
-          Floor · layout
+        <p className="text-[10px] font-medium tracking-[0.06em] text-[var(--pos-text-2)]">
+          Operations / Floor
         </p>
-        <h1 className="mt-1 text-[22px] font-medium tracking-[-0.02em] text-[var(--pos-text-1)]">
+        <h1 className="mt-0.5 text-[19px] font-semibold tracking-[-0.01em] text-[var(--pos-text-1)]">
           Floor
         </h1>
-        <p className="mt-1 text-[13px] text-[var(--pos-text-2)]">
-          Tap a table to assign or open order (demo).
-        </p>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-3">
         {TABLES.map((t) => {

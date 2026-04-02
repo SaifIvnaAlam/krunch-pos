@@ -65,7 +65,7 @@ export function SignInPage() {
             </div>
             <div>
               <p className="text-[22px] font-medium leading-none tracking-[-0.02em] text-[var(--pos-text-1)]">
-                Remi R-POS
+                Steak & Marrow
               </p>
               <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
                 Point of sale · Terminal
@@ -120,7 +120,7 @@ export function SignInPage() {
               <UtensilsCrossed className="size-5 text-white" strokeWidth={2} />
             </div>
             <p className="text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]">
-              Remi R-POS
+              Steak & Marrow
             </p>
           </div>
 

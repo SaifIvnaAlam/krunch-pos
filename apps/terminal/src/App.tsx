@@ -30,7 +30,7 @@ function ProtectedPos() {
 
 function AppRoutes() {
   return (
-    <div className="h-full w-full">
+    <div className="pos-app h-full w-full">
       <Routes>
         <Route path="/" element={<SplashGate />} />
         <Route path="/signin" element={<SignInPage />} />

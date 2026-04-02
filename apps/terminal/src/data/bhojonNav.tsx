@@ -25,6 +25,8 @@ import {
   Globe,
   Download,
   Mail,
+  Package,
+  ArrowLeftRight,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -64,6 +66,31 @@ export const POS_NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: "inventory",
+    label: "Inventory Management",
+    nodes: [
+      { kind: "leaf", id: "inv-overview", label: "Stock overview", icon: Package },
+      { kind: "leaf", id: "inv-adjust", label: "Stock adjustments", icon: Factory },
+      {
+        kind: "leaf",
+        id: "inv-transfers",
+        label: "Transfers between locations",
+        icon: ArrowLeftRight,
+      },
+      { kind: "leaf", id: "inv-count", label: "Physical / cycle count", icon: ClipboardList },
+    ],
+  },
+  {
+    id: "employee-mgmt",
+    label: "Employee Management",
+    nodes: [
+      { kind: "leaf", id: "em-directory", label: "Employee directory", icon: Users },
+      { kind: "leaf", id: "em-schedule", label: "Schedules & shifts", icon: CalendarDays },
+      { kind: "leaf", id: "em-access", label: "Roles & access", icon: Shield },
+      { kind: "leaf", id: "em-onboard", label: "Onboarding & training", icon: UserCircle },
+    ],
+  },
+  {
     id: "operations",
     label: "Operations",
     nodes: [
@@ -87,24 +114,6 @@ export const POS_NAV_SECTIONS: NavSection[] = [
           },
           {
             kind: "leaf",
-            id: "mo-pending",
-            label: "Pending / kitchen",
-            icon: Factory,
-          },
-          {
-            kind: "leaf",
-            id: "mo-completed",
-            label: "Completed",
-            icon: Receipt,
-          },
-          {
-            kind: "leaf",
-            id: "mo-cancelled",
-            label: "Cancelled",
-            icon: Trash2,
-          },
-          {
-            kind: "leaf",
             id: "mo-invoices",
             label: "POS invoice list",
             icon: Receipt,
@@ -118,16 +127,10 @@ export const POS_NAV_SECTIONS: NavSection[] = [
         ],
       },
       {
-        kind: "branch",
-        id: "reservation",
-        label: "Reservation",
+        kind: "leaf",
+        id: "reservations",
+        label: "Reservations",
         icon: CalendarDays,
-        children: [
-          { kind: "leaf", id: "rsv-list", label: "Reservation list", icon: CalendarDays },
-          { kind: "leaf", id: "rsv-new", label: "New booking", icon: CalendarDays },
-          { kind: "leaf", id: "rsv-blackout", label: "Unavailable days", icon: CalendarDays },
-          { kind: "leaf", id: "rsv-settings", label: "Table settings", icon: Settings },
-        ],
       },
       {
         kind: "branch",

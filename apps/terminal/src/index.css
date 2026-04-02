@@ -42,6 +42,31 @@
   --pos-icon-tile-bg: #ffffff;
 }
 
+/* Sidebar theme: strict black & white */
+:root,
+html.dark {
+  --pos-sb-bg: #000000;
+  --pos-sb-header-bg: #000000;
+  --pos-sb-border: rgba(255, 255, 255, 0.16);
+  --pos-sb-divider: rgba(255, 255, 255, 0.14);
+  --pos-sb-text-1: #ffffff;
+  --pos-sb-text-2: #b3b3b3;
+  --pos-sb-text-3: #d9d9d9;
+  --pos-sb-icon: #d9d9d9;
+  --pos-sb-hover: rgba(255, 255, 255, 0.1);
+  --pos-sb-active-bg: #ffffff;
+  --pos-sb-active-bar: #ffffff;
+  --pos-sb-active-text: #000000;
+  --pos-sb-active-icon: #000000;
+  --pos-sb-section-label: #a6a6a6;
+  --pos-sb-card: #111111;
+  --pos-sb-brand-bg: #1a1a1a;
+  --pos-sb-branch-open: rgba(255, 255, 255, 0.08);
+  --pos-sb-badge-bg: #ffffff;
+  --pos-sb-badge-fg: #000000;
+  --pos-sb-badge-border: rgba(255, 255, 255, 0.65);
+}
+
 html.dark {
   color-scheme: dark;
   --pos-page: #141413;
@@ -80,6 +105,20 @@ html, body, #root {
   font-family: var(--font-sans);
   background: var(--pos-page);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Hide scrollbars across the terminal UI; scrolling still works (wheel, touch, keys). */
+.pos-app,
+.pos-app * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.pos-app::-webkit-scrollbar,
+.pos-app *::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 ::selection {

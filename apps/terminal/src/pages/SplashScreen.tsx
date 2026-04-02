@@ -30,7 +30,7 @@ export function SplashScreen() {
             className="text-center"
           >
             <h1 className="text-[32px] font-semibold leading-none tracking-[-0.03em] text-[var(--pos-text-1)]">
-              Remi R-POS
+              Steak & Marrow
             </h1>
             <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
               Point of sale · Terminal

@@ -28,12 +28,10 @@ const DEMO_ROWS: Row[] = [
 
 export function GenericModuleView({
   title,
-  description,
   icon: Icon,
   addon,
 }: {
   title: string;
-  description: string;
   icon: LucideIcon;
   addon?: boolean;
 }) {
@@ -57,9 +55,6 @@ export function GenericModuleView({
               </span>
             ) : null}
           </div>
-          <p className="mt-1 text-[13px] text-[var(--pos-text-2)]">
-            {description}
-          </p>
         </div>
       </div>
 

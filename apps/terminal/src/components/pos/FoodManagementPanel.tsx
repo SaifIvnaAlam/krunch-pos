@@ -257,13 +257,6 @@ export function FoodManagementPanel({
               ? "Item editor"
               : "Add-on library"}
         </h1>
-        <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">
-          {initialLeaf === "fd-cat"
-            ? "Only create and review categories here."
-            : initialLeaf === "fd-items"
-              ? "Create item, set price, then configure modifiers and add-ons."
-              : "Create reusable add-ons for faster item setup."}
-        </p>
       </div>
 
       {initialLeaf === "fd-cat" ? (
@@ -298,7 +291,7 @@ export function FoodManagementPanel({
             {addonTemplates.map((a) => (
               <div key={a.id} className="rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] p-3 text-[12px]">
                 <p className="font-medium text-[var(--pos-text-1)]">{a.name}</p>
-                <p className="font-mono text-[var(--pos-text-2)]">${formatMoney(a.priceCents)}</p>
+                <p className="font-mono text-[var(--pos-text-2)]">৳{formatMoney(a.priceCents)}</p>
               </div>
             ))}
           </div>
@@ -336,7 +329,7 @@ export function FoodManagementPanel({
                         : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
                     }`}
                   >
-                    {a.name} (${formatMoney(a.priceCents)})
+                    {a.name} (৳{formatMoney(a.priceCents)})
                   </button>
                 );
               })}

@@ -12,11 +12,15 @@ export type OrderFilter =
   | "cancelled"
   | "online";
 
+type OrderStatus = "pending" | "kitchen" | "completed" | "cancelled";
+type OrderType = "dine_in" | "takeaway" | "online_delivery" | "online_pickup";
+
 const DEMO_ORDERS = [
   {
     id: "#1040",
     table: "2",
     status: "pending" as const,
+    type: "dine_in" as const,
     total: "42.50",
     time: "12:04",
     date: "2026-03-25",
@@ -25,6 +29,7 @@ const DEMO_ORDERS = [
     id: "#1041",
     table: "7",
     status: "kitchen" as const,
+    type: "takeaway" as const,
     total: "28.00",
     time: "12:18",
     date: "2026-03-25",
@@ -33,6 +38,7 @@ const DEMO_ORDERS = [
     id: "#1042",
     table: "4",
     status: "kitchen" as const,
+    type: "dine_in" as const,
     total: "51.20",
     time: "12:22",
     date: "2026-03-24",
@@ -40,7 +46,8 @@ const DEMO_ORDERS = [
   {
     id: "#1038",
     table: "QR-12",
-    status: "online" as const,
+    status: "pending" as const,
+    type: "online_delivery" as const,
     total: "36.75",
     time: "12:01",
     date: "2026-03-25",
@@ -49,6 +56,7 @@ const DEMO_ORDERS = [
     id: "#1035",
     table: "1",
     status: "completed" as const,
+    type: "dine_in" as const,
     total: "24.00",
     time: "11:40",
     date: "2026-03-24",
@@ -57,136 +65,233 @@ const DEMO_ORDERS = [
     id: "#1033",
     table: "6",
     status: "cancelled" as const,
+    type: "online_pickup" as const,
     total: "0.00",
     time: "11:22",
     date: "2026-03-23",
   },
 ];
 
-const FILTER_META: Record<
-  OrderFilter,
-  { title: string; subtitle: string; match: (s: string) => boolean }
-> = {
-  all: {
-    title: "Order list",
-    subtitle: "All channels · demo",
-    match: () => true,
-  },
-  pending: {
-    title: "Pending",
-    subtitle: "Needs confirmation or payment",
-    match: (s) => s === "pending",
-  },
-  kitchen: {
-    title: "Kitchen / in progress",
-    subtitle: "Fired to kitchen display",
-    match: (s) => s === "kitchen",
-  },
-  pending_kitchen: {
-    title: "Pending / kitchen",
-    subtitle: "Queue before and during prep",
-    match: (s) => s === "pending" || s === "kitchen",
-  },
-  completed: {
-    title: "Completed",
-    subtitle: "Settled tickets",
-    match: (s) => s === "completed",
-  },
-  cancelled: {
-    title: "Cancelled",
-    subtitle: "Voided or no-shows",
-    match: (s) => s === "cancelled",
-  },
-  online: {
-    title: "Online queue",
-    subtitle: "Website / QR incoming",
-    match: (s) => s === "online",
-  },
-};
-
-const statusPill: Record<string, string> = {
-  pending: "bg-[#ffe4c0] text-[#e07030] [border-color:#f5a94a]",
-  kitchen: "bg-[#c8def5] text-[#2f6dae] [border-color:#5b9bd6]",
-  completed: "bg-[#c8efd8] text-[#2e9b65] [border-color:#6bca9a]",
-  cancelled: "bg-[#ffd0cc] text-[#e8472a] [border-color:#e8472a]",
-  online: "bg-[#ddd4f5] text-[#3d2875] [border-color:#c8c7c2]",
-};
-
-const ORDER_FILTER_TABS: { id: OrderFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "pending_kitchen", label: "Pending / Kitchen" },
-  { id: "completed", label: "Completed" },
-  { id: "cancelled", label: "Cancelled" },
-  { id: "online", label: "Online" },
+const CONSOLIDATED_ORDER_STATUSES: OrderStatus[] = [
+  "pending",
+  "kitchen",
+  "completed",
+  "cancelled",
 ];
+const ALL_ORDER_TYPES: OrderType[] = [
+  "dine_in",
+  "takeaway",
+  "online_delivery",
+  "online_pickup",
+];
+
+const STATUS_LABELS: Record<OrderStatus, string> = {
+  pending: "Pending",
+  kitchen: "Kitchen",
+  completed: "Completed",
+  cancelled: "Cancelled",
+};
+const TYPE_LABELS: Record<OrderType, string> = {
+  dine_in: "Dine In",
+  takeaway: "Takeaway",
+  online_delivery: "Online Delivery",
+  online_pickup: "Online Pickup",
+};
+
+const statusPill: Record<OrderStatus, string> = {
+  pending: "border-[#6f6f6f] bg-[#f2f2f2] text-[#111111]",
+  kitchen: "border-[#4f4f4f] bg-[#dddddd] text-[#111111]",
+  completed: "border-[#2f2f2f] bg-[#cfcfcf] text-[#111111]",
+  cancelled: "border-[#1f1f1f] bg-[#bdbdbd] text-[#111111]",
+};
+const TYPE_PILL: Record<OrderType, string> = {
+  dine_in: "border-[#808080] bg-[#f5f5f5] text-[#111111]",
+  takeaway: "border-[#666666] bg-[#e8e8e8] text-[#111111]",
+  online_delivery: "border-[#444444] bg-[#dcdcdc] text-[#111111]",
+  online_pickup: "border-[#2a2a2a] bg-[#d0d0d0] text-[#111111]",
+};
+
+function buildInitialStatusSet(filter: OrderFilter): Set<OrderStatus> {
+  if (filter === "pending") return new Set(["pending"]);
+  if (filter === "kitchen") return new Set(["kitchen"]);
+  if (filter === "pending_kitchen") return new Set(["pending", "kitchen"]);
+  if (filter === "completed") return new Set(["completed"]);
+  if (filter === "cancelled") return new Set(["cancelled"]);
+  return new Set(CONSOLIDATED_ORDER_STATUSES);
+}
+function buildInitialTypeSet(filter: OrderFilter): Set<OrderType> {
+  if (filter === "online") return new Set(["online_delivery", "online_pickup"]);
+  return new Set(ALL_ORDER_TYPES);
+}
 
 export function OrdersManageView({
   defaultFilter = "all",
 }: {
   defaultFilter?: OrderFilter;
 }) {
-  const [activeFilter, setActiveFilter] = useState<OrderFilter>(defaultFilter);
+  const [activeStatuses, setActiveStatuses] = useState<Set<OrderStatus>>(
+    () => buildInitialStatusSet(defaultFilter),
+  );
+  const [activeTypes, setActiveTypes] = useState<Set<OrderType>>(
+    () => buildInitialTypeSet(defaultFilter),
+  );
   const [orderDate, setOrderDate] = useState("");
-  const meta = FILTER_META[activeFilter];
+  const [query, setQuery] = useState("");
+
+  const statusCounts = useMemo(() => {
+    const base: Record<OrderStatus, number> = {
+      pending: 0,
+      kitchen: 0,
+      completed: 0,
+      cancelled: 0,
+    };
+    for (const order of DEMO_ORDERS) base[order.status] += 1;
+    return base;
+  }, []);
+
+  const subtitle = useMemo(() => {
+    const statusLabels = Array.from(activeStatuses).map((s) => STATUS_LABELS[s]);
+    const typeLabels = Array.from(activeTypes).map((t) => TYPE_LABELS[t]);
+    if (statusLabels.length === 0 || typeLabels.length === 0) return "No filter selected";
+    if (
+      statusLabels.length === CONSOLIDATED_ORDER_STATUSES.length &&
+      typeLabels.length === ALL_ORDER_TYPES.length
+    ) {
+      return "Consolidated queue across all order types";
+    }
+    return `Status: ${statusLabels.join(", ")} | Type: ${typeLabels.join(", ")}`;
+  }, [activeStatuses, activeTypes]);
+
   const rows = useMemo(
     () =>
       DEMO_ORDERS.filter(
-        (o) => meta.match(o.status) && (!orderDate || o.date === orderDate),
+        (o) =>
+          activeStatuses.has(o.status) &&
+          activeTypes.has(o.type) &&
+          (!orderDate || o.date === orderDate) &&
+          (!query ||
+            o.id.toLowerCase().includes(query.toLowerCase()) ||
+            o.table.toLowerCase().includes(query.toLowerCase())),
       ),
-    [meta, orderDate],
+    [activeStatuses, activeTypes, orderDate, query],
   );
+
+  const toggleStatus = (status: OrderStatus) => {
+    setActiveStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  };
+  const toggleType = (type: OrderType) => {
+    setActiveTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
-          Manage order
+        <p className="text-[10px] font-medium tracking-[0.06em] text-[var(--pos-text-2)]">
+          Operations / Orders
         </p>
-        <h1 className="mt-1 text-[22px] font-medium tracking-[-0.02em] text-[var(--pos-text-1)]">
-          {meta.title}
+        <h1 className="mt-0.5 text-[19px] font-semibold tracking-[-0.01em] text-[var(--pos-text-1)]">
+          Order list
         </h1>
-        <p className="mt-1 text-[13px] text-[var(--pos-text-2)]">
-          {meta.subtitle}
-        </p>
+        <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">{subtitle}</p>
       </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {(Object.keys(statusCounts) as OrderStatus[]).map((status) => (
+          <div
+            key={status}
+            className={`rounded-[10px] border border-solid px-3 py-2 ${border0} bg-[var(--pos-card)]`}
+          >
+            <p className="text-[10px] uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+              {STATUS_LABELS[status]}
+            </p>
+            <p className="mt-1 font-mono text-[15px] font-semibold text-[var(--pos-text-1)]">
+              {statusCounts[status]}
+            </p>
+          </div>
+        ))}
+      </div>
+
       <div className={`rounded-[14px] bg-[var(--pos-card)] p-3 ${border0}`}>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {ORDER_FILTER_TABS.map((tab) => {
-              const isActive = tab.id === activeFilter;
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {CONSOLIDATED_ORDER_STATUSES.map((status) => {
+              const isActive = activeStatuses.has(status);
               return (
                 <button
-                  key={tab.id}
+                  key={status}
                   type="button"
-                  onClick={() => setActiveFilter(tab.id)}
+                  onClick={() => toggleStatus(status)}
                   className={`rounded-full border border-solid px-3 py-1.5 text-[12px] font-medium transition-colors ${
                     isActive
                       ? "border-[var(--pos-text-1)] bg-[var(--pos-text-1)] text-[var(--pos-card)]"
                       : "[border-color:var(--pos-border-medium)] text-[var(--pos-text-2)] hover:[border-color:var(--pos-text-1)] hover:text-[var(--pos-text-1)]"
                   }`}
                 >
-                  {tab.label}
+                  {STATUS_LABELS[status]}
                 </button>
               );
             })}
           </div>
-          <label className="flex items-center gap-2 text-[12px] text-[var(--pos-text-2)]">
-            <span>Date</span>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {ALL_ORDER_TYPES.map((type) => {
+              const isActive = activeTypes.has(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => toggleType(type)}
+                  className={`rounded-full border border-solid px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                    isActive
+                      ? "border-[var(--pos-text-1)] bg-[var(--pos-text-1)] text-[var(--pos-card)]"
+                      : "[border-color:var(--pos-border-medium)] text-[var(--pos-text-2)] hover:[border-color:var(--pos-text-1)] hover:text-[var(--pos-text-1)]"
+                  }`}
+                >
+                  {TYPE_LABELS[type]}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
-              type="date"
-              value={orderDate}
-              onChange={(e) => setOrderDate(e.target.value)}
-              className="h-9 rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none"
-              aria-label="Filter orders by date"
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by order id or table"
+              className="h-9 flex-1 rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:border-[var(--pos-text-1)] focus:outline-none"
+              aria-label="Search orders"
             />
-          </label>
+            <label className="flex items-center gap-2 text-[12px] text-[var(--pos-text-2)]">
+              <span>Date</span>
+              <input
+                type="date"
+                value={orderDate}
+                onChange={(e) => setOrderDate(e.target.value)}
+                className="h-9 rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none"
+                aria-label="Filter orders by date"
+              />
+            </label>
+          </div>
         </div>
       </div>
       <div className={`rounded-[14px] bg-[var(--pos-card)] ${border0} overflow-hidden`}>
-        <div className="grid grid-cols-[1fr_80px_100px_80px] gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
+        <div className="grid grid-cols-[1fr_72px_100px_130px_86px_70px] gap-2 border-b border-solid [border-color:var(--pos-divider)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
           <span>Order</span>
           <span>Table</span>
           <span>Status</span>
+          <span>Type</span>
+          <span>Date / Time</span>
           <span className="text-right">Total</span>
         </div>
         {rows.length === 0 ? (
@@ -198,25 +303,31 @@ export function OrdersManageView({
             <button
               key={o.id}
               type="button"
-              className="grid w-full grid-cols-[1fr_80px_100px_80px] gap-2 border-b border-solid [border-color:var(--pos-border-hairline)] px-4 py-3 text-left transition-colors hover:bg-[var(--pos-sidebar)]"
+              className="grid w-full grid-cols-[1fr_72px_100px_130px_86px_70px] gap-2 border-b border-solid [border-color:var(--pos-border-hairline)] px-3 py-2 text-left transition-colors hover:bg-[var(--pos-sidebar)]"
             >
               <div>
                 <p className="font-mono text-[13px] font-medium text-[var(--pos-text-1)]">
                   {o.id}
                 </p>
-                <p className="text-[11px] text-[var(--pos-text-2)]">{o.time}</p>
               </div>
               <span className="font-mono text-[13px] text-[var(--pos-text-2)]">
                 {o.table}
               </span>
               <span
-                className={`inline-flex w-fit items-center gap-2 rounded-full border border-solid px-[8px] py-[2px] text-[11px] font-medium capitalize ${statusPill[o.status] ?? ""}`}
+                className={`inline-flex w-fit items-center rounded-[999px] border border-solid px-[8px] py-[2px] text-[10px] font-semibold uppercase ${statusPill[o.status]}`}
               >
-                <span className="size-[5px] shrink-0 rounded-full bg-current" />
-                {o.status}
+                {STATUS_LABELS[o.status]}
+              </span>
+              <span
+                className={`inline-flex w-fit items-center rounded-[999px] border border-solid px-[8px] py-[2px] text-[10px] font-semibold ${TYPE_PILL[o.type]}`}
+              >
+                {TYPE_LABELS[o.type]}
+              </span>
+              <span className="text-[11px] text-[var(--pos-text-2)]">
+                {o.date.slice(5)} {o.time}
               </span>
               <span className="text-right font-mono text-[13px] text-[var(--pos-text-1)]">
-                ${o.total}
+                ৳{o.total}
               </span>
             </button>
           ))

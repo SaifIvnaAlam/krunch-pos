@@ -85,7 +85,7 @@ function SubOptionRow({
         {addon.name}
       </span>
       <span className="shrink-0 font-mono text-[11px] text-[var(--pos-text-2)]">
-        {addon.priceCents > 0 ? `+$${formatMoney(addon.priceCents)}` : "Free"}
+        {addon.priceCents > 0 ? `+৳${formatMoney(addon.priceCents)}` : "Free"}
       </span>
     </button>
   );
@@ -227,7 +227,7 @@ export function ItemOptionsBody({
                             </span>
                             {ch.priceDeltaCents !== 0 ? (
                               <span className="shrink-0 font-mono text-[11px] text-[var(--pos-text-2)]">
-                                {ch.priceDeltaCents > 0 ? "+" : ""}$
+                                {ch.priceDeltaCents > 0 ? "+৳" : "৳"}
                                 {formatMoney(Math.abs(ch.priceDeltaCents))}
                               </span>
                             ) : (
@@ -361,7 +361,7 @@ export function ItemOptionsModal({
           {item.name}
         </h2>
         <p className="mt-1 font-mono text-[13px] text-[var(--pos-text-2)]">
-          Base ${formatMoney(item.priceCents)}
+          Base ৳{formatMoney(item.priceCents)}
         </p>
 
         <div className="mt-6">
@@ -371,7 +371,7 @@ export function ItemOptionsModal({
         <div className="mt-8 flex flex-col gap-2 border-t border-solid [border-color:var(--pos-divider)] pt-6">
           <div className="flex items-center justify-between text-[14px] font-medium text-[var(--pos-text-1)]">
             <span>Line price</span>
-            <span className="font-mono">${formatMoney(unitPrice)}</span>
+            <span className="font-mono">৳{formatMoney(unitPrice)}</span>
           </div>
           <div className="flex gap-2">
             <button

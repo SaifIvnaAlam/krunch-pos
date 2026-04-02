@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Flame,
+  CircleDollarSign,
   Focus,
   Minus,
+  NotebookPen,
   PanelLeftOpen,
   Plus,
+  Printer,
+  Receipt,
   Search,
   Send,
-  SlidersHorizontal,
+  Pencil,
+  Tag,
+  Trash2,
   UserRound,
   X,
 } from "lucide-react";
@@ -27,6 +32,15 @@ import { DashboardView } from "../components/pos/DashboardView";
 import { FloorView } from "../components/pos/FloorView";
 import { OrdersManageView } from "../components/pos/OrdersManageView";
 import { GenericModuleView } from "../components/pos/GenericModuleView";
+import {
+  EMPLOYEE_LEAF_IDS,
+  EmployeeModuleView,
+} from "../components/pos/EmployeeModuleView";
+import {
+  INVENTORY_LEAF_IDS,
+  InventoryModuleView,
+} from "../components/pos/InventoryModuleView";
+import { ReservationView } from "../components/pos/ReservationView";
 import { ItemOptionsBody } from "../components/pos/ItemOptionsModal";
 import {
   FoodManagementPanel,
@@ -63,7 +77,26 @@ type CartLine = {
     parentOptionLabel?: string;
   }[];
   lineConfig: OrderLineConfig;
+  /** Free-text note for kitchen / receipt (per line). */
+  note?: string;
+  /** Percent off this line only (0–100). */
+  lineDiscountPercent?: number;
 };
+
+function lineGrossCents(l: CartLine) {
+  return l.unitPriceCents * l.qty;
+}
+
+function lineDiscountCents(l: CartLine) {
+  const p = l.lineDiscountPercent ?? 0;
+  if (p <= 0) return 0;
+  const clamped = Math.min(100, p);
+  return Math.round(lineGrossCents(l) * (clamped / 100));
+}
+
+function lineNetCents(l: CartLine) {
+  return lineGrossCents(l) - lineDiscountCents(l);
+}
 
 function newLineKey() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -74,6 +107,12 @@ function newLineKey() {
 
 function formatMoney(cents: number) {
   return (cents / 100).toFixed(2);
+}
+
+function formatDiscountPercentLabel(p: number) {
+  const clamped = Math.min(100, Math.max(0, p));
+  if (clamped % 1 === 0) return String(clamped);
+  return clamped.toFixed(2).replace(/\.?0+$/, "");
 }
 
 type CatalogRow = CatalogItem & {
@@ -105,6 +144,7 @@ function cartLineFromItem(item: CatalogItem, qty: number): CartLine {
     optionRows,
     suboptionRows,
     lineConfig,
+    lineDiscountPercent: 0,
   };
 }
 
@@ -128,22 +168,24 @@ function lineWithConfig(
   };
 }
 
+function cloneDemoCategories() {
+  return DEMO_CATEGORIES.map((cat) => ({
+    ...cat,
+    items: cat.items.map((item) => ({
+      ...item,
+      variantGroups: item.variantGroups.map((group) => ({
+        ...group,
+        choices: group.choices.map((choice) => ({ ...choice })),
+      })),
+      addons: item.addons.map((addon) => ({ ...addon })),
+    })),
+  }));
+}
+
 export function PosTerminalPage() {
   const navigate = useNavigate();
   const { signOut } = useDevAuth();
-  const [menuCategories, setMenuCategories] = useState(() =>
-    DEMO_CATEGORIES.map((cat) => ({
-      ...cat,
-      items: cat.items.map((item) => ({
-        ...item,
-        variantGroups: item.variantGroups.map((group) => ({
-          ...group,
-          choices: group.choices.map((choice) => ({ ...choice })),
-        })),
-        addons: item.addons.map((addon) => ({ ...addon })),
-      })),
-    })),
-  );
+  const [menuCategories, setMenuCategories] = useState(() => cloneDemoCategories());
   const [addonTemplates, setAddonTemplates] = useState<AddonTemplate[]>(() => {
     const map = new Map<string, AddonTemplate>();
     for (const cat of DEMO_CATEGORIES) {
@@ -168,11 +210,11 @@ export function PosTerminalPage() {
   );
   const [activeLeafId, setActiveLeafId] = useState("menu");
   const [activeCategory, setActiveCategory] = useState(
-    orderedMenuCategories[0]?.id ?? "rice-biryani",
+    orderedMenuCategories[0]?.id ?? "appetizer",
   );
   const [menuSearch, setMenuSearch] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [selectedLine, setSelectedLine] = useState(0);
+  const [selectedLine, setSelectedLine] = useState(-1);
   const [tableNumber, setTableNumber] = useState(4);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -184,10 +226,33 @@ export function PosTerminalPage() {
   const [editDraftConfig, setEditDraftConfig] = useState<OrderLineConfig | null>(
     null,
   );
+  const [lineNoteModalIndex, setLineNoteModalIndex] = useState<number | null>(
+    null,
+  );
+  const [lineNoteDraft, setLineNoteDraft] = useState("");
+  const [lineDiscountModalIndex, setLineDiscountModalIndex] = useState<
+    number | null
+  >(null);
+  const [lineDiscountDraft, setLineDiscountDraft] = useState("");
+  const [checkoutNotice, setCheckoutNotice] = useState("");
+  const [miscModalOpen, setMiscModalOpen] = useState(false);
+  const [miscName, setMiscName] = useState("");
+  const [miscPrice, setMiscPrice] = useState("");
   /** Full chrome (sidebar + footer). POS opens in focus/zen mode by default. */
   const [focusMode, setFocusMode] = useState(true);
   const menuSearchInputRef = useRef<HTMLInputElement>(null);
   const orderPanelRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!checkoutNotice) return;
+    const t = window.setTimeout(() => setCheckoutNotice(""), 2200);
+    return () => window.clearTimeout(t);
+  }, [checkoutNotice]);
+
+  // Keep POS menu aligned with source catalog after hot-reload/session drift.
+  useEffect(() => {
+    setMenuCategories(cloneDemoCategories());
+  }, []);
 
   const items = useMemo((): CatalogRow[] => {
     const q = menuSearch.trim().toLowerCase();
@@ -215,18 +280,46 @@ export function PosTerminalPage() {
     return out;
   }, [activeCategory, menuCategories, menuSearch, orderedMenuCategories]);
 
-  const subtotal = useMemo(
-    () => cart.reduce((s, l) => s + l.unitPriceCents * l.qty, 0),
+  const grossSubtotal = useMemo(
+    () => cart.reduce((s, l) => s + lineGrossCents(l), 0),
     [cart],
   );
-  const tax = Math.round(subtotal * 0.0825);
-  const total = subtotal + tax;
+  const itemCount = useMemo(
+    () => cart.reduce((s, l) => s + l.qty, 0),
+    [cart],
+  );
+  const discount = useMemo(
+    () => cart.reduce((s, l) => s + lineDiscountCents(l), 0),
+    [cart],
+  );
+  const [serviceChargeEnabled, setServiceChargeEnabled] = useState(false);
+  const subtotalAfterLineDiscounts = Math.max(0, grossSubtotal - discount);
+  const service = serviceChargeEnabled
+    ? Math.round(subtotalAfterLineDiscounts * 0.1)
+    : 0;
+  const tax = Math.round(
+    Math.max(0, subtotalAfterLineDiscounts + service) * 0.0825,
+  );
+  const total = Math.max(0, subtotalAfterLineDiscounts + service + tax);
 
   useEffect(() => {
-    setSelectedLine((i) =>
-      cart.length === 0 ? 0 : Math.min(i, Math.max(0, cart.length - 1)),
-    );
+    setSelectedLine((i) => {
+      if (cart.length === 0) return -1;
+      if (i < 0) return -1;
+      return Math.min(i, Math.max(0, cart.length - 1));
+    });
   }, [cart.length]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest("[data-cart-line-card]")) return;
+      setSelectedLine(-1);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, []);
 
   useEffect(() => {
     if (menuCategories.some((c) => c.id === activeCategory)) return;
@@ -263,13 +356,6 @@ export function PosTerminalPage() {
     setSelectedLine(newIndex);
   };
 
-  const selectedCatalogItem =
-    cart.length > 0
-      ? menuCategories
-          .flatMap((cat) => cat.items)
-          .find((item) => item.id === (cart[selectedLine]?.itemId ?? ""))
-      : undefined;
-  const activeLine = cart.length > 0 ? cart[selectedLine] : undefined;
   const editingLine =
     editingLineIndex !== null ? cart[editingLineIndex] : undefined;
   const editingCatalogItem = editingLine
@@ -289,6 +375,63 @@ export function PosTerminalPage() {
         })
         .filter((x): x is CartLine => x !== null),
     );
+  };
+
+  const openLineDiscountModal = (idx: number) => {
+    const line = cart[idx];
+    if (!line) return;
+    setSelectedLine(idx);
+    const p = line.lineDiscountPercent ?? 0;
+    setLineDiscountDraft(p > 0 ? String(p) : "");
+    setLineDiscountModalIndex(idx);
+  };
+
+  const saveLineDiscount = () => {
+    if (lineDiscountModalIndex === null) return;
+    const idx = lineDiscountModalIndex;
+    const raw = lineDiscountDraft.trim().replace(",", ".");
+    let pct = 0;
+    if (raw.length > 0) {
+      const n = Number.parseFloat(raw);
+      if (Number.isFinite(n)) {
+        pct = Math.min(100, Math.max(0, n));
+      }
+    }
+    setCart((c) =>
+      c.map((l, i) =>
+        i === idx
+          ? {
+              ...l,
+              lineDiscountPercent: pct > 0 ? pct : undefined,
+            }
+          : l,
+      ),
+    );
+    setLineDiscountModalIndex(null);
+  };
+
+  const removeLineAt = (idx: number) => {
+    setCart((c) => c.filter((_, i) => i !== idx));
+  };
+
+  const openLineNoteModal = (idx: number) => {
+    const line = cart[idx];
+    if (!line) return;
+    setSelectedLine(idx);
+    setLineNoteDraft(line.note ?? "");
+    setLineNoteModalIndex(idx);
+  };
+
+  const saveLineNote = () => {
+    if (lineNoteModalIndex === null) return;
+    const idx = lineNoteModalIndex;
+    const text = lineNoteDraft.trim();
+    setCart((c) =>
+      c.map((l, i) =>
+        i === idx ? { ...l, note: text.length > 0 ? text : undefined } : l,
+      ),
+    );
+    setLineNoteModalIndex(null);
   };
 
   const openEditModalForLine = (idx: number) => {
@@ -338,6 +481,79 @@ export function PosTerminalPage() {
     navigate("/signin", { replace: true });
   };
 
+  const clearOrder = () => {
+    setCart([]);
+    setSelectedLine(-1);
+    setCustomerName("");
+    setCustomerPhone("");
+    setCustomerCategory("regular");
+    setShowOrderDetails(false);
+  };
+
+  const addMiscLine = () => {
+    const name = miscName.trim();
+    const raw = miscPrice.trim().replace(",", ".");
+    const parsed = Number.parseFloat(raw);
+    if (!name) {
+      setCheckoutNotice("Enter a misc item name.");
+      return;
+    }
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setCheckoutNotice("Enter a valid misc price.");
+      return;
+    }
+    const unitPriceCents = Math.round(parsed * 100);
+    const line: CartLine = {
+      key: newLineKey(),
+      itemId: `misc-${Date.now()}`,
+      name,
+      qty: 1,
+      unitPriceCents,
+      variantSummary: "",
+      optionRows: [],
+      suboptionRows: [],
+      lineConfig: { variantChoiceIds: {}, addonIds: [] },
+      lineDiscountPercent: 0,
+    };
+    setCart((c) => [...c, line]);
+    setSelectedLine(cart.length);
+    setMiscName("");
+    setMiscPrice("");
+    setMiscModalOpen(false);
+    setCheckoutNotice("Misc item added.");
+  };
+
+  const handlePrintOrder = () => {
+    if (cart.length === 0) {
+      setCheckoutNotice("Add items before printing.");
+      return;
+    }
+    window.print();
+    setCheckoutNotice("Print dialog opened.");
+  };
+
+  const handleNoSale = () => {
+    setCheckoutNotice("No-sale recorded for this terminal.");
+  };
+
+  const handleHold = () => {
+    if (cart.length === 0) {
+      setCheckoutNotice("Cart is empty.");
+      return;
+    }
+    clearOrder();
+    setCheckoutNotice("Order placed on hold.");
+  };
+
+  const handlePay = () => {
+    if (cart.length === 0) {
+      setCheckoutNotice("Cart is empty.");
+      return;
+    }
+    clearOrder();
+    setCheckoutNotice("Payment completed.");
+  };
+
   const showOrderPanel = showMenuSurface;
 
   const mainContent = () => {
@@ -345,15 +561,6 @@ export function PosTerminalPage() {
     if (activeLeafId === "floor") return <FloorView />;
     if (activeLeafId === "mo-list") {
       return <OrdersManageView defaultFilter="all" />;
-    }
-    if (activeLeafId === "mo-pending") {
-      return <OrdersManageView defaultFilter="pending_kitchen" />;
-    }
-    if (activeLeafId === "mo-completed") {
-      return <OrdersManageView defaultFilter="completed" />;
-    }
-    if (activeLeafId === "mo-cancelled") {
-      return <OrdersManageView defaultFilter="cancelled" />;
     }
     if (activeLeafId === "mo-online") {
       return <OrdersManageView defaultFilter="online" />;
@@ -367,10 +574,6 @@ export function PosTerminalPage() {
               <h1 className="text-[15px] font-medium text-[var(--pos-text-1)]">
                 Menu / POS
               </h1>
-              <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
-                Tap an item to add it — adjust quantity and options in the order
-                panel
-              </p>
             </div>
             <div className="relative w-full min-w-[200px] shrink-0 sm:max-w-[320px]">
               <Search
@@ -474,7 +677,7 @@ export function PosTerminalPage() {
                         {item.name}
                       </p>
                       <p className="mt-1 font-mono text-[13px] font-normal text-[var(--pos-text-2)]">
-                        ${formatMoney(item.priceCents)}
+                        ৳{formatMoney(item.priceCents)}
                       </p>
                       <p className="mt-3 text-[11px] text-[var(--pos-text-2)]">
                         Sold today ·{" "}
@@ -488,6 +691,17 @@ export function PosTerminalPage() {
           </div>
         </div>
       );
+    }
+
+    if (activeLeafId === "reservations") {
+      return <ReservationView />;
+    }
+
+    if (INVENTORY_LEAF_IDS.has(activeLeafId)) {
+      return <InventoryModuleView leafId={activeLeafId} />;
+    }
+    if (EMPLOYEE_LEAF_IDS.has(activeLeafId)) {
+      return <EmployeeModuleView leafId={activeLeafId} />;
     }
 
     const meta = findLeafMeta(activeLeafId);
@@ -510,7 +724,6 @@ export function PosTerminalPage() {
       return (
         <GenericModuleView
           title={meta.label}
-          description="Demo module placeholder. Data below is sample only."
           icon={meta.icon}
           addon={meta.addon}
         />
@@ -556,7 +769,7 @@ export function PosTerminalPage() {
             </button>
           )}
 
-          <div className="flex min-h-0 flex-1 gap-3 p-3 pt-12">
+          <div className="flex min-h-0 flex-1 gap-3 px-3 pb-3 pt-2">
             <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
               {mainContent()}
             </main>
@@ -574,30 +787,30 @@ export function PosTerminalPage() {
                   aria-label="Resize order panel"
                   title="Drag to resize panel"
                 />
-                <div className="shrink-0 space-y-2 border-b border-solid [border-color:var(--pos-divider)] p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--pos-text-2)]">
+                <div className="shrink-0 space-y-1.5 border-b border-solid [border-color:var(--pos-divider)] px-2.5 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
                         Table
-                      </p>
-                      <p className="mt-0.5 text-[15px] font-medium text-[var(--pos-text-1)]">
-                        Table{" "}
-                        <span className="font-mono tabular-nums">
-                          {tableNumber}
-                        </span>
-                      </p>
-                      <p className="mt-0.5 font-mono text-[11px] text-[var(--pos-text-2)]">
-                        #{orderRef} · demo
-                      </p>
+                      </span>
+                      <span className="font-mono text-[14px] font-medium tabular-nums text-[var(--pos-text-1)]">
+                        {tableNumber}
+                      </span>
+                      <span className="font-mono text-[10px] text-[var(--pos-text-2)]">
+                        #{orderRef}
+                      </span>
                     </div>
+                    <span className="shrink-0 font-mono text-[10px] text-[var(--pos-text-2)]">
+                      {cart.length} line{cart.length === 1 ? "" : "s"}
+                    </span>
                   </div>
-                  <div className={`rounded-[12px] bg-[var(--pos-page)] p-2.5 ${border0}`}>
+                  <div className={`rounded-[10px] bg-[var(--pos-page)] p-2 ${border0}`}>
                     <button
                       type="button"
                       onClick={() => setShowOrderDetails((v) => !v)}
                       className="flex w-full items-center justify-between gap-2 text-left"
                     >
-                      <span className="text-[12px] font-medium text-[var(--pos-text-1)]">
+                      <span className="text-[11px] font-medium text-[var(--pos-text-1)]">
                         Guest & order details
                       </span>
                       <span className="text-[10px] text-[var(--pos-text-2)]">
@@ -606,7 +819,7 @@ export function PosTerminalPage() {
                     </button>
 
                     {showOrderDetails ? (
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                         <div>
                           <label className="block" aria-label="Select table">
                             <span className="mb-1 block text-[10px] font-medium uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
@@ -615,7 +828,7 @@ export function PosTerminalPage() {
                             <select
                               value={tableNumber}
                               onChange={(e) => setTableNumber(Number(e.target.value))}
-                              className="h-10 w-full rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px] font-mono text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none"
+                              className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[12px] font-mono text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none"
                             >
                               {DEMO_TABLES.map((n) => (
                                 <option key={n} value={n}>
@@ -669,17 +882,12 @@ export function PosTerminalPage() {
                 </div>
 
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  <div className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
-                    <div className="flex items-center justify-between gap-2 px-1">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--pos-text-2)]">
-                        Current order
-                      </p>
-                      <p className="font-mono text-[11px] text-[var(--pos-text-2)]">
-                        {cart.length} line{cart.length === 1 ? "" : "s"}
-                      </p>
-                    </div>
+                  <div className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2.5 py-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--pos-text-2)]">
+                      Current order
+                    </p>
                   </div>
-                  <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[var(--pos-border-medium)] [&::-webkit-scrollbar-track]:bg-transparent">
+                  <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
                     {cart.length === 0 ? (
                       <p className="rounded-[10px] border border-dashed border-[var(--pos-border-medium)] px-3 py-8 text-center text-[12px] text-[var(--pos-text-2)]">
                         Cart is empty — tap items on the left to add
@@ -687,34 +895,65 @@ export function PosTerminalPage() {
                     ) : (
                       cart.map((row, idx) => {
                         const highlight = idx === selectedLine;
+                        const lineCatalogItem = menuCategories
+                          .flatMap((c) => c.items)
+                          .find((it) => it.id === row.itemId);
                         const lineTags = [
                           ...row.optionRows.map((o) => `${o.groupName}: ${o.choiceName}`),
                           ...row.suboptionRows.map((s) => `+${s.name}`),
                         ];
-                        const visibleTags = lineTags.slice(0, 3);
-                        const hiddenTagCount = Math.max(0, lineTags.length - visibleTags.length);
+                        const compactTags = [
+                          ...row.suboptionRows.map((s) => `+${s.name}`),
+                          ...(row.note ? [`Note: ${row.note}`] : []),
+                        ];
+                        const shownTags = (highlight ? lineTags : compactTags).slice(
+                          0,
+                          highlight ? 3 : 1,
+                        );
+                        const hiddenTagCount = Math.max(
+                          0,
+                          (highlight ? lineTags : compactTags).length - shownTags.length,
+                        );
+                        const lineHasAddons =
+                          (lineCatalogItem?.addons.length ?? 0) > 0;
+                        const addonIds = row.lineConfig.addonIds;
+                        const addonNamesSummary =
+                          addonIds.length > 0 && lineCatalogItem
+                            ? addonIds
+                                .map(
+                                  (id) =>
+                                    lineCatalogItem.addons.find((a) => a.id === id)
+                                      ?.name,
+                                )
+                                .filter((n): n is string => Boolean(n))
+                                .join(", ")
+                            : "";
+                        const lineDisc = lineDiscountCents(row);
+                        const lineNet = lineNetCents(row);
+                        const lineDiscPct = row.lineDiscountPercent ?? 0;
                         return (
                           <div
                             key={row.key}
-                            className={`mb-2 flex w-full flex-col gap-2 rounded-[10px] border px-2.5 py-2 text-left text-[12px] transition-colors ${
+                            data-cart-line-card
+                            className={`mb-1.5 flex w-full flex-col rounded-[9px] border px-2 text-left text-[12px] transition-colors ${
                               highlight
-                                ? "border-solid [border-color:var(--pos-text-1)] bg-[var(--pos-highlight-bg)] shadow-[inset_0_0_0_1px_var(--pos-text-1)]"
-                                : "border-[var(--pos-border-hairline)] bg-[var(--pos-card)] hover:[border-color:var(--pos-border-medium)] hover:bg-[var(--pos-nav-hover)]/20"
+                                ? "gap-1 py-1.5 border-solid [border-color:var(--pos-text-1)] bg-[var(--pos-highlight-bg)] shadow-[inset_0_0_0_1px_var(--pos-text-1)]"
+                                : "gap-0.5 py-1 border-[var(--pos-border-hairline)] bg-[var(--pos-card)] hover:[border-color:var(--pos-border-medium)] hover:bg-[var(--pos-nav-hover)]/20"
                             }`}
                           >
-                            <div className="flex w-full items-start justify-between gap-2">
+                            <div className="flex w-full min-w-0 items-start gap-2">
                               <button
                                 type="button"
                                 onClick={() => setSelectedLine(idx)}
-                                className={`flex-1 text-left text-[12.5px] font-medium leading-snug ${
+                                className={`min-w-0 flex-1 text-left ${
                                   highlight
                                     ? "text-[var(--pos-highlight-fg)]"
                                     : "text-[var(--pos-text-3)]"
                                 }`}
                               >
-                                <span className="inline-flex items-center gap-1.5">
+                                <div className="flex items-start gap-1.5">
                                   <span
-                                    className={`inline-flex min-w-[1.1rem] items-center justify-center rounded-[5px] px-1 py-0.5 text-[9px] font-semibold ${
+                                    className={`mt-0.5 inline-flex min-w-[1rem] shrink-0 items-center justify-center rounded-[4px] px-0.5 py-0.5 text-[8px] font-semibold leading-none ${
                                       highlight
                                         ? "bg-[var(--pos-highlight-fg)]/15 text-[var(--pos-highlight-fg)]"
                                         : "bg-[var(--pos-page)] text-[var(--pos-text-2)]"
@@ -722,86 +961,166 @@ export function PosTerminalPage() {
                                   >
                                     {idx + 1}
                                   </span>
-                                  <span>{row.name}</span>
-                                </span>
+                                  <div className="min-w-0 flex flex-1 items-center gap-1.5 overflow-hidden">
+                                    <p className="min-w-0 shrink truncate text-[12px] font-medium leading-tight">
+                                      {row.name}
+                                    </p>
+                                    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-hidden">
+                                      {shownTags.map((tag) => (
+                                        <span
+                                          key={`${row.key}-${tag}`}
+                                          className={`inline-flex max-w-full items-center truncate rounded-full border border-solid px-1.5 py-px text-[9px] ${
+                                            highlight
+                                              ? "border-[var(--pos-highlight-fg)] text-[var(--pos-highlight-fg)]"
+                                              : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
+                                          }`}
+                                        >
+                                          {tag}
+                                        </span>
+                                      ))}
+                                      {hiddenTagCount > 0 ? (
+                                        <span
+                                          key={`${row.key}-more-tags`}
+                                          className={`inline-flex items-center rounded-full border border-solid px-1.5 py-px text-[9px] ${
+                                            highlight
+                                              ? "border-[var(--pos-highlight-fg)] text-[var(--pos-highlight-fg)]"
+                                              : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
+                                          }`}
+                                        >
+                                          +{hiddenTagCount}
+                                        </span>
+                                      ) : null}
+                                      {highlight && lineHasAddons ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => openEditModalForLine(idx)}
+                                          className={`inline-flex max-w-full items-center truncate rounded-full border border-solid px-1.5 py-px text-[9px] italic ${
+                                            highlight
+                                              ? "border-[var(--pos-highlight-fg)] text-[var(--pos-highlight-fg)]"
+                                              : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
+                                          }`}
+                                          title={
+                                            addonNamesSummary ? addonNamesSummary : "Add add-ons"
+                                          }
+                                          aria-label="Add or edit add-ons for this line"
+                                        >
+                                          {addonIds.length > 0 ? "Edit addon" : "+ Add addons"}
+                                        </button>
+                                      ) : null}
+                                      {highlight ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => openLineNoteModal(idx)}
+                                          className={`inline-flex max-w-full items-center truncate rounded-full border border-solid px-1.5 py-px text-[9px] italic ${
+                                            highlight
+                                              ? "border-[var(--pos-highlight-fg)] text-[var(--pos-highlight-fg)]"
+                                              : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
+                                          }`}
+                                          title={row.note ? row.note : "Add note"}
+                                          aria-label="Add or edit note for this line"
+                                        >
+                                          {row.note ? `Note: ${row.note}` : "+ Add note"}
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                    {!highlight ? (
+                                      <span className="ml-auto shrink-0 font-mono text-[10px] text-[var(--pos-text-2)]">
+                                        {row.qty} × ৳{formatMoney(row.unitPriceCents)}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
                               </button>
-                              <span
-                                className={`shrink-0 rounded-[7px] px-1.5 py-0.5 font-mono text-[11px] ${
-                                  highlight
-                                    ? "bg-[var(--pos-highlight-fg)]/10 text-[var(--pos-highlight-fg)]"
-                                    : "bg-[var(--pos-page)] text-[var(--pos-text-2)]"
-                                }`}
-                              >
-                                ${formatMoney(row.unitPriceCents * row.qty)}
-                              </span>
                             </div>
-                            <div className="flex items-center justify-between">
-                              <p
-                                className={`text-[10px] ${
-                                  highlight
-                                    ? "text-[var(--pos-highlight-fg)]/90"
-                                    : "text-[var(--pos-text-2)]"
-                                }`}
+
+                            {highlight ? (
+                              <div
+                                className="flex min-h-[32px] items-center gap-1 rounded-[8px] bg-[var(--pos-highlight-fg)]/8 px-1 py-0.5"
                               >
-                                {row.qty} x ${formatMoney(row.unitPriceCents)}
-                              </p>
-                              <div className="flex items-center gap-1">
+                              <div className="flex min-w-0 flex-1 items-center gap-1">
+                                <button
+                                  type="button"
+                                  title="Note"
+                                  onClick={() => openLineNoteModal(idx)}
+                                  className={`flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)] ${
+                                    row.note ? "ring-1 ring-[var(--pos-primary-bg)]/45" : ""
+                                  }`}
+                                  aria-label="Note for this line"
+                                >
+                                  <NotebookPen className="size-3.5" strokeWidth={2} />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Discount"
+                                  onClick={() => openLineDiscountModal(idx)}
+                                  className={`flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid transition-colors ${
+                                    (row.lineDiscountPercent ?? 0) > 0
+                                      ? "border-[var(--pos-primary-bg)] bg-[var(--pos-primary-bg)]/12 text-[var(--pos-primary-bg)]"
+                                      : "[border-color:var(--pos-border-medium)] bg-[var(--pos-card)] text-[var(--pos-text-1)] hover:[border-color:var(--pos-text-1)]"
+                                  }`}
+                                  aria-label="Set discount for this line"
+                                >
+                                  <Tag className="size-3.5" strokeWidth={2} />
+                                </button>
+                              </div>
+                              <div className="mx-0.5 flex h-8 items-center justify-center gap-0.5 rounded-[7px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] px-0.5">
                                 <button
                                   type="button"
                                   onClick={() => setLineQty(idx, -1)}
-                                  className="flex size-7 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
+                                  className="flex size-7 shrink-0 items-center justify-center rounded-full border border-solid [border-color:var(--pos-border-medium)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
                                   aria-label="Decrease quantity"
                                 >
-                                  <Minus className="size-3.5" strokeWidth={2} />
+                                  <Minus className="size-3" strokeWidth={2} />
                                 </button>
-                                <span className="min-w-[1.75rem] text-center font-mono text-[13px] text-[var(--pos-text-1)]">
+                                <span className="min-w-[1.25rem] text-center font-mono text-[11px] text-[var(--pos-text-1)]">
                                   {row.qty}
                                 </span>
                                 <button
                                   type="button"
                                   onClick={() => setLineQty(idx, 1)}
-                                  className="flex size-7 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
+                                  className="flex size-7 shrink-0 items-center justify-center rounded-full border border-solid [border-color:var(--pos-border-medium)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
                                   aria-label="Increase quantity"
                                 >
-                                  <Plus className="size-3.5" strokeWidth={2} />
+                                  <Plus className="size-3" strokeWidth={2} />
                                 </button>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => openEditModalForLine(idx)}
-                                className="inline-flex h-7 items-center gap-1 rounded-[8px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] px-2 text-[10px] font-medium text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
-                              >
-                                <SlidersHorizontal className="size-3" strokeWidth={2} />
-                                Modify
-                              </button>
-                            </div>
+                              <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  title="Remove line"
+                                  onClick={() => removeLineAt(idx)}
+                                  className="flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
+                                  aria-label="Delete this line"
+                                >
+                                  <Trash2 className="size-3.5" strokeWidth={2} />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Modify options"
+                                  onClick={() => openEditModalForLine(idx)}
+                                  className="flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
+                                  aria-label="Modify options for this line"
+                                >
+                                  <Pencil className="size-3.5" strokeWidth={2} />
+                                </button>
+                              </div>
+                              </div>
+                            ) : null}
 
-                            {lineTags.length > 0 ? (
-                              <div className="flex flex-wrap gap-1 border-t border-dashed [border-color:var(--pos-border-hairline)] pt-1.5">
-                                {visibleTags.map((tag) => (
-                                  <span
-                                    key={`${row.key}-${tag}`}
-                                    className={`inline-flex items-center rounded-full border border-solid px-2 py-0.5 text-[10px] ${
-                                      highlight
-                                        ? "border-[var(--pos-highlight-fg)] text-[var(--pos-highlight-fg)]"
-                                        : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
-                                    }`}
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                                {hiddenTagCount > 0 ? (
-                                  <span
-                                    key={`${row.key}-more-tags`}
-                                    className={`inline-flex items-center rounded-full border border-solid px-2 py-0.5 text-[10px] ${
-                                      highlight
-                                        ? "border-[var(--pos-highlight-fg)] text-[var(--pos-highlight-fg)]"
-                                        : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
-                                    }`}
-                                  >
-                                    +{hiddenTagCount} more
-                                  </span>
-                                ) : null}
+                            {highlight ? (
+                              <div className="flex items-center justify-end border-t border-dashed [border-color:var(--pos-border-hairline)] pt-1">
+                              <p
+                                className={`font-mono text-[10px] ${
+                                  highlight
+                                    ? "text-[var(--pos-highlight-fg)]/90"
+                                    : "text-[var(--pos-text-2)]"
+                                }`}
+                              >
+                                {row.qty} × ৳{formatMoney(row.unitPriceCents)} (৳{formatMoney(lineNet)})
+                                {lineDiscPct > 0 && lineDisc > 0
+                                  ? ` · −${formatDiscountPercentLabel(lineDiscPct)}%`
+                                  : ""}
+                              </p>
                               </div>
                             ) : null}
                           </div>
@@ -809,55 +1128,130 @@ export function PosTerminalPage() {
                       })
                     )}
                   </div>
-
-                  {cart.length > 0 && activeLine && selectedCatalogItem ? (
-                    <div className="shrink-0 border-t border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]/40 px-3 py-2">
-                      <p className="text-[11px] text-[var(--pos-text-2)]">
-                        Selected:{" "}
-                        <span className="font-medium text-[var(--pos-text-1)]">
-                          {activeLine.name}
-                        </span>
-                      </p>
-                      <p className="mt-0.5 text-[11px] text-[var(--pos-text-2)]">
-                        Use <span className="font-medium">Modify</span> to change options/add-ons.
-                      </p>
-                    </div>
-                  ) : null}
                 </div>
 
-                <div className="shrink-0 space-y-3 border-t border-solid [border-color:var(--pos-divider)] p-4">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-[12px] text-[var(--pos-text-2)]">
+                <div className="shrink-0 space-y-2 border-t border-solid [border-color:var(--pos-divider)] px-2.5 py-2">
+                  <div className="grid grid-cols-2 gap-x-5 gap-y-1">
+                    <div className="flex justify-between text-[11px] text-[var(--pos-text-2)]">
+                      <span>Items</span>
+                      <span className="font-mono tabular-nums">{itemCount}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-[var(--pos-text-2)]">
                       <span>Subtotal</span>
-                      <span className="font-mono">${formatMoney(subtotal)}</span>
+                      <span className="font-mono tabular-nums">
+                        ৳{formatMoney(grossSubtotal)}
+                      </span>
                     </div>
-                    <div className="flex justify-between text-[12px] text-[var(--pos-text-2)]">
+                    <div className="flex justify-between text-[11px] text-[var(--pos-text-2)]">
+                      <span>Total discount</span>
+                      <span className="font-mono tabular-nums">
+                        −৳{formatMoney(discount)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-[var(--pos-text-2)]">
+                      <span className="inline-flex items-center gap-1.5">
+                        Service
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={serviceChargeEnabled}
+                          onClick={() => setServiceChargeEnabled((v) => !v)}
+                          className={`relative inline-flex h-[18px] w-8 items-center rounded-full transition-colors ${
+                            serviceChargeEnabled
+                              ? "bg-[var(--pos-primary-bg)]"
+                              : "bg-[var(--pos-border-medium)]"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block size-3.5 transform rounded-full bg-white transition-transform ${
+                              serviceChargeEnabled ? "translate-x-[15px]" : "translate-x-0.5"
+                            }`}
+                          />
+                        </button>
+                      </span>
+                      <span className="font-mono tabular-nums">৳{formatMoney(service)}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-[var(--pos-text-2)]">
                       <span>Tax</span>
-                      <span className="font-mono">${formatMoney(tax)}</span>
+                      <span className="font-mono tabular-nums">৳{formatMoney(tax)}</span>
                     </div>
-                    <div className="flex justify-between border-t border-solid [border-color:var(--pos-border-hairline)] pt-2 text-[15px] font-semibold text-[var(--pos-text-1)]">
+                    <div className="flex justify-between border-t border-solid [border-color:var(--pos-border-hairline)] pt-1 text-[11px] font-semibold text-[var(--pos-accent)]">
+                      <span>Due</span>
+                      <span className="font-mono tabular-nums">৳{formatMoney(total)}</span>
+                    </div>
+                    <div className="col-span-2 flex justify-between border-t border-solid [border-color:var(--pos-border-hairline)] pt-1 text-[14px] font-semibold text-[var(--pos-text-1)]">
                       <span>Total</span>
-                      <span className="font-mono">${formatMoney(total)}</span>
+                      <span className="font-mono tabular-nums">৳{formatMoney(total)}</span>
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-2">
+                  <div className="grid grid-cols-3 gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setCart([])}
-                      className="flex h-11 w-full items-center justify-center gap-2 rounded-[11px] bg-[var(--pos-primary-bg)] px-4 text-[13px] font-semibold text-[var(--pos-primary-fg)] shadow-sm transition-colors hover:bg-[var(--pos-primary-hover)]"
+                      title="Misc product"
+                      onClick={() => setMiscModalOpen(true)}
+                      className="flex h-9 flex-col items-center justify-center gap-0.5 rounded-[8px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] px-1 text-[9px] font-medium leading-tight text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
                     >
-                      <Send className="size-4 shrink-0 opacity-90" strokeWidth={2} />
-                      Place order
+                      <Receipt className="size-3.5 shrink-0" strokeWidth={2} />
+                      Misc
                     </button>
                     <button
                       type="button"
-                      className="flex h-11 w-full items-center justify-center gap-2 rounded-[11px] border-[1.5px] border-solid border-[#e8472a] bg-transparent px-4 text-[13px] font-semibold text-[#e8472a] transition-colors hover:bg-[#e8472a]/10"
+                      title="Print"
+                      onClick={handlePrintOrder}
+                      className="flex h-9 flex-col items-center justify-center gap-0.5 rounded-[8px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] px-1 text-[9px] font-medium leading-tight text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
                     >
-                      <Flame className="size-4 shrink-0" strokeWidth={2} />
-                      Fire to kitchen
+                      <Printer className="size-3.5 shrink-0" strokeWidth={2} />
+                      Print
+                    </button>
+                    <button
+                      type="button"
+                      title="No sale"
+                      onClick={handleNoSale}
+                      className="flex h-9 flex-col items-center justify-center gap-0.5 rounded-[8px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] px-1 text-[9px] font-medium leading-tight text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)]"
+                    >
+                      <CircleDollarSign className="size-3.5 shrink-0" strokeWidth={2} />
+                      No sale
                     </button>
                   </div>
+
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearOrder();
+                        setCheckoutNotice("Order cleared.");
+                      }}
+                      className="flex h-10 items-center justify-center rounded-[10px] bg-[#ef5350] px-2 text-[11px] font-semibold text-white transition-colors hover:bg-[#dc3f3c]"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleHold}
+                      className="flex h-10 items-center justify-center gap-1 rounded-[10px] bg-[var(--pos-primary-bg)] px-2 text-[11px] font-semibold text-[var(--pos-primary-fg)] transition-colors hover:bg-[var(--pos-primary-hover)]"
+                    >
+                      <Send className="size-3 shrink-0" strokeWidth={2} />
+                      Hold
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePay}
+                      className="flex h-10 items-center justify-center rounded-[10px] bg-[#3dbf52] px-2 text-[11px] font-semibold text-white transition-colors hover:bg-[#2ca340]"
+                    >
+                      Pay
+                    </button>
+                  </div>
+                  <p
+                    className={`min-h-[14px] text-center text-[10px] ${
+                      checkoutNotice
+                        ? "text-[var(--pos-text-2)]"
+                        : "text-transparent"
+                    }`}
+                    aria-live="polite"
+                  >
+                    {checkoutNotice || "."}
+                  </p>
                 </div>
               </aside>
             ) : null}
@@ -917,7 +1311,7 @@ export function PosTerminalPage() {
                 Unit price preview
               </p>
               <p className="font-mono text-[14px] font-medium text-[var(--pos-text-1)]">
-                ${formatMoney(computeLineUnitPrice(editingCatalogItem, editDraftConfig))}
+                ৳{formatMoney(computeLineUnitPrice(editingCatalogItem, editDraftConfig))}
               </p>
             </div>
 
@@ -938,6 +1332,208 @@ export function PosTerminalPage() {
                 className="flex h-10 flex-1 items-center justify-center rounded-[10px] bg-[var(--pos-primary-bg)] text-[13px] font-medium text-[var(--pos-primary-fg)] transition-colors hover:bg-[var(--pos-primary-hover)]"
               >
                 Apply changes
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {lineDiscountModalIndex !== null ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Discount"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setLineDiscountModalIndex(null);
+          }}
+        >
+          <div
+            className={`w-full max-w-[400px] rounded-[20px] bg-[var(--pos-card)] p-5 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--pos-text-2)]">
+                  Discount
+                </p>
+                <h3 className="mt-1 text-[15px] font-medium text-[var(--pos-text-1)]">
+                  {cart[lineDiscountModalIndex]?.name ?? "Item"}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLineDiscountModalIndex(null)}
+                className="flex size-8 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-border-medium)] text-[var(--pos-text-1)] hover:[border-color:var(--pos-text-1)]"
+                aria-label="Close"
+              >
+                <X className="size-4" strokeWidth={2} />
+              </button>
+            </div>
+            <p className="mt-2 text-[12px] text-[var(--pos-text-2)]">
+              Enter percent off this line (0–100%). Leave empty or 0 to remove.
+            </p>
+            <label className="mt-4 block text-[11px] font-medium text-[var(--pos-text-2)]">
+              Percent off
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                max={100}
+                step="any"
+                value={lineDiscountDraft}
+                onChange={(e) => setLineDiscountDraft(e.target.value)}
+                placeholder="e.g. 15 or 12.5"
+                className="mt-1.5 h-11 w-full rounded-[12px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[15px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] focus:border-[var(--pos-text-1)] focus:outline-none"
+                aria-label="Discount percent for this line"
+              />
+            </label>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setLineDiscountModalIndex(null)}
+                className="flex h-10 flex-1 items-center justify-center rounded-[10px] border-[1.5px] border-solid [border-color:var(--pos-input-border)] bg-transparent text-[13px] font-medium text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-border-strong)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveLineDiscount}
+                className="flex h-10 flex-1 items-center justify-center rounded-[10px] bg-[var(--pos-primary-bg)] text-[13px] font-medium text-[var(--pos-primary-fg)] transition-colors hover:bg-[var(--pos-primary-hover)]"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {lineNoteModalIndex !== null ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Line note"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setLineNoteModalIndex(null);
+          }}
+        >
+          <div
+            className={`w-full max-w-[400px] rounded-[20px] bg-[var(--pos-card)] p-5 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--pos-text-2)]">
+                  Line note
+                </p>
+                <h3 className="mt-1 text-[15px] font-medium text-[var(--pos-text-1)]">
+                  {cart[lineNoteModalIndex]?.name ?? "Item"}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLineNoteModalIndex(null)}
+                className="flex size-8 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-border-medium)] text-[var(--pos-text-1)] hover:[border-color:var(--pos-text-1)]"
+                aria-label="Close"
+              >
+                <X className="size-4" strokeWidth={2} />
+              </button>
+            </div>
+            <textarea
+              value={lineNoteDraft}
+              onChange={(e) => setLineNoteDraft(e.target.value)}
+              rows={4}
+              placeholder="e.g. No onions, extra sauce…"
+              className="mt-4 w-full resize-y rounded-[12px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 py-2.5 text-[13px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] focus:border-[var(--pos-text-1)] focus:outline-none"
+              aria-label="Note for this line"
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setLineNoteModalIndex(null)}
+                className="flex h-10 flex-1 items-center justify-center rounded-[10px] border-[1.5px] border-solid [border-color:var(--pos-input-border)] bg-transparent text-[13px] font-medium text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-border-strong)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveLineNote}
+                className="flex h-10 flex-1 items-center justify-center rounded-[10px] bg-[var(--pos-primary-bg)] text-[13px] font-medium text-[var(--pos-primary-fg)] transition-colors hover:bg-[var(--pos-primary-hover)]"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {miscModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add misc item"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setMiscModalOpen(false);
+          }}
+        >
+          <div
+            className={`w-full max-w-[400px] rounded-[20px] bg-[var(--pos-card)] p-5 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--pos-text-2)]">
+                  Misc product
+                </p>
+                <h3 className="mt-1 text-[15px] font-medium text-[var(--pos-text-1)]">
+                  Add custom line item
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMiscModalOpen(false)}
+                className="flex size-8 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-border-medium)] text-[var(--pos-text-1)] hover:[border-color:var(--pos-text-1)]"
+                aria-label="Close"
+              >
+                <X className="size-4" strokeWidth={2} />
+              </button>
+            </div>
+            <label className="mt-4 block text-[11px] font-medium text-[var(--pos-text-2)]">
+              Item name
+              <input
+                type="text"
+                value={miscName}
+                onChange={(e) => setMiscName(e.target.value)}
+                placeholder="e.g. Bottle deposit"
+                className="mt-1.5 h-10 w-full rounded-[12px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] focus:border-[var(--pos-text-1)] focus:outline-none"
+              />
+            </label>
+            <label className="mt-3 block text-[11px] font-medium text-[var(--pos-text-2)]">
+              Unit price
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="any"
+                value={miscPrice}
+                onChange={(e) => setMiscPrice(e.target.value)}
+                placeholder="e.g. 2.50"
+                className="mt-1.5 h-10 w-full rounded-[12px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] focus:border-[var(--pos-text-1)] focus:outline-none"
+              />
+            </label>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setMiscModalOpen(false)}
+                className="flex h-10 flex-1 items-center justify-center rounded-[10px] border-[1.5px] border-solid [border-color:var(--pos-input-border)] bg-transparent text-[13px] font-medium text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-border-strong)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addMiscLine}
+                className="flex h-10 flex-1 items-center justify-center rounded-[10px] bg-[var(--pos-primary-bg)] text-[13px] font-medium text-[var(--pos-primary-fg)] transition-colors hover:bg-[var(--pos-primary-hover)]"
+              >
+                Add item
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 /** Demo catalog: items with variant groups (options) and add-ons (sub-options). */
+/** Prices are BDT; `priceCents` = whole taka × 100 (e.g. 245 ৳ → 24500). */
 
 export type MenuChoice = {
   id: string;
@@ -36,234 +37,166 @@ export type CatalogCategory = {
   items: CatalogItem[];
 };
 
+function bdt(bdtAmount: number): number {
+  return Math.round(bdtAmount * 100);
+}
+
+function item(
+  id: string,
+  name: string,
+  bdtAmount: number,
+  soldToday = 0,
+): CatalogItem {
+  return {
+    id,
+    name,
+    priceCents: bdt(bdtAmount),
+    soldToday,
+    variantGroups: [],
+    addons: [],
+  };
+}
+
+/** Unpriced lines in your paste — set amounts in Food management (shows ৳0.00 until then). */
+const TBD = 0;
+
 export const DEMO_CATEGORIES: CatalogCategory[] = [
   {
-    id: "rice-biryani",
-    name: "Rice & biryani",
+    id: "appetizer",
+    name: "Appetizer",
     items: [
-      {
-        id: "cb-1",
-        name: "Chicken biryani",
-        priceCents: 1299,
-        soldToday: 34,
-        variantGroups: [
-          {
-            id: "portion",
-            name: "Portion",
-            required: true,
-            choices: [
-              { id: "reg", name: "Regular", priceDeltaCents: 0 },
-              { id: "large", name: "Large", priceDeltaCents: 350 },
-            ],
-          },
-          {
-            id: "spice",
-            name: "Spice level",
-            required: true,
-            choices: [
-              { id: "mild", name: "Mild", priceDeltaCents: 0 },
-              { id: "med", name: "Medium", priceDeltaCents: 0 },
-              { id: "hot", name: "Hot", priceDeltaCents: 0 },
-            ],
-          },
-        ],
-        addons: [
-          {
-            id: "a-boil",
-            name: "Boiled egg",
-            priceCents: 150,
-            parentGroupId: "portion",
-          },
-          {
-            id: "a-salad",
-            name: "Extra raita",
-            priceCents: 120,
-            parentGroupId: "portion",
-          },
-          {
-            id: "a-papad",
-            name: "Papad",
-            priceCents: 80,
-            parentGroupId: "spice",
-          },
-        ],
-      },
-      {
-        id: "cb-2",
-        name: "Beef tehari",
-        priceCents: 1199,
-        soldToday: 12,
-        variantGroups: [
-          {
-            id: "portion",
-            name: "Portion",
-            required: true,
-            choices: [
-              { id: "reg", name: "Regular", priceDeltaCents: 0 },
-              { id: "large", name: "Large", priceDeltaCents: 300 },
-            ],
-          },
-        ],
-        addons: [
-          {
-            id: "a-egg",
-            name: "Fried egg",
-            priceCents: 150,
-            parentGroupId: "portion",
-          },
-          {
-            id: "a-chili",
-            name: "Green chili pickle",
-            priceCents: 60,
-            parentGroupId: "portion",
-          },
-        ],
-      },
+      item("app-muston-fries", "Muston fries", 395, 6),
+      item("app-cheesy-bites", "Cheesy bites", 565, 2),
+      item("app-salt-pepper-squid", "Salt & pepper squid", 585, 2),
+      item("app-cheesy-poutine", "Cheesy poutine", 499, 2),
+      item("app-chicken-tender-filets", "Chicken tender filets", 445, 5),
+      item("app-mozzarella-sticks", "Mozzarella sticks", 645, 3),
+      item("app-golden-shrimp", "Golden shrimp", 655, 3),
+      item("app-spicy-garlic-wings", "Spicy garlic wings", 445, 8),
     ],
   },
   {
-    id: "curry",
-    name: "Curry & sides",
+    id: "premium-cuts",
+    name: "Premium cuts",
     items: [
-      {
-        id: "cv-1",
-        name: "Mutton rezala",
-        priceCents: 1499,
-        soldToday: 18,
-        variantGroups: [
-          {
-            id: "rice",
-            name: "Carb",
-            required: true,
-            choices: [
-              { id: "plain", name: "Plain rice", priceDeltaCents: 0 },
-              { id: "polao", name: "Polao", priceDeltaCents: 200 },
-              { id: "naan", name: "Butter naan", priceDeltaCents: 250 },
-            ],
-          },
-        ],
-        addons: [
-          {
-            id: "a-salad2",
-            name: "House salad",
-            priceCents: 199,
-            parentGroupId: "rice",
-          },
-          {
-            id: "a-dal",
-            name: "Dal fry (small)",
-            priceCents: 249,
-            parentGroupId: "rice",
-          },
-        ],
-      },
-      {
-        id: "cv-2",
-        name: "Daal makhani",
-        priceCents: 799,
-        soldToday: 22,
-        variantGroups: [
-          {
-            id: "size",
-            name: "Bowl size",
-            required: true,
-            choices: [
-              { id: "half", name: "Half", priceDeltaCents: -200 },
-              { id: "full", name: "Full", priceDeltaCents: 0 },
-            ],
-          },
-        ],
-        addons: [
-          {
-            id: "a-ghee",
-            name: "Extra ghee",
-            priceCents: 100,
-            parentGroupId: "size",
-          },
-        ],
-      },
+      item("pc-porter-house", "Premium porter house (600gm)", 5125, 1),
+      item("pc-tomahawk", "Premium tomahawk (600gm)", 3450, 1),
+      item("pc-tbone", "Premium cut T-bone (350gm)", 2695, 2),
+      item("pc-rib-eye", "Premium cut rib eye (300gm)", 2595, 2),
+      item("pc-tenderloin", "Premium cut tenderloin (300gm)", 2895, 2),
+      item("pc-sirloin", "Premium cut sirloin (300gm)", 2445, 2),
+      item("pc-spare-ribs", "Premium cut spare ribs (800gm)", 3085, 1),
+      item("pc-back-ribs", "Premium cut back ribs (500gm)", 2300, 2),
+      item("pc-lamb-rack", "Premium lamb wild lamb rack", 2495, 1),
+      item("pc-lamb-shank", "Premium lamb wild lamb shank", 1995, 2),
     ],
   },
   {
-    id: "beverages",
-    name: "Beverages",
+    id: "econo-cuts",
+    name: "Econo cuts",
     items: [
-      {
-        id: "be-1",
-        name: "Mango lassi",
-        priceCents: 450,
-        soldToday: 41,
-        variantGroups: [
-          {
-            id: "sweet",
-            name: "Sweetness",
-            required: true,
-            choices: [
-              { id: "std", name: "Standard", priceDeltaCents: 0 },
-              { id: "less", name: "Less sugar", priceDeltaCents: 0 },
-            ],
-          },
-          {
-            id: "ice",
-            name: "Ice",
-            required: true,
-            choices: [
-              { id: "normal", name: "Normal", priceDeltaCents: 0 },
-              { id: "noice", name: "No ice", priceDeltaCents: 0 },
-            ],
-          },
-        ],
-        addons: [
-          {
-            id: "a-mint",
-            name: "Mint shot",
-            priceCents: 50,
-            parentGroupId: "sweet",
-          },
-        ],
-      },
-      {
-        id: "be-2",
-        name: "Masala cha",
-        priceCents: 199,
-        soldToday: 56,
-        variantGroups: [],
-        addons: [
-          { id: "a-ginger", name: "Extra ginger", priceCents: 0 },
-          { id: "a-elachi", name: "Cardamom", priceCents: 0 },
-        ],
-      },
+      item("ec-mushroom-flank", "Mushroom flank (200gm)", 1195, 0),
+      item("ec-pepper-flank", "Pepper flank (200gm)", 1195, 0),
+      item("ec-cheese-flank", "Cheese flank (200gm)", 1295, 0),
+      item("ec-spicy-garlic-wings", "Spicy garlic wings", 445, 8),
     ],
   },
   {
-    id: "desserts",
-    name: "Desserts",
+    id: "special-chicken",
+    name: "Special chicken",
     items: [
-      {
-        id: "ds-1",
-        name: "Rasmalai (2 pcs)",
-        priceCents: 550,
-        soldToday: 15,
-        variantGroups: [
-          {
-            id: "syrup",
-            name: "Syrup",
-            required: true,
-            choices: [
-              { id: "light", name: "Light", priceDeltaCents: 0 },
-              { id: "heavy", name: "Extra syrup", priceDeltaCents: 0 },
-            ],
-          },
-        ],
-        addons: [
-          {
-            id: "a-pista",
-            name: "Pistachio topping",
-            priceCents: 120,
-            parentGroupId: "syrup",
-          },
-        ],
-      },
+      item("sc-smoked-moroccan", "Smoked Moroccan chicken", 595, 0),
+      item("sc-smoked-cheesy", "Smoked cheesy chicken", 695, 0),
+      item("sc-mushroom", "Mushroom chicken", 595, 0),
+      item("sc-mexican", "Mexican chicken", 595, 0),
+    ],
+  },
+  {
+    id: "premium-platter",
+    name: "Premium platter",
+    items: [
+      item("pp-steakhouse-supreme", "Steakhouse supreme", 2485, 0),
+      item("pp-meaty-supreme", "Meaty supreme", 5690, 0),
+      item("pp-grill-heritage", "Grill heritage", 1885, 0),
+      item("pp-rosted-striplion", "Rosted striplion", 3695, 0),
+      item("pp-coastal-sizzle", "Coastal sizzle", 2895, 0),
+      item("pp-carnivorous-feast", "Carnivorous feast", 4895, 0),
+      item("pp-tribal-feast", "Tribal feast", 4595, 0),
+      item("pp-big-bone-theory", "Big bone theory (1800gm)", 4195, 0),
+      item("pp-marrow-challenge", "Marrow challenge", 4995, 0),
+    ],
+  },
+  {
+    id: "soup",
+    name: "Soup",
+    items: [
+      item("sp-creamy-mushroom", "Creamy mushroom soup", 500, 0),
+      item("sp-ribs-beacon", "Ribs beacon soup", 538, 0),
+    ],
+  },
+  {
+    id: "pasta",
+    name: "Pasta",
+    items: [
+      item("pa-steak", "Steak pasta", 661, 0),
+      item("pa-chicken", "Chicken pasta", 571, 0),
+    ],
+  },
+  {
+    id: "mocktails",
+    name: "Mocktails",
+    items: [
+      item("mk-monsoon-bliss", "Monsoon bliss", 285, 0),
+      item("mk-apple-mint-orchard", "Apple mint orchard", 266, 0),
+      item("mk-blue-spark", "Blue spark", 266, 0),
+      item("mk-sunset-vibes", "Sunset vibes", 285, 0),
+      item("mk-minted-majesty", "Minted majesty", 266, 0),
+      item("mk-blue-horizon", "Blue horizon", 266, 0),
+      item("mk-red-dragon", "Red dragon", 285, 0),
+      item("mk-island-escape", "Island escape", 266, 0),
+      item("mk-tropic-twist", "Tropic twist", 266, 0),
+      item("mk-green-paradise", "Green paradise", 285, 0),
+    ],
+  },
+  {
+    id: "smoothie",
+    name: "Smoothie",
+    items: [
+      item("sm-tropic-delight", "Tropic delight", 280, 0),
+      item("sm-berry-wave", "Berry wave", 280, 0),
+      item("sm-choco-dream", "Choco dream", 280, 0),
+      item("sm-mango-tango", "Mango tango", 280, 0),
+      item("sm-redberry-crush", "Redberry crush", 280, 0),
+      item("sm-ocean-breeze", "Ocean breeze", 280, 0),
+    ],
+  },
+  {
+    id: "sides",
+    name: "Sides",
+    items: [
+      item("sd-mexican-rice", "Mexican rice", TBD, 0),
+      item("sd-garlic-rice", "Garlic rice", TBD, 0),
+      item("sd-sauteed-vegetable", "Sauteed vegetable", TBD, 0),
+      item("sd-sauteed-mushroom", "Sauteed mushroom", TBD, 0),
+      item("sd-mash-potato", "Mash potato", TBD, 0),
+      item("sd-mac-cheese", "Mac & cheese", TBD, 0),
+      item("sd-baked-beans", "Baked beans", TBD, 0),
+      item("sd-cheesy-corn", "Cheesy corn", TBD, 0),
+      item("sd-wedges", "Wedges", TBD, 0),
+      item("sd-coleslaw", "Coleslaw", TBD, 0),
+    ],
+  },
+  {
+    id: "sauce",
+    name: "Sauce",
+    items: [
+      item("sau-bbq", "Home made BBQ", TBD, 0),
+      item("sau-mushroom", "Mushroom sauce", TBD, 0),
+      item("sau-hollandaise", "Hollandaise", TBD, 0),
+      item("sau-cheese", "Cheese sauce", TBD, 0),
+      item("sau-roast-beacon", "Roast beacon", TBD, 0),
+      item("sau-honey-master", "Honey master", TBD, 0),
+      item("sau-hot-chilli", "Hot chilli", TBD, 0),
     ],
   },
 ];

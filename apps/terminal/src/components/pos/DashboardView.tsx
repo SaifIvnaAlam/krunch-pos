@@ -26,10 +26,11 @@ const SALES_BY_DAY = [
 const ORDERS_HOURLY = [2, 4, 6, 8, 12, 18, 24, 32, 28, 22, 16, 10, 6];
 
 const CATEGORY_SHARE = [
-  { name: "Rice & biryani", pct: 34 },
-  { name: "Curry & sides", pct: 28 },
-  { name: "Beverages", pct: 22 },
-  { name: "Desserts", pct: 16 },
+  { name: "Premium cuts", pct: 24 },
+  { name: "Premium platter", pct: 18 },
+  { name: "Mocktails & smoothie", pct: 16 },
+  { name: "Appetizer & econo", pct: 22 },
+  { name: "Rest", pct: 20 },
 ];
 
 function fmtMoney(cents: number) {
@@ -43,19 +44,19 @@ export function DashboardView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto pr-1">
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
-          Overview · today
+        <p className="text-[10px] font-medium tracking-[0.06em] text-[var(--pos-text-2)]">
+          Overview / Dashboard
         </p>
-        <h1 className="mt-1 text-[22px] font-medium tracking-[-0.02em] text-[var(--pos-text-1)]">
+        <h1 className="mt-0.5 text-[19px] font-semibold tracking-[-0.01em] text-[var(--pos-text-1)]">
           Dashboard
         </h1>
       </div>
 
       <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
         {[
-          { label: "Gross sales", value: "$4,286", sub: "vs yesterday +12%" },
+          { label: "Gross sales", value: "৳4,286", sub: "vs yesterday +12%" },
           { label: "Orders", value: "142", sub: "in-store + QR" },
-          { label: "Avg ticket", value: "$30.18", sub: "after discounts" },
+          { label: "Avg ticket", value: "৳30.18", sub: "after discounts" },
           { label: "Open tables", value: "8", sub: "of 24 seated" },
         ].map((k) => (
           <div
@@ -95,7 +96,7 @@ export function DashboardView() {
                         height: `${Math.max(h, 8)}%`,
                         backgroundColor: bg,
                       }}
-                      title={`$${fmtMoney(d.cents)}`}
+                      title={`৳${fmtMoney(d.cents)}`}
                     />
                   </div>
                   <span className="font-mono text-[10px] text-[var(--pos-text-2)]">
