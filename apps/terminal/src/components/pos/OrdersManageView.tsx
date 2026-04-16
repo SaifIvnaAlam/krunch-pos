@@ -194,8 +194,8 @@ export function OrdersManageView({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
-      <div>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden pr-1">
+      <div className="shrink-0">
         <p className="text-[10px] font-medium tracking-[0.06em] text-[var(--pos-text-2)]">
           Operations / Orders
         </p>
@@ -205,7 +205,7 @@ export function OrdersManageView({
         <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">{subtitle}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
         {(Object.keys(statusCounts) as OrderStatus[]).map((status) => (
           <div
             key={status}
@@ -221,7 +221,7 @@ export function OrdersManageView({
         ))}
       </div>
 
-      <div className={`rounded-[14px] bg-[var(--pos-card)] p-3 ${border0}`}>
+      <div className={`shrink-0 rounded-[14px] bg-[var(--pos-card)] p-3 ${border0}`}>
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {CONSOLIDATED_ORDER_STATUSES.map((status) => {
@@ -285,8 +285,8 @@ export function OrdersManageView({
           </div>
         </div>
       </div>
-      <div className={`rounded-[14px] bg-[var(--pos-card)] ${border0} overflow-hidden`}>
-        <div className="grid grid-cols-[1fr_72px_100px_130px_86px_70px] gap-2 border-b border-solid [border-color:var(--pos-divider)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
+        <div className="sticky top-0 z-[1] grid shrink-0 grid-cols-[1fr_72px_100px_130px_86px_70px] gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
           <span>Order</span>
           <span>Table</span>
           <span>Status</span>
@@ -294,44 +294,46 @@ export function OrdersManageView({
           <span>Date / Time</span>
           <span className="text-right">Total</span>
         </div>
-        {rows.length === 0 ? (
-          <p className="px-4 py-8 text-center text-[13px] text-[var(--pos-text-2)]">
-            No orders in this view.
-          </p>
-        ) : (
-          rows.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className="grid w-full grid-cols-[1fr_72px_100px_130px_86px_70px] gap-2 border-b border-solid [border-color:var(--pos-border-hairline)] px-3 py-2 text-left transition-colors hover:bg-[var(--pos-sidebar)]"
-            >
-              <div>
-                <p className="font-mono text-[13px] font-medium text-[var(--pos-text-1)]">
-                  {o.id}
-                </p>
-              </div>
-              <span className="font-mono text-[13px] text-[var(--pos-text-2)]">
-                {o.table}
-              </span>
-              <span
-                className={`inline-flex w-fit items-center rounded-[999px] border border-solid px-[8px] py-[2px] text-[10px] font-semibold uppercase ${statusPill[o.status]}`}
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          {rows.length === 0 ? (
+            <p className="px-4 py-8 text-center text-[13px] text-[var(--pos-text-2)]">
+              No orders in this view.
+            </p>
+          ) : (
+            rows.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className="grid w-full grid-cols-[1fr_72px_100px_130px_86px_70px] gap-2 border-b border-solid [border-color:var(--pos-border-hairline)] px-3 py-2 text-left transition-colors hover:bg-[var(--pos-sidebar)]"
               >
-                {STATUS_LABELS[o.status]}
-              </span>
-              <span
-                className={`inline-flex w-fit items-center rounded-[999px] border border-solid px-[8px] py-[2px] text-[10px] font-semibold ${TYPE_PILL[o.type]}`}
-              >
-                {TYPE_LABELS[o.type]}
-              </span>
-              <span className="text-[11px] text-[var(--pos-text-2)]">
-                {o.date.slice(5)} {o.time}
-              </span>
-              <span className="text-right font-mono text-[13px] text-[var(--pos-text-1)]">
-                ৳{o.total}
-              </span>
-            </button>
-          ))
-        )}
+                <div>
+                  <p className="font-mono text-[13px] font-medium text-[var(--pos-text-1)]">
+                    {o.id}
+                  </p>
+                </div>
+                <span className="font-mono text-[13px] text-[var(--pos-text-2)]">
+                  {o.table}
+                </span>
+                <span
+                  className={`inline-flex w-fit items-center rounded-[999px] border border-solid px-[8px] py-[2px] text-[10px] font-semibold uppercase ${statusPill[o.status]}`}
+                >
+                  {STATUS_LABELS[o.status]}
+                </span>
+                <span
+                  className={`inline-flex w-fit items-center rounded-[999px] border border-solid px-[8px] py-[2px] text-[10px] font-semibold ${TYPE_PILL[o.type]}`}
+                >
+                  {TYPE_LABELS[o.type]}
+                </span>
+                <span className="text-[11px] text-[var(--pos-text-2)]">
+                  {o.date.slice(5)} {o.time}
+                </span>
+                <span className="text-right font-mono text-[13px] text-[var(--pos-text-1)]">
+                  ৳{o.total}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

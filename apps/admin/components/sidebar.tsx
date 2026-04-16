@@ -4,12 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: 'home' },
-  { name: 'Staff', href: '/staff', icon: 'users' },
-  { name: 'Roles', href: '/staff/roles', icon: 'shield' },
-  { name: 'Branches', href: '/branches', icon: 'building' },
-  { name: 'Menu Builder', href: '/menu-builder', icon: 'utensils' },
-  { name: 'Reports', href: '/reports', icon: 'chart' },
+  { name: 'Daily Entry Form', href: '/app/daily-entry', icon: 'notebook' },
 ];
 
 export function Sidebar() {

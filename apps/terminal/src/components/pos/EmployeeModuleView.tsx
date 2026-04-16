@@ -1,22 +1,25 @@
 import { useMemo, useState, type ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import {
   CalendarDays,
+  CalendarOff,
   Plus,
+  Receipt,
   Search,
-  Shield,
-  UserCircle,
   Users,
-  UserRound,
 } from "lucide-react";
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
 
-export const EMPLOYEE_LEAF_IDS = new Set([
-  "em-directory",
-  "em-schedule",
-  "em-access",
-  "em-onboard",
+export const HR_LEAF_IDS = new Set([
+  "hr-directory",
+  "hr-roster",
+  "hr-leave",
+  "hr-payroll",
+  /** Legacy nav ids → combined roster view */
+  "hr-schedule",
+  "hr-attendance",
 ]);
 
 const DEMO_STAFF = [
@@ -72,70 +75,6 @@ const DEMO_SHIFTS = [
   { staff: "Omar Karim", mon: "3–11", tue: "3–11", wed: "off", thu: "3–11", fri: "3–close", sat: "3–close", sun: "brunch" },
 ];
 
-const DEMO_ROLES = [
-  {
-    id: "r1",
-    name: "Owner / Admin",
-    users: 2,
-    perms: "Full access · settings · payouts",
-  },
-  {
-    id: "r2",
-    name: "Manager",
-    users: 4,
-    perms: "Floor · orders · inventory · reports",
-  },
-  {
-    id: "r3",
-    name: "Cashier / Server",
-    users: 12,
-    perms: "POS · tables · limited voids",
-  },
-  {
-    id: "r4",
-    name: "Kitchen display",
-    users: 6,
-    perms: "KDS only · no pricing",
-  },
-];
-
-const ONBOARD_COLUMNS: {
-  id: string;
-  label: string;
-  cards: { id: string; title: string; sub: string }[];
-}[] = [
-  {
-    id: "applied",
-    label: "Applied",
-    cards: [
-      { id: "c1", title: "A. Rahman", sub: "Server · ref. M. Karim" },
-      { id: "c2", title: "L. Nahar", sub: "Prep · portfolio link" },
-    ],
-  },
-  {
-    id: "interview",
-    label: "Interview",
-    cards: [{ id: "c3", title: "T. Ahmed", sub: "Barback · Tue 3 PM" }],
-  },
-  {
-    id: "offer",
-    label: "Offer",
-    cards: [{ id: "c4", title: "F. Kabir", sub: "Line cook · docs pending" }],
-  },
-  {
-    id: "paperwork",
-    label: "Paperwork",
-    cards: [
-      { id: "c5", title: "J. Begum", sub: "Tax forms · handbook" },
-    ],
-  },
-  {
-    id: "active",
-    label: "Start date set",
-    cards: [{ id: "c6", title: "K. Hoque", sub: "Apr 7 · Host training" }],
-  },
-];
-
 function PageHeader({
   section,
   title,
@@ -145,10 +84,10 @@ function PageHeader({
   section: string;
   title: string;
   subtitle: string;
-  icon: typeof Users;
+  icon: LucideIcon;
 }) {
   return (
-    <div className="flex flex-wrap items-start gap-3">
+    <div className="flex shrink-0 flex-wrap items-start gap-3">
       <div
         className={`flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[var(--pos-nav-active-bg)] text-[var(--pos-nav-active-fg)] ${border0}`}
       >
@@ -227,15 +166,15 @@ function EmployeeDirectory() {
   }, [q, dept]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto pr-1">
+    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden pr-1">
       <PageHeader
-        section="Employee Management"
-        title="Employee directory"
+        section="Employee management"
+        title="Employee List"
         subtitle="Contact info, department, and employment status. Hook to HRIS or staff API when available."
         icon={Users}
       />
 
-      <Toolbar className="flex-wrap justify-between gap-3">
+      <Toolbar className="shrink-0 flex-wrap justify-between gap-3">
         <div className="relative min-w-[200px] max-w-[320px] flex-1">
           <Search
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--pos-icon-muted)]"
@@ -254,7 +193,7 @@ function EmployeeDirectory() {
         <PrimaryButton>Add employee</PrimaryButton>
       </Toolbar>
 
-      <Toolbar className="gap-1.5">
+      <Toolbar className="shrink-0 gap-1.5">
         {DEPT_FILTERS.map((d) => {
           const on = d === dept;
           return (
@@ -274,16 +213,16 @@ function EmployeeDirectory() {
         })}
       </Toolbar>
 
-      <div className={`min-h-0 flex-1 overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
-        <div className="border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
+        <div className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
             Team roster
           </p>
         </div>
-        <div className="overflow-x-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full min-w-[640px] text-left text-[12px]">
-            <thead>
-              <tr className="border-b border-solid [border-color:var(--pos-border-hairline)] text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+            <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
+              <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
                 <th className="px-4 py-2.5">Name</th>
                 <th className="px-4 py-2.5">Role</th>
                 <th className="px-4 py-2.5">Department</th>
@@ -333,16 +272,12 @@ function EmployeeDirectory() {
   );
 }
 
-function SchedulesShifts() {
+function ScheduleWeekPanel() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto pr-1">
-      <PageHeader
-        section="Employee Management"
-        title="Schedules & shifts"
-        subtitle="Week-at-a-glance for the floor and kitchen. Integrate with time clock or scheduling tools later."
-        icon={CalendarDays}
-      />
-
+    <div className="flex flex-col gap-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+        Weekly schedule
+      </p>
       <Toolbar className="justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <GhostButton>← Prev week</GhostButton>
@@ -357,7 +292,7 @@ function SchedulesShifts() {
         </Toolbar>
       </Toolbar>
 
-      <div className={`overflow-x-auto rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
+      <div className={`overflow-auto rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
         <table className="w-full min-w-[720px] text-left text-[11px]">
           <thead>
             <tr className="border-b border-solid [border-color:var(--pos-divider)] text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
@@ -406,132 +341,231 @@ function SchedulesShifts() {
   );
 }
 
-function RolesAccess() {
+const DEMO_ATTENDANCE = [
+  { name: "Nadia Islam", in: "09:58", out: "—", status: "On shift" as const },
+  { name: "Rafiq Hassan", in: "10:04", out: "18:12", status: "Completed" as const },
+  { name: "Samira Chowdhury", in: "—", out: "—", status: "Leave" as const },
+  { name: "Omar Karim", in: "14:55", out: "—", status: "On shift" as const },
+];
+
+const ATT_STATUS: Record<(typeof DEMO_ATTENDANCE)[number]["status"], string> = {
+  "On shift": "border-[#2f6dae] bg-[#c8def5] text-[#1a4a6c]",
+  Completed: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
+  Leave: "border-[#8a6a2a] bg-[#f8f0e0] text-[#5c4010]",
+};
+
+function AttendanceTodayPanel() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto pr-1">
-      <PageHeader
-        section="Employee Management"
-        title="Roles & access"
-        subtitle="Map POS permissions to job roles. Fine-grained toggles can mirror your admin console."
-        icon={Shield}
-      />
-
-      <Toolbar className="justify-end">
-        <PrimaryButton>New role</PrimaryButton>
+    <div className="flex flex-col gap-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+        Today&apos;s attendance
+      </p>
+      <Toolbar className="justify-between">
+        <p className="text-[12px] text-[var(--pos-text-2)]">Today · Apr 7, 2026</p>
+        <PrimaryButton>Export day</PrimaryButton>
       </Toolbar>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {DEMO_ROLES.map((role) => (
-          <div
-            key={role.id}
-            className={`rounded-[14px] bg-[var(--pos-card)] p-4 ${border0}`}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <h2 className="text-[15px] font-semibold text-[var(--pos-text-1)]">
-                  {role.name}
-                </h2>
-                <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
-                  {role.perms}
-                </p>
-              </div>
-              <span className="shrink-0 rounded-full border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-sidebar)] px-2.5 py-1 font-mono text-[11px] text-[var(--pos-text-2)]">
-                {role.users} users
-              </span>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <GhostButton>Edit permissions</GhostButton>
-              <GhostButton>Assign users</GhostButton>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className={`rounded-[14px] bg-[var(--pos-card)] p-4 ${border0}`}>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
-          Permission groups (sample)
-        </p>
-        <ul className="mt-3 grid gap-2 text-[12px] text-[var(--pos-text-2)] sm:grid-cols-2">
-          {[
-            "Sales · refunds · discounts",
-            "Menu & pricing (read-only)",
-            "Inventory · receiving",
-            "Reports · exports",
-            "Staff clock · breaks",
-            "Device & printer setup",
-          ].map((line) => (
-            <li
-              key={line}
-              className="flex items-center gap-2 rounded-[8px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-page)]/40 px-3 py-2"
-            >
-              <span className="size-1.5 shrink-0 rounded-full bg-[var(--pos-text-1)]/40" />
-              {line}
-            </li>
-          ))}
-        </ul>
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
+        <div className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
+            Shift presence · demo
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full min-w-[560px] text-left text-[12px]">
+            <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
+              <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+                <th className="px-4 py-2.5">Staff</th>
+                <th className="px-4 py-2.5">Clock in</th>
+                <th className="px-4 py-2.5">Clock out</th>
+                <th className="px-4 py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DEMO_ATTENDANCE.map((row) => (
+                <tr
+                  key={row.name}
+                  className="border-b border-solid [border-color:var(--pos-border-hairline)] transition-colors hover:bg-[var(--pos-sidebar)]/60"
+                >
+                  <td className="px-4 py-3 font-medium text-[var(--pos-text-1)]">{row.name}</td>
+                  <td className="px-4 py-3 font-mono text-[11px] text-[var(--pos-text-2)]">{row.in}</td>
+                  <td className="px-4 py-3 font-mono text-[11px] text-[var(--pos-text-2)]">{row.out}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${ATT_STATUS[row.status]}`}
+                    >
+                      {row.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
 }
 
-function OnboardingTraining() {
+function RosterAndAttendance() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto pr-1">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden pr-1">
       <PageHeader
-        section="Employee Management"
-        title="Onboarding & training"
-        subtitle="Track candidates through hire and first shifts. Attach checklists and training modules when you connect HR."
-        icon={UserCircle}
+        section="Employee management"
+        title="Roster & Attendance"
+        subtitle="Weekly shifts and daily clock-in/out in one place. Connect scheduling and time clock tools when you wire the backend."
+        icon={CalendarDays}
       />
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-0.5">
+        <div className="flex flex-col gap-8 pb-1">
+          <ScheduleWeekPanel />
+          <AttendanceTodayPanel />
+        </div>
+      </div>
+    </div>
+  );
+}
 
-      <Toolbar className="justify-between">
-        <p className="text-[12px] text-[var(--pos-text-2)]">
-          Drag-and-drop will map to your workflow; columns are static for now.
-        </p>
-        <PrimaryButton>New applicant</PrimaryButton>
+const DEMO_LEAVE = [
+  { staff: "Samira Chowdhury", type: "Annual", from: "Apr 5", to: "Apr 9", state: "Approved" as const },
+  { staff: "Omar Karim", type: "Sick", from: "Apr 12", to: "Apr 12", state: "Pending" as const },
+  { staff: "Rafiq Hassan", type: "Personal", from: "Apr 20", to: "Apr 21", state: "Approved" as const },
+];
+
+const LEAVE_STATE: Record<(typeof DEMO_LEAVE)[number]["state"], string> = {
+  Approved: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
+  Pending: "border-[#8a6a2a] bg-[#f8f0e0] text-[#5c4010]",
+};
+
+function LeaveRequests() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden pr-1">
+      <PageHeader
+        section="Employee management"
+        title="Leave"
+        subtitle="Requests, balances, and approvals. Replace demo rows with your leave policy and workflows."
+        icon={CalendarOff}
+      />
+      <Toolbar className="shrink-0 flex-wrap justify-between gap-3">
+        <Toolbar className="gap-2">
+          <GhostButton>Balances</GhostButton>
+          <GhostButton>Calendar</GhostButton>
+        </Toolbar>
+        <PrimaryButton>New request</PrimaryButton>
       </Toolbar>
-
-      <div className="flex min-h-[280px] gap-3 overflow-x-auto pb-1">
-        {ONBOARD_COLUMNS.map((col) => (
-          <div
-            key={col.id}
-            className={`flex w-[200px] shrink-0 flex-col rounded-[14px] bg-[var(--pos-card)] ${border0}`}
-          >
-            <div className="border-b border-solid [border-color:var(--pos-divider)] px-3 py-2.5">
-              <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">{col.label}</p>
-              <p className="mt-0.5 font-mono text-[10px] text-[var(--pos-text-2)]">
-                {col.cards.length} card{col.cards.length === 1 ? "" : "s"}
-              </p>
-            </div>
-            <div className="flex flex-1 flex-col gap-2 p-2">
-              {col.cards.map((c) => (
-                <div
-                  key={c.id}
-                  className={`rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-page)]/50 p-3`}
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
+        <div className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
+            Upcoming · demo
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full min-w-[620px] text-left text-[12px]">
+            <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
+              <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+                <th className="px-4 py-2.5">Staff</th>
+                <th className="px-4 py-2.5">Type</th>
+                <th className="px-4 py-2.5">From</th>
+                <th className="px-4 py-2.5">To</th>
+                <th className="px-4 py-2.5">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DEMO_LEAVE.map((row) => (
+                <tr
+                  key={`${row.staff}-${row.from}`}
+                  className="border-b border-solid [border-color:var(--pos-border-hairline)] transition-colors hover:bg-[var(--pos-sidebar)]/60"
                 >
-                  <div className="flex items-start gap-2">
-                    <UserRound className="mt-0.5 size-4 shrink-0 text-[var(--pos-icon-muted)]" />
-                    <div className="min-w-0">
-                      <p className="text-[12px] font-semibold text-[var(--pos-text-1)]">
-                        {c.title}
-                      </p>
-                      <p className="mt-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
-                        {c.sub}
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                  <td className="px-4 py-3 font-medium text-[var(--pos-text-1)]">{row.staff}</td>
+                  <td className="px-4 py-3 text-[var(--pos-text-2)]">{row.type}</td>
+                  <td className="px-4 py-3 text-[11px] text-[var(--pos-text-2)]">{row.from}</td>
+                  <td className="px-4 py-3 text-[11px] text-[var(--pos-text-2)]">{row.to}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${LEAVE_STATE[row.state]}`}
+                    >
+                      {row.state}
+                    </span>
+                  </td>
+                </tr>
               ))}
-              <button
-                type="button"
-                className="mt-auto flex items-center justify-center gap-1 rounded-[8px] border border-dashed border-[var(--pos-border-medium)] py-2 text-[11px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)]/50"
-              >
-                <Plus className="size-3.5" strokeWidth={2} />
-                Add
-              </button>
-            </div>
-          </div>
-        ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DEMO_PAYROLL = [
+  { staff: "Nadia Islam", period: "Mar 16–31", gross: "28,400", net: "24,180", paid: "Paid" as const },
+  { staff: "Rafiq Hassan", period: "Mar 16–31", gross: "26,200", net: "22,340", paid: "Paid" as const },
+  { staff: "Samira Chowdhury", period: "Mar 16–31", gross: "22,800", net: "19,520", paid: "Scheduled" as const },
+  { staff: "Omar Karim", period: "Mar 16–31", gross: "31,000", net: "26,450", paid: "Paid" as const },
+];
+
+const PAY_STATUS: Record<(typeof DEMO_PAYROLL)[number]["paid"], string> = {
+  Paid: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
+  Scheduled: "border-[#2f6dae] bg-[#c8def5] text-[#1a4a6c]",
+};
+
+function PayrollSalaries() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden pr-1">
+      <PageHeader
+        section="Employee management"
+        title="Payroll & Compensation"
+        subtitle="Per-period pay runs and status. Hook into accounting or a payroll provider for production."
+        icon={Receipt}
+      />
+      <Toolbar className="shrink-0 justify-between">
+        <p className="text-[12px] text-[var(--pos-text-2)]">BDT · demo figures</p>
+        <PrimaryButton showPlus={false}>
+          Run payroll
+        </PrimaryButton>
+      </Toolbar>
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
+        <div className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
+            Recent periods · demo
+          </p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full min-w-[640px] text-left text-[12px]">
+            <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
+              <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+                <th className="px-4 py-2.5">Staff</th>
+                <th className="px-4 py-2.5">Period</th>
+                <th className="px-4 py-2.5 text-right">Gross</th>
+                <th className="px-4 py-2.5 text-right">Net</th>
+                <th className="px-4 py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DEMO_PAYROLL.map((row) => (
+                <tr
+                  key={`${row.staff}-${row.period}`}
+                  className="border-b border-solid [border-color:var(--pos-border-hairline)] transition-colors hover:bg-[var(--pos-sidebar)]/60"
+                >
+                  <td className="px-4 py-3 font-medium text-[var(--pos-text-1)]">{row.staff}</td>
+                  <td className="px-4 py-3 text-[11px] text-[var(--pos-text-2)]">{row.period}</td>
+                  <td className="px-4 py-3 text-right font-mono text-[11px] text-[var(--pos-text-1)]">
+                    {row.gross}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-[11px] text-[var(--pos-text-1)]">
+                    {row.net}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${PAY_STATUS[row.paid]}`}
+                    >
+                      {row.paid}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -539,14 +573,16 @@ function OnboardingTraining() {
 
 export function EmployeeModuleView({ leafId }: { leafId: string }) {
   switch (leafId) {
-    case "em-directory":
+    case "hr-directory":
       return <EmployeeDirectory />;
-    case "em-schedule":
-      return <SchedulesShifts />;
-    case "em-access":
-      return <RolesAccess />;
-    case "em-onboard":
-      return <OnboardingTraining />;
+    case "hr-roster":
+    case "hr-schedule":
+    case "hr-attendance":
+      return <RosterAndAttendance />;
+    case "hr-leave":
+      return <LeaveRequests />;
+    case "hr-payroll":
+      return <PayrollSalaries />;
     default:
       return <EmployeeDirectory />;
   }

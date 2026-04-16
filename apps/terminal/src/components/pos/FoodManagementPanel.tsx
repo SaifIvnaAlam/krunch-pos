@@ -13,7 +13,7 @@ type Props = {
   setCategories: Dispatch<SetStateAction<CatalogCategory[]>>;
   addonTemplates: AddonTemplate[];
   setAddonTemplates: Dispatch<SetStateAction<AddonTemplate[]>>;
-  initialLeaf: "fd-cat" | "fd-items" | "fd-addon";
+  initialLeaf: "fd-cat" | "fd-items" | "fd-addon" | "fd-menu";
 };
 
 function slug(input: string) {
@@ -251,15 +251,17 @@ export function FoodManagementPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
       <div>
         <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">
-          {initialLeaf === "fd-cat"
-            ? "Category setup"
-            : initialLeaf === "fd-items"
-              ? "Item editor"
-              : "Add-on library"}
+          {initialLeaf === "fd-menu"
+            ? "Menu management"
+            : initialLeaf === "fd-cat"
+              ? "Category setup"
+              : initialLeaf === "fd-items"
+                ? "Item editor"
+                : "Add-on library"}
         </h1>
       </div>
 
-      {initialLeaf === "fd-cat" ? (
+      {initialLeaf === "fd-cat" || initialLeaf === "fd-menu" ? (
         <section className="rounded-[12px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-4">
           <p className="text-[13px] font-medium text-[var(--pos-text-1)]">New category</p>
           <div className="mt-2 flex gap-2">
@@ -298,7 +300,7 @@ export function FoodManagementPanel({
         </section>
       ) : null}
 
-      {initialLeaf === "fd-items" ? (
+      {initialLeaf === "fd-items" || initialLeaf === "fd-menu" ? (
         <>
           <section className="rounded-[12px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-4">
             <p className="text-[13px] font-medium text-[var(--pos-text-1)]">Step 1: Basic item info</p>

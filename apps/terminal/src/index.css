@@ -42,29 +42,32 @@
   --pos-icon-tile-bg: #ffffff;
 }
 
-/* Sidebar theme: strict black & white */
+/* Sidebar theme: teal panel with soft contrast */
 :root,
 html.dark {
-  --pos-sb-bg: #000000;
-  --pos-sb-header-bg: #000000;
-  --pos-sb-border: rgba(255, 255, 255, 0.16);
-  --pos-sb-divider: rgba(255, 255, 255, 0.14);
+  /* Single source of truth: change only this hex to recolor the full sidebar. */
+  --pos-sb-base: #670303;
+
+  --pos-sb-bg: var(--pos-sb-base);
+  --pos-sb-header-bg: var(--pos-sb-base);
+  --pos-sb-border: color-mix(in srgb, var(--pos-sb-base), white 18%);
+  --pos-sb-divider: color-mix(in srgb, var(--pos-sb-base), white 16%);
   --pos-sb-text-1: #ffffff;
-  --pos-sb-text-2: #b3b3b3;
-  --pos-sb-text-3: #d9d9d9;
-  --pos-sb-icon: #d9d9d9;
-  --pos-sb-hover: rgba(255, 255, 255, 0.1);
-  --pos-sb-active-bg: #ffffff;
-  --pos-sb-active-bar: #ffffff;
-  --pos-sb-active-text: #000000;
-  --pos-sb-active-icon: #000000;
-  --pos-sb-section-label: #a6a6a6;
-  --pos-sb-card: #111111;
-  --pos-sb-brand-bg: #1a1a1a;
-  --pos-sb-branch-open: rgba(255, 255, 255, 0.08);
+  --pos-sb-text-2: color-mix(in srgb, var(--pos-sb-base), white 78%);
+  --pos-sb-text-3: #ffffff;
+  --pos-sb-icon: color-mix(in srgb, var(--pos-sb-base), white 88%);
+  --pos-sb-hover: color-mix(in srgb, var(--pos-sb-base), black 12%);
+  --pos-sb-active-bg: color-mix(in srgb, var(--pos-sb-base), black 20%);
+  --pos-sb-active-bar: color-mix(in srgb, var(--pos-sb-base), black 28%);
+  --pos-sb-active-text: #ffffff;
+  --pos-sb-active-icon: #ffffff;
+  --pos-sb-section-label: color-mix(in srgb, var(--pos-sb-base), white 72%);
+  --pos-sb-card: color-mix(in srgb, var(--pos-sb-base), black 18%);
+  --pos-sb-brand-bg: color-mix(in srgb, var(--pos-sb-base), black 16%);
+  --pos-sb-branch-open: color-mix(in srgb, var(--pos-sb-base), black 10%);
   --pos-sb-badge-bg: #ffffff;
-  --pos-sb-badge-fg: #000000;
-  --pos-sb-badge-border: rgba(255, 255, 255, 0.65);
+  --pos-sb-badge-fg: color-mix(in srgb, var(--pos-sb-base), black 72%);
+  --pos-sb-badge-border: color-mix(in srgb, var(--pos-sb-base), white 80%);
 }
 
 html.dark {

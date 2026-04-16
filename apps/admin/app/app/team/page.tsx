@@ -78,7 +78,7 @@ export default async function TeamPage({
 
   return (
     <main className="min-h-screen bg-page">
-      <Shell title="Staff and invites">
+      <Shell title="Employee List">
         <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="rounded-bento border border-0 bg-card p-3">
             <div className="font-mono text-[18px] font-bold tracking-[-0.02em] text-white">

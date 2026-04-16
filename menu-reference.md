@@ -1,6 +1,6 @@
-# Bhojon demo — navigation reference (inferred)
+# Competitor demo — navigation reference (inferred)
 
-This document is based on **screenshots of the Bhojon admin sidebar** (demo UI) plus **reasonable inferences** for what each area does and which **sub-options** it often contains in products like this. Sub-items were **not all visible** in the screenshots; many rows below are **educated guesses** aligned with BDTASK’s public Bhojon feature pages and common POS patterns. Treat as a planning/competitive reference, not guaranteed API or menu parity.
+This document is based on **screenshots of a competitor admin sidebar** (demo UI) plus **reasonable inferences** for what each area does and which **sub-options** it often contains in products like this. Sub-items were **not all visible** in the screenshots; many rows below are **educated guesses** aligned with public feature pages and common POS patterns. Treat as a planning/competitive reference, not guaranteed API or menu parity.
 
 **Legend:** *(Addon)* — shown with an “Addon” badge in the demo sidebar.
 
@@ -302,5 +302,5 @@ This document is based on **screenshots of the Bhojon admin sidebar** (demo UI) 
 
 ## Sources
 
-- Observed UI: Bhojon demo admin sidebar (user-provided screenshots).
-- Cross-check for module naming: [BDTASK — Bhojon restaurant management system](https://www.bdtask.com/restaurant-management-system.php).
+- Observed UI: competitor demo admin sidebar (user-provided screenshots).
+- Cross-check for module naming: [BDTASK — restaurant management system](https://www.bdtask.com/restaurant-management-system.php).

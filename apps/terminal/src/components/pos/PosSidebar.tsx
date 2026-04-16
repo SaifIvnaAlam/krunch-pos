@@ -13,40 +13,67 @@ import {
   POS_NAV_SECTIONS,
   branchPathToLeaf,
   type NavBranch,
-  type NavLeaf,
   type NavNode,
-} from "../../data/bhojonNav";
+} from "../../data/posNav";
 
 const RESTAURANT = {
   name: "Steak & Marrow",
   branch: "Downtown · Floor service",
 } as const;
 
-function collectCollapsedShortcuts(): NavLeaf[] {
-  const out: NavLeaf[] = [];
-  const seen = new Set<string>();
-
-  function walk(nodes: NavNode[]) {
-    for (const node of nodes) {
-      if (node.kind === "leaf") {
-        if (seen.has(node.id)) continue;
-        seen.add(node.id);
-        out.push(node);
-      } else {
-        walk(node.children);
-      }
+/** One collapsed-rail button per top-level nav row (matches expanded sidebar, not every nested leaf). */
+type CollapsedShortcut =
+  | {
+      key: string;
+      kind: "leaf";
+      label: string;
+      icon: LucideIcon;
+      leafId: string;
     }
-  }
+  | {
+      key: string;
+      kind: "branch";
+      label: string;
+      icon: LucideIcon;
+      defaultLeafId: string;
+      activeLeafIds: string[];
+    };
 
-  for (const section of POS_NAV_SECTIONS) {
-    walk(section.nodes);
+function leafIdsUnder(node: NavNode): string[] {
+  if (node.kind === "leaf") return [node.id];
+  return node.children.flatMap(leafIdsUnder);
+}
+
+function topLevelNodesToCollapsedShortcuts(nodes: NavNode[]): CollapsedShortcut[] {
+  const out: CollapsedShortcut[] = [];
+  for (const node of nodes) {
+    if (node.kind === "leaf") {
+      out.push({
+        key: node.id,
+        kind: "leaf",
+        label: node.label,
+        icon: node.icon,
+        leafId: node.id,
+      });
+    } else {
+      const activeLeafIds = leafIdsUnder(node);
+      const defaultLeafId = activeLeafIds[0];
+      if (!defaultLeafId) continue;
+      out.push({
+        key: node.id,
+        kind: "branch",
+        label: node.label,
+        icon: node.icon,
+        defaultLeafId,
+        activeLeafIds,
+      });
+    }
   }
   return out;
 }
 
-const COLLAPSED_SHORTCUTS = collectCollapsedShortcuts();
-
 const SIDEBAR_COLLAPSED_KEY = "remi_pos_sidebar_collapsed";
+const UTILITY_NODE_IDS = new Set(["report", "setting", "user"]);
 
 function readSidebarCollapsed(): boolean {
   try {
@@ -122,23 +149,21 @@ function LeafRow({
   );
 }
 
-function CollapsedLeafIcon({
-  id,
+function CollapsedNavIconButton({
   label,
   icon: Icon,
   active,
-  onSelect,
+  onActivate,
 }: {
-  id: string;
   label: string;
   icon: LucideIcon;
   active: boolean;
-  onSelect: (id: string) => void;
+  onActivate: () => void;
 }) {
   return (
     <button
       type="button"
-      onClick={() => onSelect(id)}
+      onClick={onActivate}
       title={label}
       aria-label={label}
       aria-current={active ? "page" : undefined}
@@ -167,11 +192,14 @@ export function PosSidebar({
   onSignOut: () => void;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
-  const [openBranches, setOpenBranches] = useState<Record<string, boolean>>({
-    "manage-order": true,
-  });
+  const [openBranches, setOpenBranches] = useState<Record<string, boolean>>({});
   const navRef = useRef<HTMLElement | null>(null);
   const [collapsedCanScrollDown, setCollapsedCanScrollDown] = useState(false);
+  const allSidebarNodes = POS_NAV_SECTIONS.flatMap((section) => section.nodes);
+  const primaryNodes = allSidebarNodes.filter((node) => !UTILITY_NODE_IDS.has(node.id));
+  const utilityNodes = allSidebarNodes.filter((node) => UTILITY_NODE_IDS.has(node.id));
+  const primaryCollapsedShortcuts = topLevelNodesToCollapsedShortcuts(primaryNodes);
+  const utilityCollapsedShortcuts = topLevelNodesToCollapsedShortcuts(utilityNodes);
 
   const setCollapsed = (next: boolean) => {
     writeSidebarCollapsed(next);
@@ -282,7 +310,7 @@ export function PosSidebar({
         ) : (
           <div className="flex items-center gap-3">
             <div
-              className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--pos-sb-brand-bg)]"
+              className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[var(--pos-sb-brand-bg)]"
               title={RESTAURANT.name}
             >
               <UtensilsCrossed className="size-[15px] text-[var(--pos-sb-text-1)]" strokeWidth={2} />
@@ -315,35 +343,65 @@ export function PosSidebar({
       </div>
 
       {/* Nav */}
-      <nav
-        ref={navRef}
-        className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-      >
+      <nav ref={navRef} className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         {sidebarCollapsed ? (
           <div className="flex flex-col gap-0.5 px-1 pt-3">
-            {COLLAPSED_SHORTCUTS.map((s) => (
-              <CollapsedLeafIcon
-                key={s.id}
-                id={s.id}
-                label={s.label}
-                icon={s.icon}
-                active={activeLeafId === s.id}
-                onSelect={onSelectLeaf}
-              />
-            ))}
+            {primaryCollapsedShortcuts.map((s) =>
+              s.kind === "leaf" ? (
+                <CollapsedNavIconButton
+                  key={s.key}
+                  label={s.label}
+                  icon={s.icon}
+                  active={activeLeafId === s.leafId}
+                  onActivate={() => onSelectLeaf(s.leafId)}
+                />
+              ) : (
+                <CollapsedNavIconButton
+                  key={s.key}
+                  label={s.label}
+                  icon={s.icon}
+                  active={s.activeLeafIds.includes(activeLeafId)}
+                  onActivate={() => onSelectLeaf(s.defaultLeafId)}
+                />
+              ),
+            )}
           </div>
         ) : (
           <div className="px-2 py-3">
-            {POS_NAV_SECTIONS.map((section, i) => (
-              <div key={section.id} className={i > 0 ? "mt-4" : ""}>
-                <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--pos-sb-section-label)]">
-                  {section.label}
-                </p>
-                <div className="flex flex-col gap-0.5">{renderNodes(section.nodes, 0)}</div>
+            <div className="flex flex-col gap-0.5">
+              {renderNodes(primaryNodes, 0)}
+            </div>
+            {utilityNodes.length > 0 ? (
+              <div className="mt-4 border-t border-[var(--pos-sb-divider)] pt-3">
+                <div className="flex flex-col gap-0.5">{renderNodes(utilityNodes, 0)}</div>
               </div>
-            ))}
+            ) : null}
           </div>
         )}
+
+        {sidebarCollapsed && utilityCollapsedShortcuts.length > 0 ? (
+          <div className="mt-2 border-t border-[var(--pos-sb-divider)] px-1 pt-2">
+            {utilityCollapsedShortcuts.map((s) =>
+              s.kind === "leaf" ? (
+                <CollapsedNavIconButton
+                  key={s.key}
+                  label={s.label}
+                  icon={s.icon}
+                  active={activeLeafId === s.leafId}
+                  onActivate={() => onSelectLeaf(s.leafId)}
+                />
+              ) : (
+                <CollapsedNavIconButton
+                  key={s.key}
+                  label={s.label}
+                  icon={s.icon}
+                  active={s.activeLeafIds.includes(activeLeafId)}
+                  onActivate={() => onSelectLeaf(s.defaultLeafId)}
+                />
+              ),
+            )}
+          </div>
+        ) : null}
 
         {sidebarCollapsed && collapsedCanScrollDown ? (
           <div className="pointer-events-none sticky bottom-0 left-0 right-0 flex justify-center pb-2 pt-4">
@@ -406,9 +464,6 @@ export function PosSidebar({
     </aside>
   );
 }
-
-/** @deprecated Renamed to PosSidebar (kept for compatibility). */
-export const PosBhojonSidebar = PosSidebar;
 
 function BranchBlock({
   branch,

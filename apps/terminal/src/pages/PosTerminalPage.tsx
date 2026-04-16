@@ -2,10 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CircleDollarSign,
-  Focus,
   Minus,
   NotebookPen,
-  PanelLeftOpen,
   Plus,
   Printer,
   Receipt,
@@ -18,7 +16,11 @@ import {
   X,
 } from "lucide-react";
 import { useDevAuth } from "../context/DevAuthContext";
-import { MENU_VIEW_IDS, findLeafMeta } from "../data/bhojonNav";
+import { MENU_VIEW_IDS, findLeafMeta } from "../data/posNav";
+import {
+  resolveInitialLeafId,
+  writeStoredLastLeafId,
+} from "../posSectionStorage";
 import {
   DEMO_CATEGORIES,
   buildOrderLineDisplay,
@@ -27,21 +29,26 @@ import {
   type CatalogItem,
   type OrderLineConfig,
 } from "../data/demoMenuCatalog";
-import { PosSidebar } from "../components/pos/PosBhojonSidebar";
+import { PosSidebar } from "../components/pos/PosSidebar";
 import { DashboardView } from "../components/pos/DashboardView";
-import { FloorView } from "../components/pos/FloorView";
 import { OrdersManageView } from "../components/pos/OrdersManageView";
 import { GenericModuleView } from "../components/pos/GenericModuleView";
 import {
-  EMPLOYEE_LEAF_IDS,
+  HR_LEAF_IDS,
   EmployeeModuleView,
 } from "../components/pos/EmployeeModuleView";
 import {
   INVENTORY_LEAF_IDS,
   InventoryModuleView,
 } from "../components/pos/InventoryModuleView";
+import {
+  PURCHASE_LEAF_IDS,
+  PurchaseModuleView,
+} from "../components/pos/PurchaseModuleView";
 import { ReservationView } from "../components/pos/ReservationView";
 import { ItemOptionsBody } from "../components/pos/ItemOptionsModal";
+import { ExpenseRecordsView } from "../components/pos/ExpenseRecordsView";
+import { DailyEntryFormView } from "../components/pos/DailyEntryFormView";
 import {
   FoodManagementPanel,
   type AddonTemplate,
@@ -208,7 +215,7 @@ export function PosTerminalPage() {
     () => [...menuCategories].sort((a, b) => a.name.localeCompare(b.name)),
     [menuCategories],
   );
-  const [activeLeafId, setActiveLeafId] = useState("menu");
+  const [activeLeafId, setActiveLeafId] = useState(resolveInitialLeafId);
   const [activeCategory, setActiveCategory] = useState(
     orderedMenuCategories[0]?.id ?? "appetizer",
   );
@@ -238,8 +245,6 @@ export function PosTerminalPage() {
   const [miscModalOpen, setMiscModalOpen] = useState(false);
   const [miscName, setMiscName] = useState("");
   const [miscPrice, setMiscPrice] = useState("");
-  /** Full chrome (sidebar + footer). POS opens in focus/zen mode by default. */
-  const [focusMode, setFocusMode] = useState(true);
   const menuSearchInputRef = useRef<HTMLInputElement>(null);
   const orderPanelRef = useRef<HTMLElement | null>(null);
 
@@ -248,6 +253,19 @@ export function PosTerminalPage() {
     const t = window.setTimeout(() => setCheckoutNotice(""), 2200);
     return () => window.clearTimeout(t);
   }, [checkoutNotice]);
+
+  useEffect(() => {
+    const onNav = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ leafId?: string }>).detail;
+      if (detail?.leafId) setActiveLeafId(detail.leafId);
+    };
+    window.addEventListener("pos-select-leaf", onNav);
+    return () => window.removeEventListener("pos-select-leaf", onNav);
+  }, []);
+
+  useEffect(() => {
+    writeStoredLastLeafId(activeLeafId);
+  }, [activeLeafId]);
 
   // Keep POS menu aligned with source catalog after hot-reload/session drift.
   useEffect(() => {
@@ -558,7 +576,6 @@ export function PosTerminalPage() {
 
   const mainContent = () => {
     if (activeLeafId === "dashboard") return <DashboardView />;
-    if (activeLeafId === "floor") return <FloorView />;
     if (activeLeafId === "mo-list") {
       return <OrdersManageView defaultFilter="all" />;
     }
@@ -700,27 +717,43 @@ export function PosTerminalPage() {
     if (INVENTORY_LEAF_IDS.has(activeLeafId)) {
       return <InventoryModuleView leafId={activeLeafId} />;
     }
-    if (EMPLOYEE_LEAF_IDS.has(activeLeafId)) {
+    if (PURCHASE_LEAF_IDS.has(activeLeafId)) {
+      return <PurchaseModuleView leafId={activeLeafId} />;
+    }
+    if (HR_LEAF_IDS.has(activeLeafId)) {
       return <EmployeeModuleView leafId={activeLeafId} />;
+    }
+
+    if (activeLeafId === "exp-list") {
+      return <ExpenseRecordsView />;
+    }
+    if (activeLeafId === "exp-daily") {
+      return <DailyEntryFormView />;
+    }
+
+    if (
+      activeLeafId === "menu-mgmt" ||
+      activeLeafId === "fd-cat" ||
+      activeLeafId === "fd-items" ||
+      activeLeafId === "fd-addon"
+    ) {
+      return (
+        <FoodManagementPanel
+          categories={menuCategories}
+          setCategories={setMenuCategories}
+          addonTemplates={addonTemplates}
+          setAddonTemplates={setAddonTemplates}
+          initialLeaf={
+            activeLeafId === "fd-addon"
+              ? "fd-addon"
+              : "fd-menu"
+          }
+        />
+      );
     }
 
     const meta = findLeafMeta(activeLeafId);
     if (meta) {
-      if (
-        activeLeafId === "fd-cat" ||
-        activeLeafId === "fd-items" ||
-        activeLeafId === "fd-addon"
-      ) {
-        return (
-          <FoodManagementPanel
-            categories={menuCategories}
-            setCategories={setMenuCategories}
-            addonTemplates={addonTemplates}
-            setAddonTemplates={setAddonTemplates}
-            initialLeaf={activeLeafId}
-          />
-        );
-      }
       return (
         <GenericModuleView
           title={meta.label}
@@ -738,39 +771,15 @@ export function PosTerminalPage() {
   return (
     <div className="flex h-full w-full flex-col bg-[var(--pos-page)] text-[var(--pos-text-3)]">
       <div className="relative flex min-h-0 flex-1">
-        {!focusMode ? (
-          <PosSidebar
-            activeLeafId={activeLeafId}
-            onSelectLeaf={setActiveLeafId}
-            onSignOut={handleSignOut}
-          />
-        ) : null}
+        <PosSidebar
+          activeLeafId={activeLeafId}
+          onSelectLeaf={setActiveLeafId}
+          onSignOut={handleSignOut}
+        />
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {focusMode ? (
-            <button
-              type="button"
-              onClick={() => setFocusMode(false)}
-              title="Show sidebar"
-              className={`absolute right-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-[var(--pos-card)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--pos-text-1)] shadow-sm ${border0} transition-colors hover:bg-[var(--pos-nav-hover)]/50`}
-            >
-              <PanelLeftOpen className="size-3.5 shrink-0 opacity-80" aria-hidden />
-              Exit focus
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setFocusMode(true)}
-              title="Focus mode - hide sidebar"
-              className={`absolute right-3 top-3 z-20 flex size-8 items-center justify-center rounded-full bg-[var(--pos-card)] text-[var(--pos-text-2)] shadow-sm ${border0} transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]`}
-              aria-label="Enter focus mode"
-            >
-              <Focus className="size-3.5" strokeWidth={2} />
-            </button>
-          )}
-
           <div className="flex min-h-0 flex-1 gap-3 px-3 pb-3 pt-2">
-            <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {mainContent()}
             </main>
 

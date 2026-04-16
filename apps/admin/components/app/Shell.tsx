@@ -21,33 +21,15 @@ export function Shell({
                 Owner control room
               </div>
               <div className="mt-1 text-[12px] leading-[1.6] text-caption">
-                Locations, invites, and access control.
+                Record and review daily operational entries.
               </div>
             </div>
             <div className="mt-3 space-y-1">
               <a
                 className="block rounded-md px-3 py-2 text-[13px] text-body transition-colors duration-150 hover:bg-elevated hover:text-white"
-                href="/app"
+                href="/app/daily-entry"
               >
-                Command center
-              </a>
-              <a
-                className="block rounded-md px-3 py-2 text-[13px] text-body transition-colors duration-150 hover:bg-elevated hover:text-white"
-                href="/app/restaurants"
-              >
-                Locations
-              </a>
-              <a
-                className="block rounded-md px-3 py-2 text-[13px] text-body transition-colors duration-150 hover:bg-elevated hover:text-white"
-                href="/app/team"
-              >
-                Staff and invites
-              </a>
-              <a
-                className="block rounded-md px-3 py-2 text-[13px] text-body transition-colors duration-150 hover:bg-elevated hover:text-white"
-                href="/app/settings"
-              >
-                Platform settings
+                Daily Entry Form
               </a>
             </div>
             <form action="/api/auth/logout" method="post" className="mt-3">
