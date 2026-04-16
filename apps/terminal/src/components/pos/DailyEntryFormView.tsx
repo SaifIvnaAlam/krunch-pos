@@ -1,4 +1,4 @@
-import { CalendarDays, Eye, Pencil, Trash2 } from "lucide-react";
+import { CalendarDays, Eye, ImagePlus, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from "react";
 
 type ExpenseLineSaved = {
@@ -8,6 +8,8 @@ type ExpenseLineSaved = {
   /** Free-text description when kind is regular (optional) */
   label?: string;
   amount: number;
+  /** Receipt photos as data URLs (image/*), stored on this device with the entry */
+  receiptDataUrls?: string[];
 };
 
 type DailyEntryRow = {
@@ -35,9 +37,63 @@ type ExpenseLineDraft = {
   /** Regular expense description (no vendor) */
   label: string;
   amount: string;
+  receiptDataUrls: string[];
 };
 
 const STORAGE_KEY = "upos.dailyEntryRows.v1";
+
+const MAX_RECEIPTS_PER_LINE = 4;
+const MAX_RECEIPT_BYTES = 2_500_000;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) {
+      reject(new Error("Only image files can be attached as receipts."));
+      return;
+    }
+    if (file.size > MAX_RECEIPT_BYTES) {
+      reject(
+        new Error(
+          `Each receipt image must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
+        ),
+      );
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Could not read the image."));
+    };
+    reader.onerror = () => reject(new Error("Could not read the image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function mergeReceiptDataUrls(
+  existing: readonly string[],
+  files: readonly File[],
+): Promise<{ ok: true; urls: string[] } | { ok: false; message: string }> {
+  const room = MAX_RECEIPTS_PER_LINE - existing.length;
+  if (room <= 0) {
+    return {
+      ok: false,
+      message: `At most ${MAX_RECEIPTS_PER_LINE} receipt images per expense line.`,
+    };
+  }
+  const next = [...existing];
+  const slice = files.slice(0, room);
+  try {
+    for (const file of slice) {
+      next.push(await readFileAsDataUrl(file));
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not add receipt image.",
+    };
+  }
+  return { ok: true, urls: next };
+}
 
 /** Select value for free-typed vendor (not yet in the saved list). */
 const VENDOR_OTHER_VALUE = "__vendor_other__";
@@ -68,11 +124,11 @@ function newLineId(): string {
 }
 
 function newVendorExpenseLine(): ExpenseLineDraft {
-  return { id: newLineId(), kind: "vendor", vendor: "", label: "", amount: "" };
+  return { id: newLineId(), kind: "vendor", vendor: "", label: "", amount: "", receiptDataUrls: [] };
 }
 
 function newRegularExpenseLine(): ExpenseLineDraft {
-  return { id: newLineId(), kind: "regular", vendor: "", label: "", amount: "" };
+  return { id: newLineId(), kind: "regular", vendor: "", label: "", amount: "", receiptDataUrls: [] };
 }
 
 function todayKey() {
@@ -161,6 +217,10 @@ function expenseTotalFromRow(r: DailyEntryRow): number {
   return r.expenses ?? 0;
 }
 
+function normalizeReceiptUrls(urls: string[] | undefined): string {
+  return JSON.stringify([...(urls ?? [])].sort());
+}
+
 function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined): string {
   const rows = [...(lines ?? [])].map((line) => {
     const kind = savedLineKind(line);
@@ -169,6 +229,7 @@ function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined):
       vendor: kind === "vendor" ? (line.vendor ?? "").trim() : "",
       label: kind === "regular" ? (line.label ?? "").trim() : "",
       amount: line.amount,
+      receipts: normalizeReceiptUrls(line.receiptDataUrls),
     };
   });
   rows.sort((a, b) =>
@@ -210,6 +271,7 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
         vendor: kind === "vendor" ? (line.vendor ?? "") : "",
         label: kind === "regular" ? (line.label ?? "") : "",
         amount: line.amount === 0 ? "" : String(line.amount),
+        receiptDataUrls: [...(line.receiptDataUrls ?? [])],
       };
     });
   }
@@ -221,6 +283,7 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
         vendor: "Legacy total",
         label: "",
         amount: String(r.expenses),
+        receiptDataUrls: [],
       },
     ];
   }
@@ -491,7 +554,7 @@ export function DailyEntryFormView() {
 
   function patchLine(
     id: string,
-    patch: Partial<Pick<ExpenseLineDraft, "vendor" | "amount" | "label">>,
+    patch: Partial<Pick<ExpenseLineDraft, "vendor" | "amount" | "label" | "receiptDataUrls">>,
   ) {
     setExpenseLines((lines) =>
       lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
@@ -508,6 +571,69 @@ export function DailyEntryFormView() {
 
   function removeExpenseLine(id: string) {
     setExpenseLines((lines) => lines.filter((l) => l.id !== id));
+  }
+
+  function renderExpenseReceiptStrip(line: ExpenseLineDraft) {
+    const urls = line.receiptDataUrls;
+    const canAddMore = urls.length < MAX_RECEIPTS_PER_LINE;
+    const inputId = `daily-expense-receipt-${line.id}`;
+    return (
+      <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1">
+        {urls.map((url, idx) => (
+          <div key={`${line.id}-r-${idx}`} className="relative inline-flex">
+            <img
+              src={url}
+              alt=""
+              className="size-11 rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-cover"
+            />
+            <button
+              type="button"
+              className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[10px] leading-none text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]"
+              aria-label="Remove receipt image"
+              onClick={() =>
+                patchLine(line.id, {
+                  receiptDataUrls: urls.filter((_, j) => j !== idx),
+                })
+              }
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        {canAddMore ? (
+          <>
+            <input
+              id={inputId}
+              type="file"
+              accept="image/*"
+              multiple
+              className="sr-only"
+              onChange={(e) => {
+                const list = e.target.files;
+                e.target.value = "";
+                if (!list?.length) return;
+                void (async () => {
+                  const result = await mergeReceiptDataUrls(urls, Array.from(list));
+                  if (result.ok) patchLine(line.id, { receiptDataUrls: result.urls });
+                  else setNotice(result.message);
+                })();
+              }}
+            />
+            <label
+              htmlFor={inputId}
+              className="inline-flex cursor-pointer items-center gap-1 rounded-[6px] border border-dashed border-[var(--pos-border-medium)] px-2 py-1 text-[10px] font-medium text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
+            >
+              <ImagePlus className="size-3.5 shrink-0" strokeWidth={2.25} />
+              Receipt
+            </label>
+          </>
+        ) : (
+          <span className="text-[9px] text-[var(--pos-text-2)]">
+            Max {MAX_RECEIPTS_PER_LINE} images
+          </span>
+        )}
+      </div>
+    );
   }
 
   function handleSave() {
@@ -541,9 +667,14 @@ export function DailyEntryFormView() {
     const linesToSave: ExpenseLineSaved[] = [];
     for (const line of expenseLines) {
       const amt = parseAmount(line.amount);
+      const receiptUrls = line.receiptDataUrls.filter(Boolean);
+      const receiptField =
+        receiptUrls.length > 0 ? ({ receiptDataUrls: receiptUrls } as const) : {};
       if (line.kind === "vendor") {
         const v = line.vendor.trim();
-        if (v && amt > 0) linesToSave.push({ kind: "vendor", vendor: v, amount: amt });
+        if (v && amt > 0) {
+          linesToSave.push({ kind: "vendor", vendor: v, amount: amt, ...receiptField });
+        }
       } else {
         if (amt > 0) {
           const label = line.label.trim();
@@ -551,6 +682,7 @@ export function DailyEntryFormView() {
             kind: "regular",
             ...(label ? { label } : {}),
             amount: amt,
+            ...receiptField,
           });
         }
       }
@@ -1000,8 +1132,10 @@ export function DailyEntryFormView() {
                   Expenses
                 </p>
                 <p className="text-[10px] text-[var(--pos-text-2)]">
-                  Vendor lines use the dropdown; regular lines use a text field (no vendor). Total
-                  updates the Expenses stat card.
+                  Vendor lines use the dropdown; regular lines use a text field (no vendor). Attach
+                  receipt photos per line (images only, up to {MAX_RECEIPTS_PER_LINE} per line, ~
+                  {(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB each) — stored on this device with
+                  the entry. Total updates the Expenses stat card.
                 </p>
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
@@ -1034,32 +1168,35 @@ export function DailyEntryFormView() {
                       return (
                         <div
                           key={line.id}
-                          className="grid grid-cols-[1fr_4.25rem_2rem] items-start gap-x-1 gap-y-0"
+                          className="space-y-1 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/30 p-1"
                         >
-                          <input
-                            type="text"
-                            value={line.label}
-                            onChange={(e) => patchLine(line.id, { label: e.target.value })}
-                            placeholder="Description (optional)"
-                            className={textInputClass}
-                            autoComplete="off"
-                            aria-label="Regular expense note"
-                          />
-                          <input
-                            {...amountFieldProps("next")}
-                            value={line.amount}
-                            onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                            className={inputClass}
-                            aria-label="Regular expense amount"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeExpenseLine(line.id)}
-                            className="inline-flex size-8 shrink-0 items-center justify-center justify-self-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                            aria-label="Remove expense line"
-                          >
-                            ×
-                          </button>
+                          <div className="grid grid-cols-[1fr_4.25rem_2rem] items-start gap-x-1 gap-y-0">
+                            <input
+                              type="text"
+                              value={line.label}
+                              onChange={(e) => patchLine(line.id, { label: e.target.value })}
+                              placeholder="Description (optional)"
+                              className={textInputClass}
+                              autoComplete="off"
+                              aria-label="Regular expense note"
+                            />
+                            <input
+                              {...amountFieldProps("next")}
+                              value={line.amount}
+                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
+                              className={inputClass}
+                              aria-label="Regular expense amount"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeExpenseLine(line.id)}
+                              className="inline-flex size-8 shrink-0 items-center justify-center justify-self-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                              aria-label="Remove expense line"
+                            >
+                              ×
+                            </button>
+                          </div>
+                          {renderExpenseReceiptStrip(line)}
                         </div>
                       );
                     }
@@ -1073,59 +1210,62 @@ export function DailyEntryFormView() {
                     return (
                       <div
                         key={line.id}
-                        className="grid grid-cols-[1fr_4.25rem_2rem] items-start gap-x-1 gap-y-0"
+                        className="space-y-1 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/30 p-1"
                       >
-                        <div className="flex min-w-0 flex-col gap-1">
-                          <select
-                            className={selectClass}
-                            value={selectValue}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === "") {
-                                patchLine(line.id, { vendor: "" });
-                              } else if (val === VENDOR_OTHER_VALUE) {
-                                if (inList) patchLine(line.id, { vendor: "" });
-                              } else {
-                                patchLine(line.id, { vendor: val });
-                              }
-                            }}
-                            aria-label="Expense vendor"
+                        <div className="grid grid-cols-[1fr_4.25rem_2rem] items-start gap-x-1 gap-y-0">
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <select
+                              className={selectClass}
+                              value={selectValue}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === "") {
+                                  patchLine(line.id, { vendor: "" });
+                                } else if (val === VENDOR_OTHER_VALUE) {
+                                  if (inList) patchLine(line.id, { vendor: "" });
+                                } else {
+                                  patchLine(line.id, { vendor: val });
+                                }
+                              }}
+                              aria-label="Expense vendor"
+                            >
+                              <option value="">Select vendor…</option>
+                              {vendorOptions.map((name) => (
+                                <option key={name} value={name}>
+                                  {name}
+                                </option>
+                              ))}
+                              <option value={VENDOR_OTHER_VALUE}>Other…</option>
+                            </select>
+                            {showOtherInput ? (
+                              <input
+                                type="text"
+                                value={line.vendor}
+                                onChange={(e) => patchLine(line.id, { vendor: e.target.value })}
+                                placeholder="Type vendor name"
+                                className={textInputClass}
+                                autoComplete="off"
+                                aria-label="Custom vendor name"
+                              />
+                            ) : null}
+                          </div>
+                          <input
+                            {...amountFieldProps("next")}
+                            value={line.amount}
+                            onChange={(e) => patchLine(line.id, { amount: e.target.value })}
+                            className={inputClass}
+                            aria-label="Expense amount"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeExpenseLine(line.id)}
+                            className="inline-flex size-8 shrink-0 items-center justify-center justify-self-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                            aria-label="Remove expense line"
                           >
-                            <option value="">Select vendor…</option>
-                            {vendorOptions.map((name) => (
-                              <option key={name} value={name}>
-                                {name}
-                              </option>
-                            ))}
-                            <option value={VENDOR_OTHER_VALUE}>Other…</option>
-                          </select>
-                          {showOtherInput ? (
-                            <input
-                              type="text"
-                              value={line.vendor}
-                              onChange={(e) => patchLine(line.id, { vendor: e.target.value })}
-                              placeholder="Type vendor name"
-                              className={textInputClass}
-                              autoComplete="off"
-                              aria-label="Custom vendor name"
-                            />
-                          ) : null}
+                            ×
+                          </button>
                         </div>
-                        <input
-                          {...amountFieldProps("next")}
-                          value={line.amount}
-                          onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                          className={inputClass}
-                          aria-label="Expense amount"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeExpenseLine(line.id)}
-                          className="inline-flex size-8 shrink-0 items-center justify-center justify-self-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                          aria-label="Remove expense line"
-                        >
-                          ×
-                        </button>
+                        {renderExpenseReceiptStrip(line)}
                       </div>
                     );
                   })}
@@ -1203,13 +1343,35 @@ export function DailyEntryFormView() {
                       kind === "vendor"
                         ? (line.vendor ?? "").trim() || "Vendor"
                         : (line.label ?? "").trim() || "Expense";
+                    const receipts = line.receiptDataUrls ?? [];
                     return (
                       <li
                         key={`${title}-${idx}`}
-                        className="flex justify-between gap-3 text-[12px] text-[var(--pos-text-1)]"
+                        className="border-b border-solid [border-color:var(--pos-divider)] pb-2 last:border-b-0 last:pb-0"
                       >
-                        <span className="min-w-0 break-words">{title}</span>
-                        <span className="shrink-0 tabular-nums">{formatMoney(line.amount)}</span>
+                        <div className="flex justify-between gap-3 text-[12px] text-[var(--pos-text-1)]">
+                          <span className="min-w-0 break-words">{title}</span>
+                          <span className="shrink-0 tabular-nums">{formatMoney(line.amount)}</span>
+                        </div>
+                        {receipts.length > 0 ? (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {receipts.map((url, ri) => (
+                              <a
+                                key={`${idx}-r-${ri}`}
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block rounded-[6px] border border-solid [border-color:var(--pos-divider)]"
+                              >
+                                <img
+                                  src={url}
+                                  alt={`Receipt ${ri + 1} for ${title}`}
+                                  className="size-14 object-cover"
+                                />
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
                       </li>
                     );
                   })}
