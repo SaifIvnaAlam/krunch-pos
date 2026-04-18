@@ -63,7 +63,7 @@ const SIDEBAR_NAV_NODES: NavNode[] = [
       {
         kind: "leaf",
         id: "inv-adjust",
-        label: "Stock adjustments",
+        label: "Stock in & out",
         icon: Factory,
       },
     ],

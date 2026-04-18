@@ -3,12 +3,12 @@ import { Type } from 'class-transformer';
 
 export class PurchaseOrderLineInputDto {
   @IsUUID()
-  stockItemId: string;
+  stockItemId!: string;
 
   @IsNumber()
   @Min(0.0001)
   @Type(() => Number)
-  quantityOrdered: number;
+  quantityOrdered!: number;
 
   @IsOptional()
   @IsNumber()

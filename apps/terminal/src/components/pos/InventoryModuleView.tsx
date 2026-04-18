@@ -1,15 +1,25 @@
 import {
+  useEffect,
   useMemo,
   useState,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { Plus, Search, X } from "lucide-react";
+import { Minus, Plus, Search, X } from "lucide-react";
+import {
+  type InventoryStore,
+  type LedgerMovement,
+  type StockDirection,
+  type StockItemMeta,
+  balanceForItem,
+  loadInventoryStore,
+  saveInventoryStore,
+  seedInventoryStore,
+} from "../../lib/inventoryLedger";
 
 export const INVENTORY_LEAF_IDS = new Set(["inv-overview", "inv-adjust"]);
 
-// ——— Design tokens (match expense records) ———
 const fieldBaseClass =
   "mt-1 h-9 w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)]";
 const inputClass = `${fieldBaseClass} cursor-text`;
@@ -17,10 +27,12 @@ const selectClass = `${fieldBaseClass} cursor-pointer`;
 const dateInputClass = `${fieldBaseClass} cursor-pointer`;
 const labelClass = "text-[11px] text-[var(--pos-text-2)]";
 
-function formatWhole(value: number) {
-  return new Intl.NumberFormat("en-BD", { maximumFractionDigits: 0 }).format(
-    Math.round(value),
-  );
+function formatQty(value: number) {
+  return new Intl.NumberFormat("en-BD", { maximumFractionDigits: 3 }).format(value);
+}
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat("en-BD", { maximumFractionDigits: 0 }).format(Math.round(value));
 }
 
 function shortDate(isoDate: string) {
@@ -81,19 +93,9 @@ function PosSideDrawer({
   );
 }
 
-// ——— Stock overview ———
 type StockStatus = "ok" | "low" | "out";
 
-type StockItemRow = {
-  id: string;
-  sku: string;
-  name: string;
-  category: string;
-  unit: string;
-  onHand: number;
-  parLevel: number;
-  lastCounted: string;
-};
+type OverviewRow = StockItemMeta & { balance: number };
 
 const STOCK_CATEGORIES = [
   "Produce",
@@ -106,83 +108,20 @@ const STOCK_CATEGORIES = [
 
 const UNITS = ["kg", "g", "L", "ml", "ea", "bx", "cs"] as const;
 
-function stockStatus(row: StockItemRow): StockStatus {
-  if (row.onHand <= 0) return "out";
-  if (row.onHand < row.parLevel) return "low";
+function stockStatus(balance: number, parLevel: number): StockStatus {
+  if (balance <= 0) return "out";
+  if (balance < parLevel) return "low";
   return "ok";
 }
-
-const INITIAL_STOCK: StockItemRow[] = [
-  {
-    id: "stk-1",
-    sku: "PR-001",
-    name: "White onion",
-    category: "Produce",
-    unit: "kg",
-    onHand: 12,
-    parLevel: 8,
-    lastCounted: "2026-04-07",
-  },
-  {
-    id: "stk-2",
-    sku: "PR-002",
-    name: "Roma tomatoes",
-    category: "Produce",
-    unit: "kg",
-    onHand: 5,
-    parLevel: 6,
-    lastCounted: "2026-04-08",
-  },
-  {
-    id: "stk-3",
-    sku: "DY-100",
-    name: "Heavy cream",
-    category: "Dairy",
-    unit: "L",
-    onHand: 8,
-    parLevel: 4,
-    lastCounted: "2026-04-06",
-  },
-  {
-    id: "stk-4",
-    sku: "DR-220",
-    name: "Arborio rice",
-    category: "Dry goods",
-    unit: "kg",
-    onHand: 20,
-    parLevel: 10,
-    lastCounted: "2026-04-05",
-  },
-  {
-    id: "stk-5",
-    sku: "PR-030",
-    name: "Beef tenderloin",
-    category: "Protein",
-    unit: "kg",
-    onHand: 0,
-    parLevel: 4,
-    lastCounted: "2026-04-08",
-  },
-  {
-    id: "stk-6",
-    sku: "BV-012",
-    name: "Sparkling water",
-    category: "Beverages",
-    unit: "cs",
-    onHand: 14,
-    parLevel: 8,
-    lastCounted: "2026-04-07",
-  },
-];
 
 type StockDraft = {
   sku: string;
   name: string;
   category: string;
   unit: string;
-  onHand: string;
   parLevel: string;
   lastCounted: string;
+  openingQty: string;
 };
 
 function defaultStockDraft(): StockDraft {
@@ -191,84 +130,28 @@ function defaultStockDraft(): StockDraft {
     name: "",
     category: STOCK_CATEGORIES[0],
     unit: UNITS[0],
-    onHand: "",
     parLevel: "",
     lastCounted: new Date().toISOString().slice(0, 10),
+    openingQty: "",
   };
 }
 
-// ——— Adjustments ———
-type AdjustmentKind = "Receive" | "Waste" | "Correction";
-
-type AdjustmentRow = {
-  id: string;
+type MovementDraft = {
   date: string;
   itemId: string;
-  itemSku: string;
-  itemName: string;
-  kind: AdjustmentKind;
-  /** Signed change applied to on-hand (+ receive, − waste, correction as entered). */
-  signedQty: number;
-  reason: string;
-};
-
-const INITIAL_ADJUSTMENTS: AdjustmentRow[] = [
-  {
-    id: "adj-1",
-    date: "2026-04-08",
-    itemId: "stk-1",
-    itemSku: "PR-001",
-    itemName: "White onion",
-    kind: "Receive",
-    signedQty: 10,
-    reason: "Morning market run",
-  },
-  {
-    id: "adj-2",
-    date: "2026-04-08",
-    itemId: "stk-2",
-    itemSku: "PR-002",
-    itemName: "Roma tomatoes",
-    kind: "Waste",
-    signedQty: -2,
-    reason: "Prep trim / spoilage",
-  },
-  {
-    id: "adj-3",
-    date: "2026-04-07",
-    itemId: "stk-4",
-    itemSku: "DR-220",
-    itemName: "Arborio rice",
-    kind: "Correction",
-    signedQty: -1,
-    reason: "Count correction after audit",
-  },
-];
-
-type AdjustmentDraft = {
-  date: string;
-  itemId: string;
-  kind: AdjustmentKind;
+  direction: StockDirection;
   qty: string;
-  reason: string;
+  note: string;
 };
 
-function defaultAdjustmentDraft(): AdjustmentDraft {
+function defaultMovementDraft(): MovementDraft {
   return {
     date: new Date().toISOString().slice(0, 10),
     itemId: "",
-    kind: "Receive",
+    direction: "IN",
     qty: "",
-    reason: "",
+    note: "",
   };
-}
-
-function signedQtyFromDraft(kind: AdjustmentKind, qtyRaw: string): number | null {
-  const n = Number.parseFloat(qtyRaw);
-  if (!Number.isFinite(n) || n === 0) return null;
-  if (kind === "Receive") return Math.abs(n);
-  if (kind === "Waste") return -Math.abs(n);
-  return n;
 }
 
 type InvShellProps = {
@@ -299,41 +182,54 @@ function InvShell({
         </div>
         {primaryAction}
       </div>
-      {filters}
       {stats}
+      {filters}
       {table}
       {drawer}
     </div>
   );
 }
 
+function usePersistedInventory(): [InventoryStore, Dispatch<SetStateAction<InventoryStore>>] {
+  const [store, setStore] = useState<InventoryStore>(() => loadInventoryStore() ?? seedInventoryStore());
+
+  useEffect(() => {
+    saveInventoryStore(store);
+  }, [store]);
+
+  return [store, setStore];
+}
+
 export function InventoryModuleView({ leafId }: { leafId: string }) {
-  const [stockItems, setStockItems] = useState<StockItemRow[]>(INITIAL_STOCK);
-  const [adjustments, setAdjustments] = useState<AdjustmentRow[]>(INITIAL_ADJUSTMENTS);
+  const [store, setStore] = usePersistedInventory();
 
   if (leafId === "inv-adjust") {
     return (
-      <AdjustmentsSection
-        stockItems={stockItems}
-        setStockItems={setStockItems}
-        adjustments={adjustments}
-        setAdjustments={setAdjustments}
-      />
+      <MovementsSection store={store} setStore={setStore} />
     );
   }
 
-  return (
-    <StockOverviewSection stockItems={stockItems} setStockItems={setStockItems} />
-  );
+  return <StockOverviewSection store={store} setStore={setStore} />;
 }
 
 function StockOverviewSection({
-  stockItems,
-  setStockItems,
+  store,
+  setStore,
 }: {
-  stockItems: StockItemRow[];
-  setStockItems: Dispatch<SetStateAction<StockItemRow[]>>;
+  store: InventoryStore;
+  setStore: Dispatch<SetStateAction<InventoryStore>>;
 }) {
+  const { items, movements } = store;
+
+  const rows: OverviewRow[] = useMemo(
+    () =>
+      items.map((it) => ({
+        ...it,
+        balance: balanceForItem(movements, it.id),
+      })),
+    [items, movements],
+  );
+
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string>("All");
   const [statusFilter, setStatusFilter] = useState<"All" | StockStatus>("All");
@@ -343,27 +239,27 @@ function StockOverviewSection({
 
   const categories = useMemo(() => {
     const s = new Set<string>([...STOCK_CATEGORIES]);
-    stockItems.forEach((r) => s.add(r.category));
+    rows.forEach((r) => s.add(r.category));
     return ["All", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
-  }, [stockItems]);
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return stockItems.filter((row) => {
+    return rows.filter((row) => {
       const text =
         q.length === 0 ||
         row.name.toLowerCase().includes(q) ||
         row.sku.toLowerCase().includes(q) ||
         row.category.toLowerCase().includes(q);
       const cat = category === "All" || row.category === category;
-      const st = stockStatus(row);
+      const st = stockStatus(row.balance, row.parLevel);
       const stOk = statusFilter === "All" || st === statusFilter;
       return text && cat && stOk;
     });
-  }, [stockItems, search, category, statusFilter]);
+  }, [rows, search, category, statusFilter]);
 
   const lowOrOut = useMemo(
-    () => filtered.filter((r) => stockStatus(r) !== "ok").length,
+    () => filtered.filter((r) => stockStatus(r.balance, r.parLevel) !== "ok").length,
     [filtered],
   );
 
@@ -383,47 +279,81 @@ function StockOverviewSection({
     setModal("create");
   }
 
-  function openEdit(row: StockItemRow) {
+  function openEdit(row: OverviewRow) {
     setEditingId(row.id);
     setDraft({
       sku: row.sku,
       name: row.name,
       category: row.category,
       unit: row.unit,
-      onHand: String(row.onHand),
       parLevel: String(row.parLevel),
       lastCounted: row.lastCounted,
+      openingQty: "",
     });
     setModal("edit");
   }
 
   function saveStock() {
-    const onHand = Number.parseFloat(draft.onHand);
     const par = Number.parseFloat(draft.parLevel);
     if (
       !draft.sku.trim() ||
       !draft.name.trim() ||
-      !Number.isFinite(onHand) ||
-      onHand < 0 ||
       !Number.isFinite(par) ||
       par < 0
     ) {
       return;
     }
-    const row: StockItemRow = {
-      id: editingId ?? `stk-${Date.now()}`,
-      sku: draft.sku.trim(),
-      name: draft.name.trim(),
-      category: draft.category,
-      unit: draft.unit,
-      onHand,
-      parLevel: par,
-      lastCounted: draft.lastCounted,
-    };
+
     if (modal === "create") {
-      setStockItems((prev) => [row, ...prev]);
+      const openingRaw = draft.openingQty.trim();
+      const opening =
+        openingRaw === "" ? 0 : Number.parseFloat(openingRaw);
+      if (openingRaw !== "" && (!Number.isFinite(opening) || opening < 0)) return;
+
+      const id = `stk-${Date.now()}`;
+      const item: StockItemMeta = {
+        id,
+        sku: draft.sku.trim(),
+        name: draft.name.trim(),
+        category: draft.category,
+        unit: draft.unit,
+        parLevel: par,
+        lastCounted: draft.lastCounted,
+      };
+
+      const newMovements = [...movements];
+      if (opening > 0) {
+        newMovements.unshift({
+          id: `mov-${id}-open`,
+          stockItemId: id,
+          direction: "IN",
+          quantity: opening,
+          date: draft.lastCounted,
+          note: "Opening balance",
+        });
+      }
+
+      setStore((prev) => ({
+        items: [item, ...prev.items],
+        movements: newMovements,
+      }));
     } else if (modal === "edit" && editingId) {
-      setStockItems((prev) => prev.map((x) => (x.id === editingId ? { ...row, id: editingId } : x)));
+      setStore((prev) => ({
+        ...prev,
+        items: prev.items.map((it) =>
+          it.id === editingId
+            ? {
+                ...it,
+                sku: draft.sku.trim(),
+                name: draft.name.trim(),
+                category: draft.category,
+                unit: draft.unit,
+                parLevel: par,
+                lastCounted: draft.lastCounted,
+              }
+            : it,
+        ),
+      }));
     }
     closeModal();
   }
@@ -431,17 +361,17 @@ function StockOverviewSection({
   const saveDisabled =
     !draft.sku.trim() ||
     !draft.name.trim() ||
-    draft.onHand.trim() === "" ||
     draft.parLevel.trim() === "" ||
-    !Number.isFinite(Number.parseFloat(draft.onHand)) ||
-    Number.parseFloat(draft.onHand) < 0 ||
     !Number.isFinite(Number.parseFloat(draft.parLevel)) ||
     Number.parseFloat(draft.parLevel) < 0;
+
+  const editBalance =
+    editingId != null ? balanceForItem(movements, editingId) : null;
 
   return (
     <InvShell
       title="Stock overview"
-      description="SKU-level counts, par levels, and quick status at a glance."
+      description="Balances are calculated from every stock IN and OUT. Edit items for SKU details and par level only."
       primaryAction={
         <button
           type="button"
@@ -500,13 +430,13 @@ function StockOverviewSection({
           <div className="rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
             <div className="text-[11px] text-[var(--pos-text-2)]">SKUs (this view)</div>
             <div className="text-[14px] font-semibold text-[var(--pos-text-1)]">
-              {formatWhole(filtered.length)}
+              {formatCount(filtered.length)}
             </div>
           </div>
           <div className="rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
             <div className="text-[11px] text-[var(--pos-text-2)]">Low or out</div>
             <div className="text-[14px] font-semibold text-[var(--pos-text-1)]">
-              {formatWhole(lowOrOut)}
+              {formatCount(lowOrOut)}
             </div>
           </div>
         </div>
@@ -523,7 +453,7 @@ function StockOverviewSection({
                 </th>
                 <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Unit</th>
                 <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">
-                  On hand
+                  Balance
                 </th>
                 <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Par</th>
                 <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">
@@ -536,7 +466,7 @@ function StockOverviewSection({
             </thead>
             <tbody>
               {filtered.map((row) => {
-                const st = stockStatus(row);
+                const st = stockStatus(row.balance, row.parLevel);
                 return (
                   <tr
                     key={row.id}
@@ -556,10 +486,10 @@ function StockOverviewSection({
                     <td className="px-4 py-2 text-[var(--pos-text-2)]">{row.category}</td>
                     <td className="px-4 py-2 text-[var(--pos-text-2)]">{row.unit}</td>
                     <td className="px-4 py-2 tabular-nums text-[var(--pos-text-1)]">
-                      {formatWhole(row.onHand)}
+                      {formatQty(row.balance)}
                     </td>
                     <td className="px-4 py-2 tabular-nums text-[var(--pos-text-2)]">
-                      {formatWhole(row.parLevel)}
+                      {formatQty(row.parLevel)}
                     </td>
                     <td className="px-4 py-2 text-[var(--pos-text-2)]">
                       {shortDate(row.lastCounted)}
@@ -598,7 +528,16 @@ function StockOverviewSection({
             title={modal === "edit" ? "Edit stock item" : "Add stock item"}
             subtitle={
               modal === "edit" && editingId ? (
-                <p className="text-[11px] text-[var(--pos-text-2)]">{editingId}</p>
+                <div className="space-y-1">
+                  <p className="text-[11px] text-[var(--pos-text-2)]">{editingId}</p>
+                  {editBalance !== null ? (
+                    <p className="text-[11px] text-[var(--pos-text-1)]">
+                      Current balance:{" "}
+                      <span className="font-semibold tabular-nums">{formatQty(editBalance)}</span>{" "}
+                      (from movements — change under Stock in &amp; out)
+                    </p>
+                  ) : null}
+                </div>
               ) : null
             }
             onClose={closeModal}
@@ -682,17 +621,20 @@ function StockOverviewSection({
                     ))}
                   </select>
                 </label>
-                <label className={labelClass}>
-                  On hand
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    value={draft.onHand}
-                    onChange={(e) => patchDraft({ onHand: e.target.value })}
-                    className={inputClass}
-                    min={0}
-                  />
-                </label>
+                {modal === "create" ? (
+                  <label className={`${labelClass} sm:col-span-2`}>
+                    Opening stock IN (optional)
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={draft.openingQty}
+                      onChange={(e) => patchDraft({ openingQty: e.target.value })}
+                      className={inputClass}
+                      min={0}
+                      placeholder="Leave empty to start at zero; creates one IN line"
+                    />
+                  </label>
+                ) : null}
                 <label className={labelClass}>
                   Par / reorder level
                   <input
@@ -713,136 +655,209 @@ function StockOverviewSection({
   );
 }
 
-function AdjustmentsSection({
-  stockItems,
-  setStockItems,
-  adjustments,
-  setAdjustments,
+function MovementsSection({
+  store,
+  setStore,
 }: {
-  stockItems: StockItemRow[];
-  setStockItems: Dispatch<SetStateAction<StockItemRow[]>>;
-  adjustments: AdjustmentRow[];
-  setAdjustments: Dispatch<SetStateAction<AdjustmentRow[]>>;
+  store: InventoryStore;
+  setStore: Dispatch<SetStateAction<InventoryStore>>;
 }) {
+  const { items, movements } = store;
+
   const [search, setSearch] = useState("");
-  const [kindFilter, setKindFilter] = useState<"All" | AdjustmentKind>("All");
+  const [dirFilter, setDirFilter] = useState<"All" | StockDirection>("All");
   const [modal, setModal] = useState<"none" | "create" | "edit">("none");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<AdjustmentDraft>(() => defaultAdjustmentDraft());
-  const [prevSigned, setPrevSigned] = useState<number | null>(null);
+  const [draft, setDraft] = useState<MovementDraft>(() => defaultMovementDraft());
+  const [prevRow, setPrevRow] = useState<LedgerMovement | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [createDirectionLocked, setCreateDirectionLocked] = useState(false);
+
+  const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
+
+  const enriched = useMemo(
+    () =>
+      movements.map((m) => {
+        const it = itemById.get(m.stockItemId);
+        return {
+          ...m,
+          itemSku: it?.sku ?? "—",
+          itemName: it?.name ?? "Removed item",
+        };
+      }),
+    [movements, itemById],
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return adjustments.filter((row) => {
+    return enriched.filter((row) => {
       const text =
         q.length === 0 ||
         row.itemName.toLowerCase().includes(q) ||
         row.itemSku.toLowerCase().includes(q) ||
-        row.reason.toLowerCase().includes(q);
-      const k = kindFilter === "All" || row.kind === kindFilter;
-      return text && k;
+        row.note.toLowerCase().includes(q);
+      const d = dirFilter === "All" || row.direction === dirFilter;
+      return text && d;
     });
-  }, [adjustments, search, kindFilter]);
+  }, [enriched, search, dirFilter]);
 
-  const netChange = useMemo(
-    () => filtered.reduce((s, r) => s + r.signedQty, 0),
-    [filtered],
-  );
+  const netChange = useMemo(() => {
+    return filtered.reduce((s, r) => {
+      const q = r.quantity;
+      return s + (r.direction === "IN" ? q : -q);
+    }, 0);
+  }, [filtered]);
 
-  function patchDraft(p: Partial<AdjustmentDraft>) {
+  /** For OUT, max removable = on-hand; when editing an OUT line, add that line’s qty back. */
+  const outAvailabilityHint = useMemo(() => {
+    if (!draft.itemId || draft.direction !== "OUT") return null;
+    let b = balanceForItem(movements, draft.itemId);
+    if (
+      modal === "edit" &&
+      editingId &&
+      prevRow &&
+      prevRow.stockItemId === draft.itemId &&
+      prevRow.direction === "OUT"
+    ) {
+      b += prevRow.quantity;
+    }
+    return b;
+  }, [draft.itemId, draft.direction, movements, modal, editingId, prevRow]);
+
+  const selectedItemUnit = draft.itemId
+    ? items.find((i) => i.id === draft.itemId)?.unit
+    : undefined;
+
+  const qtyParsedForStep = Number.parseFloat(draft.qty.trim());
+  const qtyNumForStep =
+    Number.isFinite(qtyParsedForStep) && qtyParsedForStep > 0 ? qtyParsedForStep : 0;
+  const qtyStepMinusDisabled = !Number.isFinite(qtyParsedForStep) || qtyParsedForStep <= 0.0001;
+  const qtyStepPlusDisabled =
+    draft.direction === "OUT" &&
+    outAvailabilityHint !== null &&
+    qtyNumForStep >= outAvailabilityHint - 1e-9;
+
+  function patchDraft(p: Partial<MovementDraft>) {
+    setMoveError(null);
     setDraft((d) => ({ ...d, ...p }));
+  }
+
+  function stepMovementQty(delta: 1 | -1) {
+    const parsed = Number.parseFloat(draft.qty.trim());
+    const minQty = 0.0001;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      if (delta > 0) {
+        patchDraft({ qty: "1" });
+      }
+      return;
+    }
+    let next = parsed + delta;
+    if (next < minQty) {
+      next = minQty;
+    }
+    if (draft.direction === "OUT" && outAvailabilityHint !== null) {
+      next = Math.min(next, outAvailabilityHint);
+    }
+    const rounded = Math.round(next * 10000) / 10000;
+    patchDraft({
+      qty: Number.isInteger(rounded) ? String(rounded) : String(rounded),
+    });
   }
 
   function closeModal() {
     setModal("none");
     setEditingId(null);
-    setPrevSigned(null);
-    setDraft(defaultAdjustmentDraft());
+    setPrevRow(null);
+    setMoveError(null);
+    setCreateDirectionLocked(false);
+    setDraft(defaultMovementDraft());
   }
 
-  function applyToStock(itemId: string, delta: number) {
-    setStockItems((prev) =>
-      prev.map((it) =>
-        it.id === itemId ? { ...it, onHand: Math.max(0, it.onHand + delta) } : it,
-      ),
-    );
+  function balanceAfterMovements(list: LedgerMovement[], itemId: string): number {
+    return balanceForItem(list, itemId);
   }
 
-  function openCreate() {
+  function openCreateWithDirection(direction: StockDirection) {
     setEditingId(null);
-    setPrevSigned(null);
-    setDraft(defaultAdjustmentDraft());
+    setPrevRow(null);
+    setMoveError(null);
+    setDraft({ ...defaultMovementDraft(), direction });
+    setCreateDirectionLocked(true);
     setModal("create");
   }
 
-  function openEdit(row: AdjustmentRow) {
+  function openEdit(row: LedgerMovement & { itemSku: string; itemName: string }) {
+    setCreateDirectionLocked(false);
     setEditingId(row.id);
-    setPrevSigned(row.signedQty);
+    setPrevRow({
+      id: row.id,
+      stockItemId: row.stockItemId,
+      direction: row.direction,
+      quantity: row.quantity,
+      date: row.date,
+      note: row.note,
+    });
+    setMoveError(null);
     setDraft({
       date: row.date,
-      itemId: row.itemId,
-      kind: row.kind,
-      qty:
-        row.kind === "Correction"
-          ? String(row.signedQty)
-          : String(Math.abs(row.signedQty)),
-      reason: row.reason,
+      itemId: row.stockItemId,
+      direction: row.direction,
+      qty: String(row.quantity),
+      note: row.note,
     });
     setModal("edit");
   }
 
-  function saveAdjustment() {
-    const signed =
-      draft.kind === "Correction"
-        ? Number.parseFloat(draft.qty)
-        : signedQtyFromDraft(draft.kind, draft.qty);
+  function saveMovement() {
+    const qty = Number.parseFloat(draft.qty);
     if (
       !draft.itemId ||
-      signed === null ||
-      !Number.isFinite(signed) ||
-      signed === 0 ||
-      !draft.reason.trim()
+      !Number.isFinite(qty) ||
+      qty <= 0 ||
+      !draft.note.trim()
     ) {
       return;
     }
-    const item = stockItems.find((s) => s.id === draft.itemId);
+
+    const item = items.find((s) => s.id === draft.itemId);
     if (!item) return;
 
     if (modal === "create") {
-      applyToStock(draft.itemId, signed);
-      const id = `adj-${Date.now()}`;
-      setAdjustments((prev) => [
-        {
-          id,
-          date: draft.date,
-          itemId: draft.itemId,
-          itemSku: item.sku,
-          itemName: item.name,
-          kind: draft.kind,
-          signedQty: signed,
-          reason: draft.reason.trim(),
-        },
+      const next: LedgerMovement = {
+        id: `mov-${Date.now()}`,
+        stockItemId: draft.itemId,
+        direction: draft.direction,
+        quantity: qty,
+        date: draft.date,
+        note: draft.note.trim(),
+      };
+      const trial = [...movements, next];
+      if (draft.direction === "OUT" && balanceAfterMovements(trial, draft.itemId) < 0) {
+        setMoveError("OUT quantity is greater than the current balance for this item.");
+        return;
+      }
+      setStore((prev) => ({
         ...prev,
-      ]);
-    } else if (modal === "edit" && editingId && prevSigned !== null) {
-      const diff = signed - prevSigned;
-      if (diff !== 0) applyToStock(draft.itemId, diff);
-      setAdjustments((prev) =>
-        prev.map((r) =>
-          r.id === editingId
-            ? {
-                ...r,
-                date: draft.date,
-                itemId: draft.itemId,
-                itemSku: item.sku,
-                itemName: item.name,
-                kind: draft.kind,
-                signedQty: signed,
-                reason: draft.reason.trim(),
-              }
-            : r,
-        ),
-      );
+        movements: [next, ...prev.movements],
+      }));
+    } else if (modal === "edit" && editingId && prevRow) {
+      const updated: LedgerMovement = {
+        id: editingId,
+        stockItemId: draft.itemId,
+        direction: draft.direction,
+        quantity: qty,
+        date: draft.date,
+        note: draft.note.trim(),
+      };
+      const trial = movements.map((m) => (m.id === editingId ? updated : m));
+      if (balanceAfterMovements(trial, draft.itemId) < 0) {
+        setMoveError("This change would make balance negative. Reduce OUT or add IN first.");
+        return;
+      }
+      setStore((prev) => ({
+        ...prev,
+        movements: prev.movements.map((m) => (m.id === editingId ? updated : m)),
+      }));
     }
     closeModal();
   }
@@ -850,9 +865,8 @@ function AdjustmentsSection({
   const qtyInvalid =
     draft.qty.trim() === "" ||
     !Number.isFinite(Number.parseFloat(draft.qty)) ||
-    (draft.kind !== "Correction" && Number.parseFloat(draft.qty) <= 0);
-  const saveDisabled =
-    !draft.itemId || qtyInvalid || !draft.reason.trim();
+    Number.parseFloat(draft.qty) <= 0;
+  const saveDisabled = !draft.itemId || qtyInvalid || !draft.note.trim();
 
   const itemPicker = (
     <label className={labelClass}>
@@ -864,7 +878,7 @@ function AdjustmentsSection({
         disabled={modal === "edit"}
       >
         <option value="">Select item…</option>
-        {stockItems.map((s) => (
+        {items.map((s) => (
           <option key={s.id} value={s.id}>
             {s.sku} — {s.name}
           </option>
@@ -875,18 +889,28 @@ function AdjustmentsSection({
 
   return (
     <InvShell
-      title="Stock adjustments"
-      description="Receipts, waste, and corrections — same drawer flow as expenses."
+      title="Stock in & out"
+      description="Record every receipt as IN and every use, waste, or adjustment as OUT. Balance on the overview updates from these lines."
       primaryAction={
-        <button
-          type="button"
-          onClick={openCreate}
-          className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-[10px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
-          style={{ backgroundColor: "var(--pos-sb-base)" }}
-        >
-          <Plus className="size-4" strokeWidth={2.2} />
-          Record adjustment
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => openCreateWithDirection("IN")}
+            className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-[10px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
+            style={{ backgroundColor: "var(--pos-sb-base)" }}
+          >
+            <Plus className="size-4" strokeWidth={2.2} />
+            Stock in
+          </button>
+          <button
+            type="button"
+            onClick={() => openCreateWithDirection("OUT")}
+            className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-[10px] border border-solid border-[#c0392b]/55 bg-[rgba(192,57,43,0.08)] px-4 text-[12px] font-semibold text-[#9f3023] transition-colors hover:border-[#9f3023] hover:bg-[rgba(192,57,43,0.14)]"
+          >
+            <Minus className="size-4" strokeWidth={2.2} />
+            Stock out
+          </button>
+        </div>
       }
       filters={
         <div className="flex flex-wrap items-center gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
@@ -899,19 +923,18 @@ function AdjustmentsSection({
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search item, SKU, or reason"
+              placeholder="Search item, SKU, or note"
               className="h-9 w-full cursor-text rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none"
             />
           </label>
           <select
-            value={kindFilter}
-            onChange={(e) => setKindFilter(e.target.value as "All" | AdjustmentKind)}
+            value={dirFilter}
+            onChange={(e) => setDirFilter(e.target.value as "All" | StockDirection)}
             className="h-9 cursor-pointer rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)]"
           >
-            <option value="All">All types</option>
-            <option value="Receive">Receive</option>
-            <option value="Waste">Waste</option>
-            <option value="Correction">Correction</option>
+            <option value="All">All directions</option>
+            <option value="IN">IN only</option>
+            <option value="OUT">OUT only</option>
           </select>
           <div className="ml-auto text-[11px] text-[var(--pos-text-2)]">
             Showing{" "}
@@ -924,28 +947,29 @@ function AdjustmentsSection({
           <div className="rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
             <div className="text-[11px] text-[var(--pos-text-2)]">Rows (this view)</div>
             <div className="text-[14px] font-semibold text-[var(--pos-text-1)]">
-              {formatWhole(filtered.length)}
+              {formatCount(filtered.length)}
             </div>
           </div>
           <div className="rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
             <div className="text-[11px] text-[var(--pos-text-2)]">Net qty (filtered)</div>
             <div className="text-[14px] font-semibold text-[var(--pos-text-1)]">
               {netChange >= 0 ? "+" : ""}
-              {formatWhole(netChange)}
+              {formatQty(netChange)}
             </div>
           </div>
         </div>
       }
       table={
         <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full min-w-[720px] border-collapse">
+          <table className="w-full min-w-[760px] border-collapse">
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)] text-left">
                 <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Date</th>
                 <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">SKU</th>
                 <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Item</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Type</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Δ Qty</th>
+                <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Direction</th>
+                <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Qty</th>
+                <th className="px-4 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Note</th>
               </tr>
             </thead>
             <tbody>
@@ -966,15 +990,17 @@ function AdjustmentsSection({
                   <td className="px-4 py-2 text-[var(--pos-text-2)]">{shortDate(row.date)}</td>
                   <td className="px-4 py-2 text-[var(--pos-text-1)]">{row.itemSku}</td>
                   <td className="px-4 py-2 font-medium text-[var(--pos-text-1)]">{row.itemName}</td>
-                  <td className="px-4 py-2 text-[var(--pos-text-2)]">{row.kind}</td>
-                  <td
-                    className={`px-4 py-2 tabular-nums ${
-                      row.signedQty >= 0 ? "text-[var(--pos-text-1)]" : "text-[var(--pos-text-2)]"
-                    }`}
-                  >
-                    {row.signedQty >= 0 ? "+" : ""}
-                    {formatWhole(row.signedQty)}
+                  <td className="px-4 py-2 text-[var(--pos-text-2)]">
+                    {row.direction === "IN" ? (
+                      <span className="font-semibold text-[#1d7f4e]">IN</span>
+                    ) : (
+                      <span className="font-semibold text-[#9f3023]">OUT</span>
+                    )}
                   </td>
+                  <td className="px-4 py-2 tabular-nums text-[var(--pos-text-1)]">
+                    {formatQty(row.quantity)}
+                  </td>
+                  <td className="px-4 py-2 text-[var(--pos-text-2)]">{row.note}</td>
                 </tr>
               ))}
             </tbody>
@@ -984,10 +1010,24 @@ function AdjustmentsSection({
       drawer={
         modal !== "none" ? (
           <PosSideDrawer
-            title={modal === "edit" ? "Edit adjustment" : "Record adjustment"}
+            title={
+              modal === "edit"
+                ? "Edit movement"
+                : createDirectionLocked && draft.direction === "IN"
+                  ? "Stock in"
+                  : createDirectionLocked && draft.direction === "OUT"
+                    ? "Stock out"
+                    : "Record movement"
+            }
             subtitle={
               modal === "edit" && editingId ? (
-                <p className="text-[11px] text-[var(--pos-text-2)]">{editingId}</p>
+                <p className="text-[11px] text-[var(--pos-text-2)]">Ref: {editingId}</p>
+              ) : modal === "create" && createDirectionLocked ? (
+                <p className="text-[11px] text-[var(--pos-text-2)]">
+                  {draft.direction === "IN"
+                    ? "Adds to on-hand quantity"
+                    : "Removes from on-hand quantity"}
+                </p>
               ) : null
             }
             onClose={closeModal}
@@ -1002,69 +1042,165 @@ function AdjustmentsSection({
                 </button>
                 <button
                   type="button"
-                  onClick={saveAdjustment}
+                  onClick={saveMovement}
                   disabled={saveDisabled}
-                  className="h-9 cursor-pointer rounded-[9px] px-3 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
-                  style={{ backgroundColor: "var(--pos-sb-base)" }}
+                  className={
+                    modal === "create" && draft.direction === "OUT"
+                      ? "h-9 cursor-pointer rounded-[9px] border border-solid border-[#c0392b]/55 bg-[#c0392b] px-3 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+                      : "h-9 cursor-pointer rounded-[9px] px-3 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+                  }
+                  style={
+                    modal === "create" && draft.direction === "OUT"
+                      ? undefined
+                      : { backgroundColor: "var(--pos-sb-base)" }
+                  }
                 >
                   {modal === "edit" ? "Save changes" : "Save"}
                 </button>
               </div>
             }
           >
-            <div className="space-y-3">
-              <p className="text-[11px] leading-relaxed text-[var(--pos-text-2)]">
-                <span className="font-medium text-[var(--pos-text-1)]">Receive</span> adds on-hand;{" "}
-                <span className="font-medium text-[var(--pos-text-1)]">Waste</span> subtracts.{" "}
-                <span className="font-medium text-[var(--pos-text-1)]">Correction</span> use a signed
-                number (e.g. −2 or 3).
-              </p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="space-y-4">
+              {moveError ? (
+                <p className="rounded-[8px] border border-solid border-[#e74c3c]/40 bg-[#e74c3c]/10 px-3 py-2 text-[11px] text-[#9f3023]">
+                  {moveError}
+                </p>
+              ) : null}
+              {modal === "edit" ? (
+                <p className="text-[11px] leading-relaxed text-[var(--pos-text-2)]">
+                  IN increases balance; OUT decreases it. For OUT, quantity cannot exceed availability
+                  for that item.
+                </p>
+              ) : null}
+
+              {modal === "edit" ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className={labelClass}>
+                    Date
+                    <input
+                      type="date"
+                      value={draft.date}
+                      onChange={(e) => patchDraft({ date: e.target.value })}
+                      className={dateInputClass}
+                    />
+                  </label>
+                  <label className={labelClass}>
+                    Direction
+                    <select
+                      value={draft.direction}
+                      onChange={(e) =>
+                        patchDraft({ direction: e.target.value as StockDirection, qty: "" })
+                      }
+                      className={selectClass}
+                    >
+                      <option value="IN">IN (stock in)</option>
+                      <option value="OUT">OUT (stock out)</option>
+                    </select>
+                  </label>
+                  <div className={`${labelClass} sm:col-span-2`}>{itemPicker}</div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className={labelClass}>
+                    Date
+                    <input
+                      type="date"
+                      value={draft.date}
+                      onChange={(e) => patchDraft({ date: e.target.value })}
+                      className={dateInputClass}
+                    />
+                  </label>
+                  {itemPicker}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end">
                 <label className={labelClass}>
-                  Date
-                  <input
-                    type="date"
-                    value={draft.date}
-                    onChange={(e) => patchDraft({ date: e.target.value })}
-                    className={dateInputClass}
-                  />
+                  Quantity
+                  <div className="mt-1 flex h-8 items-center justify-center gap-0.5 rounded-[7px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] px-0.5">
+                    <button
+                      type="button"
+                      onClick={() => stepMovementQty(-1)}
+                      disabled={qtyStepMinusDisabled}
+                      className="flex size-7 shrink-0 items-center justify-center rounded-full border border-solid [border-color:var(--pos-border-medium)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)] disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label="Decrease quantity"
+                    >
+                      <Minus className="size-3" strokeWidth={2} />
+                    </button>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      value={draft.qty}
+                      onChange={(e) => patchDraft({ qty: e.target.value })}
+                      className="h-full min-w-0 flex-1 border-0 bg-transparent px-1 text-center font-mono text-[11px] text-[var(--pos-text-1)] [appearance:textfield] placeholder:text-[var(--pos-text-2)] focus:outline-none focus:ring-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      placeholder="0"
+                      min={0}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => stepMovementQty(1)}
+                      disabled={qtyStepPlusDisabled}
+                      className="flex size-7 shrink-0 items-center justify-center rounded-full border border-solid [border-color:var(--pos-border-medium)] text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-text-1)] disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label="Increase quantity"
+                    >
+                      <Plus className="size-3" strokeWidth={2} />
+                    </button>
+                  </div>
+                  {draft.direction === "OUT" && draft.itemId && outAvailabilityHint !== null ? (
+                    <span className="mt-1 block text-[10px] leading-snug text-[var(--pos-text-2)]">
+                      Cannot exceed availability shown opposite.
+                    </span>
+                  ) : null}
                 </label>
-                <div className={`${labelClass} sm:col-span-2`}>{itemPicker}</div>
-                <label className={labelClass}>
-                  Type
-                  <select
-                    value={draft.kind}
-                    onChange={(e) =>
-                      patchDraft({ kind: e.target.value as AdjustmentKind, qty: "" })
-                    }
-                    className={selectClass}
+                {draft.itemId && draft.direction === "OUT" && outAvailabilityHint !== null ? (
+                  <div
+                    className="flex flex-col justify-center rounded-[9px] border border-solid border-[#c0392b]/30 bg-[rgba(192,57,43,0.06)] px-3 py-2 sm:min-h-[52px]"
+                    aria-live="polite"
                   >
-                    <option value="Receive">Receive</option>
-                    <option value="Waste">Waste</option>
-                    <option value="Correction">Correction</option>
-                  </select>
-                </label>
-                <label className={labelClass}>
-                  {draft.kind === "Correction" ? "Quantity (signed)" : "Quantity"}
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    value={draft.qty}
-                    onChange={(e) => patchDraft({ qty: e.target.value })}
-                    className={inputClass}
-                    placeholder={draft.kind === "Correction" ? "e.g. -2 or 5" : "e.g. 10"}
-                  />
-                </label>
-                <label className={`${labelClass} sm:col-span-2`}>
-                  Reason
-                  <input
-                    value={draft.reason}
-                    onChange={(e) => patchDraft({ reason: e.target.value })}
-                    className={inputClass}
-                    placeholder="Required — e.g. market receipt, spoilage"
-                  />
-                </label>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#9f3023]/90">
+                      Available to remove
+                    </span>
+                    <span className="text-[18px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                      {formatQty(outAvailabilityHint)}
+                      {selectedItemUnit ? (
+                        <span className="ml-1 text-[13px] font-medium text-[var(--pos-text-2)]">
+                          {selectedItemUnit}
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                ) : draft.itemId && draft.direction === "IN" ? (
+                  <div className="flex flex-col justify-center rounded-[9px] border border-solid border-[#1d7f4e]/25 bg-[rgba(31,162,92,0.06)] px-3 py-2 sm:min-h-[52px]">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#1d7f4e]">
+                      On hand now
+                    </span>
+                    <span className="text-[18px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                      {formatQty(balanceForItem(movements, draft.itemId))}
+                      {selectedItemUnit ? (
+                        <span className="ml-1 text-[13px] font-medium text-[var(--pos-text-2)]">
+                          {selectedItemUnit}
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="hidden sm:block" aria-hidden />
+                )}
               </div>
+
+              <label className={labelClass}>
+                Note
+                <input
+                  value={draft.note}
+                  onChange={(e) => patchDraft({ note: e.target.value })}
+                  className={inputClass}
+                  placeholder={
+                    draft.direction === "IN"
+                      ? "Required — e.g. supplier invoice, delivery batch, market run"
+                      : "Required — e.g. prep waste, spoilage, kitchen use, comps"
+                  }
+                />
+              </label>
             </div>
           </PosSideDrawer>
         ) : null

@@ -19,6 +19,7 @@ model Branch {
   staff       Staff[]
   orders      Order[]
   menuItems   MenuItem[]
+  stockItems  StockItem[]
 }
 
 model Staff {
@@ -42,6 +43,7 @@ model Staff {
   tempPermissions TempPermission[]
   auditLogs       AuditLog[]
   orders          Order[]
+  stockMovements  StockMovement[]
 }
 
 model Role {
@@ -158,6 +160,49 @@ model MenuItem {
 
   branch      Branch      @relation(fields: [branchId], references: [id])
   orderItems  OrderItem[]
+}
+
+/// Ingredient / SKU stock for a branch. On-hand quantity is always derived from StockMovement lines.
+model StockItem {
+  id            String    @id @default(uuid())
+  branchId      String
+  sku           String
+  name          String
+  category      String
+  unit          String    @default("ea")
+  parLevel      Decimal   @default(0) @db.Decimal(12, 4)
+  lastCountedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  branch    Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  movements StockMovement[]
+
+  @@unique([branchId, sku])
+  @@index([branchId])
+}
+
+model StockMovement {
+  id          String         @id @default(uuid())
+  branchId    String
+  stockItemId String
+  direction   StockDirection
+  quantity    Decimal        @db.Decimal(12, 4)
+  reason      String
+  occurredAt  DateTime       @default(now())
+  staffId     String?
+  createdAt   DateTime       @default(now())
+
+  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+  staff     Staff?    @relation(fields: [staffId], references: [id])
+
+  @@index([branchId, occurredAt])
+  @@index([stockItemId, occurredAt])
+}
+
+enum StockDirection {
+  IN
+  OUT
 }
 
 model Payment {
