@@ -34,13 +34,14 @@ export function SignInPage() {
   }, [isSignedIn, navigate]);
 
   const handleGoogleSignIn = () => {
-    signIn();
+    signIn({ userName: "Google account" });
     navigate("/pos", { replace: true });
   };
 
   const handleEmailSignIn = (e: React.FormEvent) => {
     e.preventDefault();
-    signIn();
+    const name = email.trim() || "Staff";
+    signIn({ userName: name });
     navigate("/pos", { replace: true });
   };
 
@@ -236,7 +237,7 @@ export function SignInPage() {
               <button
                 type="button"
                 onClick={() => {
-                  signIn();
+                  signIn({ userName: "Staff" });
                   navigate("/pos", { replace: true });
                 }}
                 className="text-[13px] text-[var(--pos-text-2)] transition-colors duration-150 hover:text-[var(--pos-text-1)]"

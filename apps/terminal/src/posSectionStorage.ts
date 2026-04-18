@@ -24,6 +24,8 @@ export function isKnownLeafId(id: string): boolean {
 
 const LEGACY_LEAF_ID_MAP: Record<string, string> = {
   "pu-list": "pu-ledger",
+  /** Old single Reports leaf → expense reports under Reports branch. */
+  reports: "rep-expenses",
 };
 
 export function readStoredLastLeafId(): string | null {

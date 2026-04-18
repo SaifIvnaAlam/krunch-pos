@@ -1,46 +1,40 @@
-import { CalendarDays, Eye, ImagePlus, Pencil, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from "react";
-
-type ExpenseLineSaved = {
-  kind?: "vendor" | "regular";
-  /** Vendor name when kind is vendor */
-  vendor?: string;
-  /** Free-text description when kind is regular (optional) */
-  label?: string;
-  amount: number;
-  /** Receipt photos as data URLs (image/*), stored on this device with the entry */
-  receiptDataUrls?: string[];
-};
-
-type DailyEntryRow = {
-  date: string;
-  openingBalance: number;
-  cashSale: number;
-  bankSale: number;
-  bkashSale: number;
-  pathaoSale: number;
-  foodiSale: number;
-  foodpandaSale: number;
-  /** Sum of expense line amounts; kept for history / older saves */
-  expenses: number;
-  expenseLines?: ExpenseLineSaved[];
-  remainingBalance: number;
-  updatedAt: string;
-};
-
-type DailyEntryMap = Record<string, DailyEntryRow>;
+import {
+  CalendarDays,
+  Eye,
+  Paperclip,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type InputHTMLAttributes,
+} from "react";
+import {
+  type DailyEntryRow,
+  type ExpenseLineSaved,
+  listDailyEntriesDescending,
+  readDailyEntryMap,
+  savedLineKind,
+  writeDailyEntryMap,
+} from "../../lib/dailyEntryStorage";
+import { useDevAuth } from "../../context/DevAuthContext";
 
 type ExpenseLineDraft = {
   id: string;
   kind: "vendor" | "regular";
   vendor: string;
-  /** Regular expense description (no vendor) */
+  /** Regular expense title (no vendor) */
   label: string;
   amount: string;
   receiptDataUrls: string[];
 };
-
-const STORAGE_KEY = "upos.dailyEntryRows.v1";
 
 const MAX_RECEIPTS_PER_LINE = 4;
 const MAX_RECEIPT_BYTES = 2_500_000;
@@ -67,6 +61,37 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("Could not read the image."));
     reader.readAsDataURL(file);
   });
+}
+
+function clipboardImageFilesFromDataTransfer(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const files: File[] = [];
+  if (data.items?.length) {
+    for (let i = 0; i < data.items.length; i++) {
+      const item = data.items[i];
+      if (item.kind !== "file") continue;
+      if (!item.type.startsWith("image/")) continue;
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  if (files.length === 0 && data.files?.length) {
+    for (let i = 0; i < data.files.length; i++) {
+      const f = data.files[i];
+      if (f.type.startsWith("image/")) files.push(f);
+    }
+  }
+  return files;
+}
+
+function expenseLineIdFromEventTarget(target: EventTarget | null): string | null {
+  let el = target as HTMLElement | null;
+  while (el) {
+    const id = el.getAttribute?.("data-expense-line-id");
+    if (id) return id;
+    el = el.parentElement;
+  }
+  return null;
 }
 
 async function mergeReceiptDataUrls(
@@ -203,6 +228,79 @@ function parseAmount(raw: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+type ExpenseFieldPart = "vendor" | "amount" | "label" | "attach";
+
+type FormNotice =
+  | { kind: "none" }
+  | { kind: "global"; message: string }
+  | { kind: "field"; message: string; lineId: string; part: ExpenseFieldPart };
+
+function fieldErrorMessage(
+  notice: FormNotice,
+  lineId: string,
+  part: ExpenseFieldPart,
+): string | null {
+  if (notice.kind !== "field") return null;
+  if (notice.lineId !== lineId || notice.part !== part) return null;
+  return notice.message;
+}
+
+function findFirstExpenseValidationError(
+  lines: ExpenseLineDraft[],
+): { message: string; lineId: string; part: ExpenseFieldPart } | null {
+  for (const line of lines) {
+    if (line.kind === "vendor") {
+      if (parseAmount(line.amount) > 0 && !line.vendor.trim()) {
+        return {
+          message: "Enter a vendor name or remove this row.",
+          lineId: line.id,
+          part: "vendor",
+        };
+      }
+      if (line.vendor.trim() && parseAmount(line.amount) <= 0) {
+        return {
+          message: "Enter an amount for this vendor.",
+          lineId: line.id,
+          part: "amount",
+        };
+      }
+    } else {
+      if (parseAmount(line.amount) > 0 && !line.label.trim()) {
+        return {
+          message: "Enter an expense title.",
+          lineId: line.id,
+          part: "label",
+        };
+      }
+      if (line.label.trim() && parseAmount(line.amount) <= 0) {
+        return {
+          message: "Enter an amount for this expense.",
+          lineId: line.id,
+          part: "amount",
+        };
+      }
+    }
+  }
+  return null;
+}
+
+const FIELD_ERR_INPUT =
+  "!border-red-500/90 ring-2 ring-red-500/35 focus:!border-red-500 focus:ring-red-500/45";
+const FIELD_ERR_VENDOR_COL = "rounded-[8px] ring-2 ring-red-500/35 ring-offset-0";
+const FIELD_ERR_ATTACH_WRAP = "rounded-[8px] ring-2 ring-red-500/35";
+
+function ExpenseFieldErrorBubble({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="mt-1 w-full max-w-[min(17rem,100%)] rounded-md border border-red-500/50 bg-[var(--pos-card)] px-2 py-1 text-[10px] leading-snug text-red-700 shadow-sm"
+    >
+      {message}
+    </div>
+  );
+}
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-BD", {
     minimumFractionDigits: 0,
@@ -215,6 +313,15 @@ function expenseTotalFromRow(r: DailyEntryRow): number {
     return r.expenseLines.reduce((s, line) => s + line.amount, 0);
   }
   return r.expenses ?? 0;
+}
+
+function receiptCountForLine(line: ExpenseLineSaved): number {
+  return line.receiptDataUrls?.length ?? 0;
+}
+
+function totalReceiptCountForRow(r: DailyEntryRow): number {
+  if (!r.expenseLines?.length) return 0;
+  return r.expenseLines.reduce((s, line) => s + receiptCountForLine(line), 0);
 }
 
 function normalizeReceiptUrls(urls: string[] | undefined): string {
@@ -253,12 +360,9 @@ function savedEntryBodyEquals(prior: DailyEntryRow, next: DailyEntryRow): boolea
     prior.foodpandaSale === next.foodpandaSale &&
     prior.remainingBalance === next.remainingBalance &&
     normalizeExpenseLinesForCompare(prior.expenseLines) ===
-      normalizeExpenseLinesForCompare(next.expenseLines)
+      normalizeExpenseLinesForCompare(next.expenseLines) &&
+    (prior.enteredBy ?? "") === (next.enteredBy ?? "")
   );
-}
-
-function savedLineKind(line: ExpenseLineSaved): "vendor" | "regular" {
-  return line.kind === "regular" ? "regular" : "vendor";
 }
 
 function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
@@ -313,20 +417,9 @@ function computeRemainingFromParts(
   return parseAmount(openingBalance) + salesSum - expenseSum;
 }
 
-function readRows(): DailyEntryMap {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as DailyEntryMap;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
 /** Vendors seen on any saved daily entry (for dropdown). */
 function collectVendorsFromStorage(): string[] {
-  const map = readRows();
+  const map = readDailyEntryMap();
   const set = new Set<string>();
   for (const row of Object.values(map)) {
     for (const line of row.expenseLines ?? []) {
@@ -365,22 +458,224 @@ function salesTotal(r: DailyEntryRow): number {
   );
 }
 
-function listSavedEntriesDescending(): DailyEntryRow[] {
-  const map = readRows();
-  return Object.values(map).sort((a, b) => b.date.localeCompare(a.date));
+/** Lowercase text slice for matching formatted + raw amounts. */
+function amountSearchText(n: number): string {
+  const formatted = formatMoney(n).toLowerCase();
+  const raw = String(n).toLowerCase();
+  return `${formatted} ${raw}`;
 }
 
-function writeRows(rows: DailyEntryMap): { ok: true } | { ok: false; message: string } {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-    return { ok: true };
-  } catch (e) {
-    const message =
-      e instanceof DOMException && e.name === "QuotaExceededError"
-        ? "Storage full — clear browser data or export entries."
-        : "Could not save — check browser storage permissions.";
-    return { ok: false, message };
+/** Segments for advanced saved-entry search (all lowercase). */
+type DailyEntrySearchSegments = {
+  all: string;
+  date: string;
+  vendor: string;
+  title: string;
+  opening: string;
+  sales: string;
+  expenses: string;
+  remaining: string;
+  cash: string;
+  bank: string;
+  bkash: string;
+  pathao: string;
+  foodi: string;
+  foodpanda: string;
+  updated: string;
+  legacy: string;
+};
+
+function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegments {
+  const vendors: string[] = [];
+  const titles: string[] = [];
+  for (const line of r.expenseLines ?? []) {
+    const k = savedLineKind(line);
+    if (k === "vendor") vendors.push((line.vendor ?? "").trim());
+    else titles.push((line.label ?? "").trim());
   }
+  const vendorStr = vendors.filter(Boolean).join(" ").toLowerCase();
+  const titleStr = titles.filter(Boolean).join(" ").toLowerCase();
+  const st = salesTotal(r);
+  const ex = expenseTotalFromRow(r);
+  let legacyStr = "";
+  if (!(r.expenseLines && r.expenseLines.length > 0) && (r.expenses ?? 0) > 0) {
+    legacyStr = `legacy total ${amountSearchText(r.expenses ?? 0)}`;
+  }
+  let updatedStr = "";
+  if (r.updatedAt) {
+    try {
+      const d = new Date(r.updatedAt);
+      updatedStr = `${r.updatedAt} ${d.toLocaleString(undefined)}`.toLowerCase();
+    } catch {
+      updatedStr = r.updatedAt.toLowerCase();
+    }
+  }
+  const dateStr = `${r.date} ${formatDateKeyAsDisplay(r.date)}`.toLowerCase();
+  const cashS = `cash ${amountSearchText(r.cashSale)}`;
+  const bankS = `bank ${amountSearchText(r.bankSale)}`;
+  const bkashS = `bkash ${amountSearchText(r.bkashSale)}`;
+  const pathaoS = `pathao ${amountSearchText(r.pathaoSale)}`;
+  const foodiS = `foodi ${amountSearchText(r.foodiSale)}`;
+  const foodpandaS = `foodpanda ${amountSearchText(r.foodpandaSale)}`;
+  const all = [
+    dateStr,
+    vendorStr,
+    titleStr,
+    amountSearchText(r.openingBalance),
+    amountSearchText(st),
+    amountSearchText(ex),
+    amountSearchText(r.remainingBalance),
+    cashS,
+    bankS,
+    bkashS,
+    pathaoS,
+    foodiS,
+    foodpandaS,
+    legacyStr,
+    updatedStr,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return {
+    all,
+    date: dateStr,
+    vendor: vendorStr,
+    title: titleStr,
+    opening: amountSearchText(r.openingBalance),
+    sales: `${amountSearchText(st)} sales total`,
+    expenses: `${amountSearchText(ex)} expenses`,
+    remaining: amountSearchText(r.remainingBalance),
+    cash: cashS.toLowerCase(),
+    bank: bankS.toLowerCase(),
+    bkash: bkashS.toLowerCase(),
+    pathao: pathaoS.toLowerCase(),
+    foodi: foodiS.toLowerCase(),
+    foodpanda: foodpandaS.toLowerCase(),
+    updated: updatedStr,
+    legacy: legacyStr,
+  };
+}
+
+type DailyEntrySearchClause = {
+  neg: boolean;
+  field: keyof DailyEntrySearchSegments | null;
+  value: string;
+};
+
+const DAILY_ENTRY_SEARCH_FIELD_ALIASES: Record<string, keyof DailyEntrySearchSegments> = {
+  date: "date",
+  vendor: "vendor",
+  v: "vendor",
+  title: "title",
+  regular: "title",
+  expense: "expenses",
+  expenses: "expenses",
+  opening: "opening",
+  sales: "sales",
+  remaining: "remaining",
+  cash: "cash",
+  bank: "bank",
+  bkash: "bkash",
+  pathao: "pathao",
+  foodi: "foodi",
+  foodpanda: "foodpanda",
+  updated: "updated",
+  saved: "updated",
+  legacy: "legacy",
+};
+
+/**
+ * Advanced query: space-separated terms (AND). `-term` excludes. `field:value` limits to a column.
+ * Quoted `"phrase"` for multi-word. Example: vendor:rent remaining:5000 -legacy "01-apr"
+ */
+function parseDailyEntrySearchQuery(raw: string): DailyEntrySearchClause[] {
+  const clauses: DailyEntrySearchClause[] = [];
+  let s = raw.trim();
+  while (s.length > 0) {
+    while (s.length > 0 && /\s/.test(s[0])) {
+      s = s.slice(1);
+    }
+    if (s.length === 0) break;
+
+    let neg = false;
+    if (s[0] === "-" && s.length > 1 && !/\s/.test(s[1])) {
+      neg = true;
+      s = s.slice(1);
+    }
+
+    const fieldMatch = /^([a-z]+):\s*/i.exec(s);
+    if (fieldMatch) {
+      const fieldRaw = fieldMatch[1].toLowerCase();
+      const mapped = DAILY_ENTRY_SEARCH_FIELD_ALIASES[fieldRaw];
+      if (mapped) {
+        s = s.slice(fieldMatch[0].length);
+        let value = "";
+        if (s[0] === '"') {
+          const end = s.indexOf('"', 1);
+          if (end === -1) {
+            value = s.slice(1);
+            s = "";
+          } else {
+            value = s.slice(1, end);
+            s = s.slice(end + 1);
+          }
+        } else {
+          const m = /^(\S+)/.exec(s);
+          if (m) {
+            value = m[1];
+            s = s.slice(m[0].length);
+          }
+        }
+        const v = value.trim().toLowerCase();
+        if (v.length > 0) {
+          clauses.push({ neg, field: mapped, value: v });
+        }
+        continue;
+      }
+    }
+
+    if (s[0] === '"') {
+      const end = s.indexOf('"', 1);
+      let value: string;
+      if (end === -1) {
+        value = s.slice(1);
+        s = "";
+      } else {
+        value = s.slice(1, end);
+        s = s.slice(end + 1);
+      }
+      const v = value.trim().toLowerCase();
+      if (v.length > 0) {
+        clauses.push({ neg, field: null, value: v });
+      }
+      continue;
+    }
+
+    const wordMatch = /^(\S+)/.exec(s);
+    if (wordMatch) {
+      s = s.slice(wordMatch[0].length);
+      const v = wordMatch[1].toLowerCase();
+      if (v.length > 0) {
+        clauses.push({ neg, field: null, value: v });
+      }
+    } else {
+      break;
+    }
+  }
+  return clauses;
+}
+
+function dailyEntryMatchesSearch(r: DailyEntryRow, clauses: DailyEntrySearchClause[]): boolean {
+  if (clauses.length === 0) return true;
+  const seg = buildDailyEntrySearchSegments(r);
+  for (const c of clauses) {
+    const hay = c.field ? seg[c.field] : seg.all;
+    const hit = hay.includes(c.value);
+    if ((c.neg && hit) || (!c.neg && !hit)) return false;
+  }
+  return true;
 }
 
 function amountFieldProps(
@@ -399,6 +694,7 @@ function amountFieldProps(
 }
 
 export function DailyEntryFormView() {
+  const { userName } = useDevAuth();
   const [activeView, setActiveView] = useState<"entry" | "history">("history");
   const [savedListVersion, setSavedListVersion] = useState(0);
   const [dateKey, setDateKey] = useState(todayKey);
@@ -411,19 +707,42 @@ export function DailyEntryFormView() {
   const [foodiSale, setFoodiSale] = useState("0");
   const [foodpandaSale, setFoodpandaSale] = useState("0");
   const [expenseLines, setExpenseLines] = useState<ExpenseLineDraft[]>(() => []);
-  const [notice, setNotice] = useState("");
+  const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
   const [openingEdit, setOpeningEdit] = useState(false);
   const [historyDetailRow, setHistoryDetailRow] = useState<DailyEntryRow | null>(null);
+  const [historyReceiptsOpen, setHistoryReceiptsOpen] = useState(false);
+  /** When set, receipts gallery shows only this expense line index; `null` = all lines with receipts. */
+  const [historyReceiptsLineIndex, setHistoryReceiptsLineIndex] = useState<number | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const openingInputRef = useRef<HTMLInputElement>(null);
   const datePickerRef = useRef<HTMLInputElement>(null);
+  const expenseLinesRef = useRef<ExpenseLineDraft[]>(expenseLines);
+  expenseLinesRef.current = expenseLines;
 
-  const historyRows = useMemo(() => listSavedEntriesDescending(), [
+  const historyRows = useMemo(() => listDailyEntriesDescending(), [
     savedListVersion,
     activeView,
   ]);
 
+  const [entryListSearchQuery, setEntryListSearchQuery] = useState("");
+
+  const parsedEntryListSearch = useMemo(
+    () => parseDailyEntrySearchQuery(entryListSearchQuery),
+    [entryListSearchQuery],
+  );
+
+  const filteredHistoryRows = useMemo(() => {
+    const q = entryListSearchQuery.trim();
+    if (!q) return historyRows;
+    return historyRows.filter((r) => dailyEntryMatchesSearch(r, parsedEntryListSearch));
+  }, [historyRows, entryListSearchQuery, parsedEntryListSearch]);
+
+  useEffect(() => {
+    if (historyRows.length === 0) setEntryListSearchQuery("");
+  }, [historyRows.length]);
+
   const savedRowForDate = useMemo(
-    () => readRows()[dateKey],
+    () => readDailyEntryMap()[dateKey],
     [dateKey, savedListVersion],
   );
 
@@ -480,7 +799,7 @@ export function DailyEntryFormView() {
 
   useEffect(() => {
     setOpeningEdit(false);
-    const rows = readRows();
+    const rows = readDailyEntryMap();
     const existing = rows[dateKey];
     if (existing) {
       setOpeningBalance(String(existing.openingBalance));
@@ -491,7 +810,7 @@ export function DailyEntryFormView() {
       setFoodiSale(String(existing.foodiSale));
       setFoodpandaSale(String(existing.foodpandaSale));
       setExpenseLines(draftsFromRow(existing));
-      setNotice("");
+      setFormNotice({ kind: "none" });
       return;
     }
 
@@ -505,7 +824,7 @@ export function DailyEntryFormView() {
     setFoodiSale("0");
     setFoodpandaSale("0");
     setExpenseLines([]);
-    setNotice("");
+    setFormNotice({ kind: "none" });
   }, [dateKey]);
 
   useEffect(() => {
@@ -513,21 +832,77 @@ export function DailyEntryFormView() {
   }, [openingEdit]);
 
   useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(""), 2600);
+    if (formNotice.kind === "none") return;
+    const ms = formNotice.kind === "field" ? 5200 : 2800;
+    const timer = window.setTimeout(() => setFormNotice({ kind: "none" }), ms);
     return () => window.clearTimeout(timer);
-  }, [notice]);
+  }, [formNotice]);
+
+  useLayoutEffect(() => {
+    if (formNotice.kind !== "field") return;
+    const el = document.querySelector(
+      `[data-field-error-anchor="${formNotice.lineId}:${formNotice.part}"]`,
+    );
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [formNotice]);
 
   useEffect(() => {
-    if (!historyDetailRow) return;
+    if (!historyDetailRow && !receiptPreviewUrl && !historyReceiptsOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setHistoryDetailRow(null);
+      if (e.key !== "Escape") return;
+      if (receiptPreviewUrl) {
+        setReceiptPreviewUrl(null);
+        return;
+      }
+      if (historyReceiptsOpen) {
+        setHistoryReceiptsOpen(false);
+        setHistoryReceiptsLineIndex(null);
+        return;
+      }
+      if (historyDetailRow) setHistoryDetailRow(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [historyDetailRow, receiptPreviewUrl, historyReceiptsOpen]);
+
+  useEffect(() => {
+    setHistoryReceiptsOpen(false);
+    setHistoryReceiptsLineIndex(null);
   }, [historyDetailRow]);
 
-  // TEMP: Alt+X = random fields for quick Save testing — remove this block when done.
+  useEffect(() => {
+    if (activeView !== "entry") return;
+    const onPaste = (e: ClipboardEvent) => {
+      const files = clipboardImageFilesFromDataTransfer(e.clipboardData);
+      if (files.length === 0) return;
+      const lineId = expenseLineIdFromEventTarget(e.target);
+      if (!lineId) return;
+      const line = expenseLinesRef.current.find((l) => l.id === lineId);
+      if (!line) return;
+      e.preventDefault();
+      void (async () => {
+        const result = await mergeReceiptDataUrls(line.receiptDataUrls, files);
+        if (result.ok) {
+          setExpenseLines((lines) =>
+            lines.map((l) =>
+              l.id === lineId ? { ...l, receiptDataUrls: result.urls } : l,
+            ),
+          );
+        } else {
+          setFormNotice({
+            kind: "field",
+            message: result.message,
+            lineId,
+            part: "attach",
+          });
+        }
+      })();
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [activeView]);
+
+  // TEMP: Alt+X (Windows/Linux) or ⌥+X Option+X (Mac) — random fields for quick Save testing; remove when done.
   useEffect(() => {
     const rnd = () => String(Math.floor(Math.random() * 40_000) + 500);
     const onKey = (e: KeyboardEvent) => {
@@ -546,7 +921,7 @@ export function DailyEntryFormView() {
         { ...newVendorExpenseLine(), vendor: "Test vendor", amount: rnd() },
         { ...newRegularExpenseLine(), label: "Test misc", amount: rnd() },
       ]);
-      setNotice("Alt+X test fill");
+      setFormNotice({ kind: "global", message: "Alt/⌥+X test fill" });
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -556,6 +931,14 @@ export function DailyEntryFormView() {
     id: string,
     patch: Partial<Pick<ExpenseLineDraft, "vendor" | "amount" | "label" | "receiptDataUrls">>,
   ) {
+    setFormNotice((n) => {
+      if (n.kind !== "field" || n.lineId !== id) return n;
+      if ("vendor" in patch && n.part === "vendor") return { kind: "none" };
+      if ("amount" in patch && n.part === "amount") return { kind: "none" };
+      if ("label" in patch && n.part === "label") return { kind: "none" };
+      if ("receiptDataUrls" in patch && n.part === "attach") return { kind: "none" };
+      return n;
+    });
     setExpenseLines((lines) =>
       lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
     );
@@ -570,97 +953,115 @@ export function DailyEntryFormView() {
   }
 
   function removeExpenseLine(id: string) {
+    setFormNotice((n) =>
+      n.kind === "field" && n.lineId === id ? { kind: "none" } : n,
+    );
     setExpenseLines((lines) => lines.filter((l) => l.id !== id));
   }
 
-  function renderExpenseReceiptStrip(line: ExpenseLineDraft) {
+  /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
+  function renderReceiptAddControl(line: ExpenseLineDraft) {
     const urls = line.receiptDataUrls;
     const canAddMore = urls.length < MAX_RECEIPTS_PER_LINE;
     const inputId = `daily-expense-receipt-${line.id}`;
+    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+    if (!canAddMore) {
+      return (
+        <div
+          className={`relative flex min-h-8 items-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+        >
+          <span className="text-[8px] leading-tight text-[var(--pos-text-2)]">
+            Max {MAX_RECEIPTS_PER_LINE} imgs
+          </span>
+        </div>
+      );
+    }
+    return (
+      <div
+        className={`relative flex h-8 w-full min-w-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+      >
+        <input
+          id={inputId}
+          type="file"
+          accept="image/*"
+          multiple
+          className="sr-only"
+          onChange={(e) => {
+            const list = e.target.files;
+            e.target.value = "";
+            if (!list?.length) return;
+            void (async () => {
+              const result = await mergeReceiptDataUrls(urls, Array.from(list));
+              if (result.ok) patchLine(line.id, { receiptDataUrls: result.urls });
+              else
+                setFormNotice({
+                  kind: "field",
+                  message: result.message,
+                  lineId: line.id,
+                  part: "attach",
+                });
+            })();
+          }}
+        />
+        <label
+          htmlFor={inputId}
+          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
+          aria-label="Attach receipt image from files or paste from clipboard"
+          title="Attach file, or paste an image (Ctrl+V / ⌘V) while this row is focused"
+        >
+          <Paperclip className="size-4 shrink-0" strokeWidth={2.25} />
+        </label>
+      </div>
+    );
+  }
+
+  function renderReceiptThumbnails(line: ExpenseLineDraft) {
+    const urls = line.receiptDataUrls;
+    if (urls.length === 0) return null;
     return (
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1">
         {urls.map((url, idx) => (
           <div key={`${line.id}-r-${idx}`} className="relative inline-flex">
-            <img
-              src={url}
-              alt=""
-              className="size-11 rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-cover"
-            />
             <button
               type="button"
-              className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[10px] leading-none text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]"
+              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
+              onClick={() => setReceiptPreviewUrl(url)}
+              aria-label={`View receipt ${idx + 1}`}
+            >
+              <img
+                src={url}
+                alt={`Receipt ${idx + 1}`}
+                className="size-11 object-cover"
+              />
+            </button>
+            <button
+              type="button"
+              className="absolute -right-0.5 -top-0.5 z-[1] flex size-4 items-center justify-center rounded-full border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[10px] leading-none text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]"
               aria-label="Remove receipt image"
-              onClick={() =>
+              onClick={(e) => {
+                e.stopPropagation();
                 patchLine(line.id, {
                   receiptDataUrls: urls.filter((_, j) => j !== idx),
-                })
-              }
+                });
+              }}
             >
               ×
             </button>
           </div>
         ))}
-        {canAddMore ? (
-          <>
-            <input
-              id={inputId}
-              type="file"
-              accept="image/*"
-              multiple
-              className="sr-only"
-              onChange={(e) => {
-                const list = e.target.files;
-                e.target.value = "";
-                if (!list?.length) return;
-                void (async () => {
-                  const result = await mergeReceiptDataUrls(urls, Array.from(list));
-                  if (result.ok) patchLine(line.id, { receiptDataUrls: result.urls });
-                  else setNotice(result.message);
-                })();
-              }}
-            />
-            <label
-              htmlFor={inputId}
-              className="inline-flex cursor-pointer items-center gap-1 rounded-[6px] border border-dashed border-[var(--pos-border-medium)] px-2 py-1 text-[10px] font-medium text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
-            >
-              <ImagePlus className="size-3.5 shrink-0" strokeWidth={2.25} />
-              Receipt
-            </label>
-          </>
-        ) : (
-          <span className="text-[9px] text-[var(--pos-text-2)]">
-            Max {MAX_RECEIPTS_PER_LINE} images
-          </span>
-        )}
       </div>
     );
   }
 
   function handleSave() {
-    const vendorAmountNoName = expenseLines.some(
-      (line) =>
-        line.kind === "vendor" &&
-        parseAmount(line.amount) > 0 &&
-        !line.vendor.trim(),
-    );
-    if (vendorAmountNoName) {
-      setNotice("Vendor expense: each amount needs a vendor (or remove the row).");
-      return;
-    }
-    const vendorNameNoAmount = expenseLines.some(
-      (line) =>
-        line.kind === "vendor" && line.vendor.trim() && parseAmount(line.amount) <= 0,
-    );
-    if (vendorNameNoAmount) {
-      setNotice("Vendor expense: enter an amount for each vendor, or remove the row.");
-      return;
-    }
-    const regularLabelNoAmount = expenseLines.some(
-      (line) =>
-        line.kind === "regular" && line.label.trim() && parseAmount(line.amount) <= 0,
-    );
-    if (regularLabelNoAmount) {
-      setNotice("Regular expense: enter an amount when you add a description.");
+    const validation = findFirstExpenseValidationError(expenseLines);
+    if (validation) {
+      setFormNotice({
+        kind: "field",
+        message: validation.message,
+        lineId: validation.lineId,
+        part: validation.part,
+      });
       return;
     }
 
@@ -676,11 +1077,11 @@ export function DailyEntryFormView() {
           linesToSave.push({ kind: "vendor", vendor: v, amount: amt, ...receiptField });
         }
       } else {
-        if (amt > 0) {
-          const label = line.label.trim();
+        const expenseTitle = line.label.trim();
+        if (expenseTitle && amt > 0) {
           linesToSave.push({
             kind: "regular",
-            ...(label ? { label } : {}),
+            label: expenseTitle,
             amount: amt,
             ...receiptField,
           });
@@ -690,8 +1091,9 @@ export function DailyEntryFormView() {
 
     const expenseTotal = linesToSave.reduce((s, line) => s + line.amount, 0);
 
-    const rows = readRows();
+    const rows = readDailyEntryMap();
     const prior = rows[dateKey];
+    const enteredBy = userName.trim() || "Unknown";
     const next: DailyEntryRow = {
       date: dateKey,
       openingBalance: parseAmount(openingBalance),
@@ -705,28 +1107,32 @@ export function DailyEntryFormView() {
       expenseLines: linesToSave,
       remainingBalance: remaining,
       updatedAt: new Date().toISOString(),
+      enteredBy,
     };
 
     if (prior && savedEntryBodyEquals(prior, next)) {
-      setNotice(
-        "Nothing changed — this day already has that entry. Edit the form to update it, or choose another date.",
-      );
+      setFormNotice({
+        kind: "global",
+        message:
+          "Nothing changed — this day already has that entry. Edit the form to update it, or choose another date.",
+      });
       return;
     }
 
     rows[dateKey] = next;
-    const result = writeRows(rows);
+    const result = writeDailyEntryMap(rows);
     if (!result.ok) {
-      setNotice(result.message);
+      setFormNotice({ kind: "global", message: result.message });
       return;
     }
     setSavedListVersion((v) => v + 1);
     setOpeningEdit(false);
-    setNotice(
-      prior
+    setFormNotice({
+      kind: "global",
+      message: prior
         ? `Updated ${formatDateKeyAsDisplay(dateKey)}. One entry per day — use Edit on a row or Add Entry for another date.`
         : `Saved ${formatDateKeyAsDisplay(dateKey)}. One entry per day — Add Entry for another date or review the list below.`,
-    );
+    });
     setActiveView("history");
   }
 
@@ -763,16 +1169,16 @@ export function DailyEntryFormView() {
     ) {
       return;
     }
-    const rows = readRows();
+    const rows = readDailyEntryMap();
     if (!rows[dateIso]) return;
     delete rows[dateIso];
-    const result = writeRows(rows);
+    const result = writeDailyEntryMap(rows);
     if (!result.ok) {
-      setNotice(result.message);
+      setFormNotice({ kind: "global", message: result.message });
       return;
     }
     setSavedListVersion((v) => v + 1);
-    setNotice("Entry deleted from this device.");
+    setFormNotice({ kind: "global", message: "Entry deleted from this device." });
     setHistoryDetailRow((open) => (open?.date === dateIso ? null : open));
   }
 
@@ -843,30 +1249,93 @@ export function DailyEntryFormView() {
               History
             </button>
           ) : (
-            <span className="self-center text-[11px] tabular-nums text-[var(--pos-text-2)]">
-              {historyRows.length} saved
+            <span
+              className="self-center text-[11px] tabular-nums text-[var(--pos-text-2)]"
+              title={
+                entryListSearchQuery.trim()
+                  ? "Entries matching search / total saved"
+                  : "Total saved entries"
+              }
+            >
+              {historyRows.length === 0
+                ? "0 saved"
+                : entryListSearchQuery.trim()
+                  ? `${filteredHistoryRows.length} / ${historyRows.length}`
+                  : `${historyRows.length} saved`}
             </span>
           )}
         </div>
       </div>
 
-      {notice ? (
+      {activeView === "entry" && savedRowForDate ? (
+        <div
+          className="shrink-0 border-b-2 border-solid [border-color:var(--pos-sb-base)] bg-[var(--pos-sb-base)]/15 px-3 py-3"
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-[13px] font-bold leading-tight text-[var(--pos-text-1)]">
+            Editing an existing entry for {formatDateKeyAsDisplay(dateKey)}
+          </p>
+          <p className="mt-1.5 text-[11px] leading-snug text-[var(--pos-text-2)]">
+            This date already has saved data. Saving will replace that record — you are not creating a
+            second entry for the same day.
+          </p>
+          {savedRowForDate.updatedAt ? (
+            <p className="mt-1.5 text-[10px] tabular-nums text-[var(--pos-text-2)]">
+              Last saved{" "}
+              {new Date(savedRowForDate.updatedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {formNotice.kind === "global" ? (
         <div
           className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2 text-[11px] leading-snug text-[var(--pos-text-1)]"
           role="status"
           aria-live="polite"
         >
-          {notice}
+          {formNotice.message}
         </div>
       ) : null}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {activeView === "history" ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-3 py-2">
-            <p className="shrink-0 text-[11px] text-[var(--pos-text-2)]">
-              Use <span className="font-medium text-[var(--pos-text-1)]">Add Entry</span> in the
-              table header to open the form, or View / Edit / Delete on a row.
-            </p>
+            {historyRows.length > 0 ? (
+              <div className="shrink-0" role="search">
+                <label className="relative block">
+                  <span className="sr-only">Search saved entries</span>
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--pos-text-2)]"
+                    strokeWidth={2.25}
+                    aria-hidden
+                  />
+                  <input
+                    type="search"
+                    value={entryListSearchQuery}
+                    onChange={(e) => setEntryListSearchQuery(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] py-1.5 pl-8 pr-8 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]/80 focus:border-[var(--pos-text-1)] focus:outline-none"
+                    placeholder='Search — try vendor:Rent cash:1000 "apr" -legacy'
+                  />
+                  {entryListSearchQuery ? (
+                    <button
+                      type="button"
+                      className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                      onClick={() => setEntryListSearchQuery("")}
+                      aria-label="Clear search"
+                    >
+                      <X className="size-3.5" strokeWidth={2.25} aria-hidden />
+                    </button>
+                  ) : null}
+                </label>
+              </div>
+            ) : null}
             {historyRows.length === 0 ? (
               <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-dashed border-[var(--pos-border-medium)]">
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b border-dashed border-[var(--pos-border-medium)] bg-[var(--pos-page)] px-3 py-2">
@@ -876,9 +1345,10 @@ export function DailyEntryFormView() {
                   <button
                     type="button"
                     onClick={() => setActiveView("entry")}
-                    className="shrink-0 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
                     style={{ backgroundColor: "var(--pos-sb-base)" }}
                   >
+                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
                     Add Entry
                   </button>
                 </div>
@@ -896,9 +1366,10 @@ export function DailyEntryFormView() {
                   <button
                     type="button"
                     onClick={() => setActiveView("entry")}
-                    className="shrink-0 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
                     style={{ backgroundColor: "var(--pos-sb-base)" }}
                   >
+                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
                     Add Entry
                   </button>
                 </div>
@@ -917,7 +1388,30 @@ export function DailyEntryFormView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {historyRows.map((r) => (
+                    {filteredHistoryRows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]"
+                        >
+                          <p className="m-0 font-medium text-[var(--pos-text-1)]">
+                            No entries match this search
+                          </p>
+                          <p className="mt-1 text-[12px]">
+                            Try broader keywords, remove a scoped filter, or clear exclusions (
+                            <button
+                              type="button"
+                              className="font-semibold text-[var(--pos-sb-base)] underline-offset-2 hover:underline"
+                              onClick={() => setEntryListSearchQuery("")}
+                            >
+                              clear search
+                            </button>
+                            ).
+                          </p>
+                        </td>
+                      </tr>
+                    ) : null}
+                    {filteredHistoryRows.map((r) => (
                       <tr
                         key={r.date}
                         className="border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/15"
@@ -1034,7 +1528,7 @@ export function DailyEntryFormView() {
                 {formatMoney(expenseSum)}
               </p>
               <p className="text-[9px] normal-case font-normal leading-snug tracking-normal text-[var(--pos-text-2)]">
-                Total from vendor lines below
+                Total from expense lines below
               </p>
             </div>
             <div className={statCardClass}>
@@ -1058,7 +1552,7 @@ export function DailyEntryFormView() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden md:overflow-y-hidden">
-            <div className="grid h-full min-h-0 grid-cols-1 gap-2 md:grid-cols-2 md:items-stretch md:gap-2">
+            <div className="grid h-full min-h-0 grid-cols-1 gap-2 md:grid-cols-[minmax(0,1.85fr)_minmax(0,1fr)] md:items-stretch md:gap-2">
               <div className={`${columnShellClass} order-2`}>
                 <p className="border-b border-solid [border-color:var(--pos-divider)] pb-1 text-[11px] font-semibold text-[var(--pos-text-1)]">
                   Sales
@@ -1131,62 +1625,74 @@ export function DailyEntryFormView() {
                 <p className="border-b border-solid [border-color:var(--pos-divider)] pb-1 text-[11px] font-semibold text-[var(--pos-text-1)]">
                   Expenses
                 </p>
-                <p className="text-[10px] text-[var(--pos-text-2)]">
-                  Vendor lines use the dropdown; regular lines use a text field (no vendor). Attach
-                  receipt photos per line (images only, up to {MAX_RECEIPTS_PER_LINE} per line, ~
-                  {(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB each) — stored on this device with
-                  the entry. Total updates the Expenses stat card.
+                <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
+                  Vendor name or expense title, amount, optional images (attach or paste in-row) —
+                  max {MAX_RECEIPTS_PER_LINE} per line.
                 </p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={addVendorExpenseLine}
-                    className="rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30"
-                  >
-                    Add Vendor Expense
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addRegularExpenseLine}
-                    className="rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30"
-                  >
-                    Add Regular Expense
-                  </button>
-                </div>
                 {expenseLines.length > 0 ? (
-                  <div className="grid grid-cols-[1fr_4.25rem_2rem] gap-x-1 gap-y-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--pos-text-2)]">
-                    <span className="pl-0.5">Vendor / note</span>
-                    <span className="text-center">Amt</span>
-                    <span className="sr-only">Del</span>
+                  <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(0,0.75fr)_2.25rem_2.25rem] items-center gap-x-2 gap-y-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--pos-text-2)]">
+                    <span className="min-w-0 pl-0.5">Vendor / expense title</span>
+                    <span className="min-w-0 text-center">Amt</span>
+                    <span className="flex justify-center" title="Attachment">
+                      <Paperclip
+                        className="size-3 text-[var(--pos-text-2)]"
+                        strokeWidth={2.25}
+                        aria-hidden
+                      />
+                      <span className="sr-only">Attachment</span>
+                    </span>
+                    <span className="sr-only text-center">Del</span>
                   </div>
                 ) : (
                   <p className="text-[10px] italic text-[var(--pos-text-2)]">No expense lines yet.</p>
                 )}
-                <div className="min-h-0 max-h-[min(14rem,34svh)] space-y-1.5 overflow-y-auto pr-0.5">
+                <div className="min-h-0 max-h-[min(18rem,42svh)] space-y-1.5 overflow-y-auto pr-0.5">
                   {expenseLines.map((line) => {
                     if (line.kind === "regular") {
+                      const labelErr = fieldErrorMessage(formNotice, line.id, "label");
+                      const amountErr = fieldErrorMessage(
+                        formNotice,
+                        line.id,
+                        "amount",
+                      );
+                      const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
                       return (
                         <div
                           key={line.id}
+                          data-expense-line-id={line.id}
                           className="space-y-1 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/30 p-1"
                         >
-                          <div className="grid grid-cols-[1fr_4.25rem_2rem] items-start gap-x-1 gap-y-0">
-                            <input
-                              type="text"
-                              value={line.label}
-                              onChange={(e) => patchLine(line.id, { label: e.target.value })}
-                              placeholder="Description (optional)"
-                              className={textInputClass}
-                              autoComplete="off"
-                              aria-label="Regular expense note"
-                            />
-                            <input
-                              {...amountFieldProps("next")}
-                              value={line.amount}
-                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                              className={inputClass}
-                              aria-label="Regular expense amount"
-                            />
+                          <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(0,0.75fr)_2.25rem_2.25rem] items-start gap-x-2 gap-y-1">
+                            <div className="flex min-w-0 flex-col">
+                              <input
+                                type="text"
+                                value={line.label}
+                                onChange={(e) => patchLine(line.id, { label: e.target.value })}
+                                placeholder="Expense title"
+                                className={`${textInputClass} ${labelErr ? FIELD_ERR_INPUT : ""}`}
+                                autoComplete="off"
+                                aria-label="Regular expense title"
+                                aria-invalid={labelErr ? true : undefined}
+                                aria-required
+                                data-field-error-anchor={`${line.id}:label`}
+                              />
+                              <ExpenseFieldErrorBubble message={labelErr} />
+                            </div>
+                            <div className="flex min-w-0 flex-col">
+                              <input
+                                {...amountFieldProps("next")}
+                                value={line.amount}
+                                onChange={(e) => patchLine(line.id, { amount: e.target.value })}
+                                className={`${inputClass} ${amountErr ? FIELD_ERR_INPUT : ""}`}
+                                aria-label="Regular expense amount"
+                                aria-invalid={amountErr ? true : undefined}
+                                data-field-error-anchor={`${line.id}:amount`}
+                              />
+                              <ExpenseFieldErrorBubble message={amountErr} />
+                            </div>
+                            <div className="flex h-8 w-full min-w-0 items-center justify-center justify-self-center">
+                              {renderReceiptAddControl(line)}
+                            </div>
                             <button
                               type="button"
                               onClick={() => removeExpenseLine(line.id)}
@@ -1196,7 +1702,12 @@ export function DailyEntryFormView() {
                               ×
                             </button>
                           </div>
-                          {renderExpenseReceiptStrip(line)}
+                          {attachErr ? (
+                            <div data-field-error-anchor={`${line.id}:attach`}>
+                              <ExpenseFieldErrorBubble message={attachErr} />
+                            </div>
+                          ) : null}
+                          {renderReceiptThumbnails(line)}
                         </div>
                       );
                     }
@@ -1206,14 +1717,25 @@ export function DailyEntryFormView() {
                     const selectValue =
                       trimmed === "" ? "" : inList ? trimmed : VENDOR_OTHER_VALUE;
                     const showOtherInput = selectValue === VENDOR_OTHER_VALUE;
+                    const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
+                    const vendorAmountErr = fieldErrorMessage(
+                      formNotice,
+                      line.id,
+                      "amount",
+                    );
+                    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
 
                     return (
                       <div
                         key={line.id}
+                        data-expense-line-id={line.id}
                         className="space-y-1 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/30 p-1"
                       >
-                        <div className="grid grid-cols-[1fr_4.25rem_2rem] items-start gap-x-1 gap-y-0">
-                          <div className="flex min-w-0 flex-col gap-1">
+                        <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(0,0.75fr)_2.25rem_2.25rem] items-start gap-x-2 gap-y-1">
+                          <div
+                            className={`relative flex min-w-0 flex-col gap-1 ${vendorErr ? FIELD_ERR_VENDOR_COL : ""}`}
+                            data-field-error-anchor={`${line.id}:vendor`}
+                          >
                             <select
                               className={selectClass}
                               value={selectValue}
@@ -1228,6 +1750,7 @@ export function DailyEntryFormView() {
                                 }
                               }}
                               aria-label="Expense vendor"
+                              aria-invalid={vendorErr ? true : undefined}
                             >
                               <option value="">Select vendor…</option>
                               {vendorOptions.map((name) => (
@@ -1248,27 +1771,57 @@ export function DailyEntryFormView() {
                                 aria-label="Custom vendor name"
                               />
                             ) : null}
+                            <ExpenseFieldErrorBubble message={vendorErr} />
                           </div>
-                          <input
-                            {...amountFieldProps("next")}
-                            value={line.amount}
-                            onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                            className={inputClass}
-                            aria-label="Expense amount"
-                          />
+                          <div className="flex min-w-0 flex-col self-start">
+                            <input
+                              {...amountFieldProps("next")}
+                              value={line.amount}
+                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
+                              className={`${inputClass} ${vendorAmountErr ? FIELD_ERR_INPUT : ""}`}
+                              aria-label="Expense amount"
+                              aria-invalid={vendorAmountErr ? true : undefined}
+                              data-field-error-anchor={`${line.id}:amount`}
+                            />
+                            <ExpenseFieldErrorBubble message={vendorAmountErr} />
+                          </div>
+                          <div className="flex h-8 w-full min-w-0 items-center justify-center self-start">
+                            {renderReceiptAddControl(line)}
+                          </div>
                           <button
                             type="button"
                             onClick={() => removeExpenseLine(line.id)}
-                            className="inline-flex size-8 shrink-0 items-center justify-center justify-self-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                            className="inline-flex size-8 shrink-0 items-center justify-center self-start rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
                             aria-label="Remove expense line"
                           >
                             ×
                           </button>
                         </div>
-                        {renderExpenseReceiptStrip(line)}
+                        {attachErr ? (
+                          <div data-field-error-anchor={`${line.id}:attach`}>
+                            <ExpenseFieldErrorBubble message={attachErr} />
+                          </div>
+                        ) : null}
+                        {renderReceiptThumbnails(line)}
                       </div>
                     );
                   })}
+                </div>
+                <div className="grid shrink-0 grid-cols-2 gap-1.5 border-t border-solid [border-color:var(--pos-divider)] pt-2">
+                  <button
+                    type="button"
+                    onClick={addVendorExpenseLine}
+                    className="rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30"
+                  >
+                    Add Vendor Expense
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addRegularExpenseLine}
+                    className="rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30"
+                  >
+                    Add Regular Expense
+                  </button>
                 </div>
               </div>
             </div>
@@ -1278,7 +1831,7 @@ export function DailyEntryFormView() {
         <div className="flex shrink-0 flex-col gap-1.5 border-t border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
           <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
             {savedRowForDate
-              ? "This date already has one saved entry. Save again replaces it with the values above — one record per calendar day."
+              ? "Save updates the one record for this day (see banner above)."
               : "No entry for this date yet. Save creates it (one record per calendar day)."}
           </p>
           <button
@@ -1299,140 +1852,246 @@ export function DailyEntryFormView() {
           aria-modal="true"
           aria-labelledby="history-detail-title"
           className="fixed inset-0 z-[100] flex items-end justify-center bg-black/45 p-0 sm:items-center sm:p-4"
-          onClick={() => setHistoryDetailRow(null)}
+          onClick={() => {
+            setHistoryReceiptsOpen(false);
+            setHistoryReceiptsLineIndex(null);
+            setHistoryDetailRow(null);
+          }}
         >
           <div
-            className="flex max-h-[85dvh] w-full max-w-md flex-col gap-3 overflow-y-auto rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            className="flex max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-lg sm:rounded-[14px]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-2">
-              <h2
-                id="history-detail-title"
-                className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
-              >
-                {formatDateKeyAsDisplay(historyDetailRow.date)}
-              </h2>
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-[12px] text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                onClick={() => setHistoryDetailRow(null)}
-              >
-                Close
-              </button>
-            </div>
-            <p className="text-[10px] text-[var(--pos-text-2)]">
-              {historyDetailRow.updatedAt ? (
-                <>
-                  Saved{" "}
-                  {new Date(historyDetailRow.updatedAt).toLocaleString(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
-                </>
-              ) : (
-                <>Saved time not recorded for this entry.</>
-              )}
-            </p>
-            <div className="rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-3">
-              <p className={sectionTitleClass}>Expenses</p>
-              {historyDetailRow.expenseLines && historyDetailRow.expenseLines.length > 0 ? (
-                <ul className="mt-2 space-y-1.5">
-                  {historyDetailRow.expenseLines.map((line, idx) => {
-                    const kind = savedLineKind(line);
-                    const title =
-                      kind === "vendor"
-                        ? (line.vendor ?? "").trim() || "Vendor"
-                        : (line.label ?? "").trim() || "Expense";
-                    const receipts = line.receiptDataUrls ?? [];
-                    return (
-                      <li
-                        key={`${title}-${idx}`}
-                        className="border-b border-solid [border-color:var(--pos-divider)] pb-2 last:border-b-0 last:pb-0"
-                      >
-                        <div className="flex justify-between gap-3 text-[12px] text-[var(--pos-text-1)]">
-                          <span className="min-w-0 break-words">{title}</span>
-                          <span className="shrink-0 tabular-nums">{formatMoney(line.amount)}</span>
-                        </div>
-                        {receipts.length > 0 ? (
-                          <div className="mt-1.5 flex flex-wrap gap-1">
-                            {receipts.map((url, ri) => (
-                              <a
-                                key={`${idx}-r-${ri}`}
-                                href={url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-block rounded-[6px] border border-solid [border-color:var(--pos-divider)]"
-                              >
-                                <img
-                                  src={url}
-                                  alt={`Receipt ${ri + 1} for ${title}`}
-                                  className="size-14 object-cover"
-                                />
-                              </a>
-                            ))}
-                          </div>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (historyDetailRow.expenses ?? 0) > 0 ? (
-                <p className="mt-2 text-[12px] text-[var(--pos-text-2)]">
-                  Legacy total (no line breakdown): {formatMoney(historyDetailRow.expenses)}
-                </p>
-              ) : (
-                <p className="mt-2 text-[12px] text-[var(--pos-text-2)]">No expenses recorded.</p>
-              )}
-              <div className="mt-2 flex justify-between border-t border-solid [border-color:var(--pos-divider)] pt-2 text-[12px]">
-                <span className="font-medium text-[var(--pos-text-2)]">Expenses total</span>
-                <span className="tabular-nums font-semibold text-[var(--pos-text-1)]">
-                  {formatMoney(expenseTotalFromRow(historyDetailRow))}
-                </span>
+            <div className="shrink-0 space-y-2 border-b border-solid [border-color:var(--pos-divider)] px-4 pb-3 pt-4">
+              <div className="flex items-start justify-between gap-2">
+                <h2
+                  id="history-detail-title"
+                  className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+                >
+                  Daily entry — {formatDateKeyAsDisplay(historyDetailRow.date)}
+                </h2>
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-[12px] text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                  onClick={() => {
+                    setHistoryReceiptsOpen(false);
+                    setHistoryReceiptsLineIndex(null);
+                    setHistoryDetailRow(null);
+                  }}
+                >
+                  Close
+                </button>
               </div>
-            </div>
-            <div className="flex flex-col gap-1.5 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-3">
-              <div className="flex justify-between gap-4 text-[12px]">
-                <span className="text-[var(--pos-text-2)]">Opening</span>
-                <span className="tabular-nums text-[var(--pos-text-1)]">
-                  {formatMoney(historyDetailRow.openingBalance)}
-                </span>
-              </div>
-              <p className={`mt-1 ${sectionTitleClass}`}>Sales</p>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+              <p className="text-[10px] text-[var(--pos-text-2)]">
+                {historyDetailRow.updatedAt ? (
+                  <>
+                    Saved{" "}
+                    {new Date(historyDetailRow.updatedAt).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </>
+                ) : (
+                  <>Saved time not recorded for this entry.</>
+                )}
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {(
                   [
-                    ["Cash", historyDetailRow.cashSale],
-                    ["Bank", historyDetailRow.bankSale],
-                    ["bKash", historyDetailRow.bkashSale],
-                    ["Pathao", historyDetailRow.pathaoSale],
-                    ["Foodi", historyDetailRow.foodiSale],
-                    ["Foodpanda", historyDetailRow.foodpandaSale],
+                    ["Opening", historyDetailRow.openingBalance],
+                    ["Sales total", salesTotal(historyDetailRow)],
+                    ["Expenses total", expenseTotalFromRow(historyDetailRow)],
+                    ["Remaining (closing)", historyDetailRow.remainingBalance],
                   ] as const
                 ).map(([label, amt]) => (
-                  <div key={label} className="flex justify-between gap-2">
-                    <span className="text-[var(--pos-text-2)]">{label}</span>
-                    <span className="tabular-nums text-[var(--pos-text-1)]">{formatMoney(amt)}</span>
+                  <div
+                    key={label}
+                    className="rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-2 py-1.5"
+                  >
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--pos-text-2)]">
+                      {label}
+                    </p>
+                    <p className="text-[13px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                      {formatMoney(amt)}
+                    </p>
                   </div>
                 ))}
               </div>
-              <div className="mt-1 flex justify-between gap-4 border-t border-solid [border-color:var(--pos-divider)] pt-1.5 text-[12px]">
-                <span className="font-medium text-[var(--pos-text-2)]">Sales total</span>
-                <span className="tabular-nums font-semibold text-[var(--pos-text-1)]">
-                  {formatMoney(salesTotal(historyDetailRow))}
-                </span>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+              <div className="rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className={sectionTitleClass}>Expense lines</p>
+                  {totalReceiptCountForRow(historyDetailRow) > 0 ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 text-[11px] font-semibold text-[var(--pos-text-1)] transition-colors hover:bg-[var(--pos-nav-hover)]/30"
+                      onClick={() => {
+                        setHistoryReceiptsLineIndex(null);
+                        setHistoryReceiptsOpen(true);
+                      }}
+                    >
+                      <Paperclip className="size-3.5" strokeWidth={2.25} aria-hidden />
+                      View receipts ({totalReceiptCountForRow(historyDetailRow)})
+                    </button>
+                  ) : null}
+                </div>
+                {historyDetailRow.expenseLines && historyDetailRow.expenseLines.length > 0 ? (
+                  <div className="overflow-x-auto rounded-[8px] border border-solid [border-color:var(--pos-divider)]">
+                    <table className="w-full min-w-[32rem] border-collapse text-left text-[11px]">
+                      <thead>
+                        <tr className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/40">
+                          <th className="px-2 py-1.5 font-semibold text-[var(--pos-text-2)]">#</th>
+                          <th className="px-2 py-1.5 font-semibold text-[var(--pos-text-2)]">
+                            Expense title
+                          </th>
+                          <th className="whitespace-nowrap px-2 py-1.5 font-semibold text-[var(--pos-text-2)]">
+                            Type
+                          </th>
+                          <th className="px-2 py-1.5 text-right font-semibold text-[var(--pos-text-2)]">
+                            Amount
+                          </th>
+                          <th className="whitespace-nowrap px-2 py-1.5 text-right font-semibold text-[var(--pos-text-2)]">
+                            Receipts
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historyDetailRow.expenseLines.map((line, idx) => {
+                          const kind = savedLineKind(line);
+                            const title =
+                            kind === "vendor"
+                              ? (line.vendor ?? "").trim() || "Vendor"
+                              : (line.label ?? "").trim() || "Regular expense";
+                          const rc = receiptCountForLine(line);
+                          return (
+                            <tr
+                              key={`${title}-${idx}`}
+                              className="border-b border-solid [border-color:var(--pos-divider)] last:border-b-0"
+                            >
+                              <td className="px-2 py-1.5 tabular-nums text-[var(--pos-text-2)]">
+                                {idx + 1}
+                              </td>
+                              <td className="max-w-[14rem] px-2 py-1.5 break-words text-[var(--pos-text-1)]">
+                                {title}
+                              </td>
+                              <td className="whitespace-nowrap px-2 py-1.5 text-[var(--pos-text-2)]">
+                                {kind === "vendor" ? "Vendor" : "Regular"}
+                              </td>
+                              <td className="px-2 py-1.5 text-right tabular-nums text-[var(--pos-text-1)]">
+                                {formatMoney(line.amount)}
+                              </td>
+                              <td className="px-2 py-1.5 text-[var(--pos-text-2)]">
+                                {rc > 0 ? (
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <span className="tabular-nums">{rc}</span>
+                                    <button
+                                      type="button"
+                                      className={`${historyActionBtnClass} !p-1`}
+                                      title={`View ${rc} receipt${rc === 1 ? "" : "s"} for this line`}
+                                      aria-label={`View ${rc} receipt${rc === 1 ? "" : "s"} for ${title}`}
+                                      onClick={() => {
+                                        setHistoryReceiptsLineIndex(idx);
+                                        setHistoryReceiptsOpen(true);
+                                      }}
+                                    >
+                                      <Eye className="size-3.5" strokeWidth={2.25} aria-hidden />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="text-right">—</div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-[var(--pos-card)]/30">
+                          <td
+                            colSpan={3}
+                            className="px-2 py-1.5 text-right font-semibold text-[var(--pos-text-2)]"
+                          >
+                            Expenses total
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-[12px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                            {formatMoney(expenseTotalFromRow(historyDetailRow))}
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-[var(--pos-text-2)]">—</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                ) : (historyDetailRow.expenses ?? 0) > 0 ? (
+                  <p className="text-[12px] text-[var(--pos-text-2)]">
+                    Legacy total (no line breakdown): {formatMoney(historyDetailRow.expenses)}
+                  </p>
+                ) : (
+                  <p className="text-[12px] text-[var(--pos-text-2)]">No expenses recorded.</p>
+                )}
+              </div>
+
+              <div className="rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-3">
+                <p className={`mb-2 ${sectionTitleClass}`}>Sales by channel</p>
+                <div className="overflow-x-auto rounded-[8px] border border-solid [border-color:var(--pos-divider)]">
+                  <table className="w-full min-w-[18rem] border-collapse text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/40">
+                        <th className="px-2 py-1.5 font-semibold text-[var(--pos-text-2)]">
+                          Channel
+                        </th>
+                        <th className="px-2 py-1.5 text-right font-semibold text-[var(--pos-text-2)]">
+                          Amount
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(
+                        [
+                          ["Cash", historyDetailRow.cashSale],
+                          ["Bank", historyDetailRow.bankSale],
+                          ["bKash", historyDetailRow.bkashSale],
+                          ["Pathao", historyDetailRow.pathaoSale],
+                          ["Foodi", historyDetailRow.foodiSale],
+                          ["Foodpanda", historyDetailRow.foodpandaSale],
+                        ] as const
+                      ).map(([label, amt]) => (
+                        <tr
+                          key={label}
+                          className="border-b border-solid [border-color:var(--pos-divider)] last:border-b-0"
+                        >
+                          <td className="px-2 py-1.5 text-[var(--pos-text-2)]">{label}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums text-[var(--pos-text-1)]">
+                            {formatMoney(amt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-[var(--pos-card)]/30">
+                        <td className="px-2 py-1.5 font-semibold text-[var(--pos-text-2)]">
+                          Sales total
+                        </td>
+                        <td className="px-2 py-1.5 text-right text-[12px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                          {formatMoney(salesTotal(historyDetailRow))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </div>
             </div>
-            <div className="flex justify-between rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2 text-[13px]">
-              <span className="font-semibold text-[var(--pos-text-2)]">Remaining (closing)</span>
-              <span className="font-semibold tabular-nums text-[var(--pos-text-1)]">
-                {formatMoney(historyDetailRow.remainingBalance)}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2 pt-1">
+
+            <div className="flex shrink-0 flex-wrap gap-2 border-t border-solid [border-color:var(--pos-divider)] px-4 py-3">
               <button
                 type="button"
                 className="inline-flex h-9 min-w-[7rem] items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30"
-                onClick={() => setHistoryDetailRow(null)}
+                onClick={() => {
+                  setHistoryReceiptsOpen(false);
+                  setHistoryReceiptsLineIndex(null);
+                  setHistoryDetailRow(null);
+                }}
               >
                 Done
               </button>
@@ -1443,6 +2102,8 @@ export function DailyEntryFormView() {
                 onClick={() => {
                   setDateKey(historyDetailRow.date);
                   setActiveView("entry");
+                  setHistoryReceiptsOpen(false);
+                  setHistoryReceiptsLineIndex(null);
                   setHistoryDetailRow(null);
                 }}
               >
@@ -1450,6 +2111,133 @@ export function DailyEntryFormView() {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {historyDetailRow && historyReceiptsOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="history-receipts-title"
+          className="fixed inset-0 z-[110] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => {
+            setHistoryReceiptsOpen(false);
+            setHistoryReceiptsLineIndex(null);
+          }}
+        >
+          <div
+            className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-start justify-between gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
+              <div>
+                <h2
+                  id="history-receipts-title"
+                  className="text-[14px] font-semibold leading-tight text-[var(--pos-text-1)]"
+                >
+                  {historyReceiptsLineIndex === null
+                    ? "Receipts"
+                    : `Receipts — line ${historyReceiptsLineIndex + 1}`}
+                </h2>
+                <p className="mt-0.5 text-[11px] text-[var(--pos-text-2)]">
+                  {formatDateKeyAsDisplay(historyDetailRow.date)}
+                  {historyReceiptsLineIndex === null
+                    ? " — tap an image to enlarge"
+                    : " — receipts for this expense line only"}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[12px] text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                onClick={() => {
+                  setHistoryReceiptsOpen(false);
+                  setHistoryReceiptsLineIndex(null);
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-3">
+              {historyDetailRow.expenseLines?.map((line, idx) => {
+                const urls = line.receiptDataUrls ?? [];
+                if (urls.length === 0) return null;
+                if (historyReceiptsLineIndex !== null && idx !== historyReceiptsLineIndex) {
+                  return null;
+                }
+                const kind = savedLineKind(line);
+                const title =
+                  kind === "vendor"
+                    ? (line.vendor ?? "").trim() || "Vendor"
+                    : (line.label ?? "").trim() || "Regular expense";
+                return (
+                  <section key={`receipt-block-${idx}`} className="space-y-2">
+                    <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
+                      {title}{" "}
+                      <span className="font-normal text-[var(--pos-text-2)]">
+                        · {formatMoney(line.amount)}
+                      </span>
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {urls.map((url, ri) => (
+                        <button
+                          key={`${idx}-g-${ri}`}
+                          type="button"
+                          className="block overflow-hidden rounded-[8px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
+                          onClick={() => setReceiptPreviewUrl(url)}
+                          aria-label={`View receipt ${ri + 1} for ${title}`}
+                        >
+                          <img
+                            src={url}
+                            alt=""
+                            className="size-[5.5rem] object-cover sm:size-28"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+            <div className="shrink-0 border-t border-solid [border-color:var(--pos-divider)] px-4 py-3">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[7rem] items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30"
+                onClick={() => {
+                  setHistoryReceiptsOpen(false);
+                  setHistoryReceiptsLineIndex(null);
+                }}
+              >
+                Back to summary
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {receiptPreviewUrl ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Receipt preview"
+          className="fixed inset-0 z-[120] flex flex-col items-center justify-center bg-black/85 p-4"
+          onClick={() => setReceiptPreviewUrl(null)}
+        >
+          <button
+            type="button"
+            className="absolute right-3 top-3 rounded-lg px-3 py-1.5 text-[13px] font-medium text-white/90 hover:bg-white/10"
+            onClick={() => setReceiptPreviewUrl(null)}
+          >
+            Close
+          </button>
+          <img
+            src={receiptPreviewUrl}
+            alt="Receipt"
+            className="max-h-[min(90dvh,900px)] max-w-full object-contain shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <p className="mt-3 max-w-lg text-center text-[11px] text-white/60">
+            Tap outside the image or press Escape to close
+          </p>
         </div>
       ) : null}
     </div>

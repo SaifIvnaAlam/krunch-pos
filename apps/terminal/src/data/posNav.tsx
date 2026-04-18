@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  BarChart3,
   NotebookPen,
   Package,
   Factory,
@@ -7,6 +8,7 @@ import {
   CalendarDays,
   CalendarOff,
   Receipt,
+  TrendingUp,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -36,6 +38,16 @@ export type NavSection = {
 
 const SIDEBAR_NAV_NODES: NavNode[] = [
   { kind: "leaf", id: "exp-daily", label: "Daily Entry Form", icon: NotebookPen },
+  {
+    kind: "branch",
+    id: "reports",
+    label: "Reports",
+    icon: BarChart3,
+    children: [
+      { kind: "leaf", id: "rep-expenses", label: "Expense reports", icon: Receipt },
+      { kind: "leaf", id: "rep-sales", label: "Sales report", icon: TrendingUp },
+    ],
+  },
   {
     kind: "branch",
     id: "inventory-management",

@@ -7,6 +7,7 @@ import {
 } from "react";
 
 const STORAGE_KEY = "remi_pos_demo_auth";
+const USER_NAME_KEY = "remi_pos_user_name";
 
 function readStored(): boolean {
   try {
@@ -16,9 +17,19 @@ function readStored(): boolean {
   }
 }
 
+function readStoredUserName(): string {
+  try {
+    return sessionStorage.getItem(USER_NAME_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 type DevAuthContextValue = {
   isSignedIn: boolean;
-  signIn: () => void;
+  /** Display name for the signed-in session (empty when signed out). */
+  userName: string;
+  signIn: (opts?: { userName?: string }) => void;
   signOut: () => void;
 };
 
@@ -26,20 +37,36 @@ const DevAuthContext = createContext<DevAuthContextValue | null>(null);
 
 export function DevAuthProvider({ children }: { children: React.ReactNode }) {
   const [isSignedIn, setIsSignedIn] = useState(readStored);
+  const [userName, setUserName] = useState(() =>
+    readStored() ? readStoredUserName() : "",
+  );
 
-  const signIn = useCallback(() => {
-    sessionStorage.setItem(STORAGE_KEY, "1");
+  const signIn = useCallback((opts?: { userName?: string }) => {
+    const name = (opts?.userName ?? "").trim() || "Staff";
+    try {
+      sessionStorage.setItem(STORAGE_KEY, "1");
+      sessionStorage.setItem(USER_NAME_KEY, name);
+    } catch {
+      /* ignore */
+    }
     setIsSignedIn(true);
+    setUserName(name);
   }, []);
 
   const signOut = useCallback(() => {
-    sessionStorage.removeItem(STORAGE_KEY);
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(USER_NAME_KEY);
+    } catch {
+      /* ignore */
+    }
     setIsSignedIn(false);
+    setUserName("");
   }, []);
 
   const value = useMemo(
-    () => ({ isSignedIn, signIn, signOut }),
-    [isSignedIn, signIn, signOut],
+    () => ({ isSignedIn, userName, signIn, signOut }),
+    [isSignedIn, userName, signIn, signOut],
   );
 
   return (

@@ -49,6 +49,8 @@ import { ReservationView } from "../components/pos/ReservationView";
 import { ItemOptionsBody } from "../components/pos/ItemOptionsModal";
 import { ExpenseRecordsView } from "../components/pos/ExpenseRecordsView";
 import { DailyEntryFormView } from "../components/pos/DailyEntryFormView";
+import { ExpenseReportsView } from "../components/pos/ExpenseReportsView";
+import { SalesReportView } from "../components/pos/SalesReportView";
 import {
   FoodManagementPanel,
   type AddonTemplate,
@@ -729,6 +731,12 @@ export function PosTerminalPage() {
     }
     if (activeLeafId === "exp-daily") {
       return <DailyEntryFormView />;
+    }
+    if (activeLeafId === "rep-expenses") {
+      return <ExpenseReportsView />;
+    }
+    if (activeLeafId === "rep-sales") {
+      return <SalesReportView />;
     }
 
     if (
