@@ -6,7 +6,15 @@ export const POS_LAST_LEAF_STORAGE_KEY = "remi-pos-last-leaf";
 /** First visit (no valid stored section): daily entry form. */
 export const POS_DEFAULT_LEAF_ID = "exp-daily";
 
+/** Routes not listed in the sidebar but still reachable (e.g. `pos-select-leaf`). */
 const EXTRA_RESTORE_LEAF_IDS = new Set([
+  "dashboard",
+  "menu",
+  "mo-list",
+  "mo-online",
+  "reservations",
+  "exp-list",
+  "menu-mgmt",
   "fd-cat",
   "fd-items",
   "fd-addon",

@@ -42,6 +42,10 @@ import {
   InventoryModuleView,
 } from "../components/pos/InventoryModuleView";
 import {
+  LEDGER_LEAF_IDS,
+  LedgerModuleView,
+} from "../components/pos/LedgerModuleView";
+import {
   PURCHASE_LEAF_IDS,
   PurchaseModuleView,
 } from "../components/pos/PurchaseModuleView";
@@ -58,6 +62,15 @@ import {
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
+
+function foodManagementInitialLeaf(
+  activeLeafId: string,
+): "fd-cat" | "fd-items" | "fd-addon" | "fd-menu" {
+  if (activeLeafId === "fd-cat") return "fd-cat";
+  if (activeLeafId === "fd-items") return "fd-items";
+  if (activeLeafId === "fd-addon") return "fd-addon";
+  return "fd-menu";
+}
 
 const CATEGORY_STYLES = [
   { bg: "#ffd4c8", text: "#7a3520" },
@@ -722,6 +735,9 @@ export function PosTerminalPage() {
     if (PURCHASE_LEAF_IDS.has(activeLeafId)) {
       return <PurchaseModuleView leafId={activeLeafId} />;
     }
+    if (LEDGER_LEAF_IDS.has(activeLeafId)) {
+      return <LedgerModuleView leafId={activeLeafId} />;
+    }
     if (HR_LEAF_IDS.has(activeLeafId)) {
       return <EmployeeModuleView leafId={activeLeafId} />;
     }
@@ -751,11 +767,7 @@ export function PosTerminalPage() {
           setCategories={setMenuCategories}
           addonTemplates={addonTemplates}
           setAddonTemplates={setAddonTemplates}
-          initialLeaf={
-            activeLeafId === "fd-addon"
-              ? "fd-addon"
-              : "fd-menu"
-          }
+          initialLeaf={foodManagementInitialLeaf(activeLeafId)}
         />
       );
     }

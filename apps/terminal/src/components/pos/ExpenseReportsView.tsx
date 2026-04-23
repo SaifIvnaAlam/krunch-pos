@@ -7,6 +7,7 @@ import {
   listDailyEntriesDescending,
   savedLineKind,
 } from "../../lib/dailyEntryStorage";
+import { expenseSavedLineLedgerLabel } from "../../lib/ledgerLineReportLabels";
 
 const MONTH_ABBR = [
   "Jan",
@@ -42,24 +43,46 @@ function formatMoney(value: number) {
 
 type FlatLine = {
   kind: "vendor" | "regular";
+  lineKindLabel: string;
   description: string;
+  note: string;
   amount: number;
   receiptCount: number;
+  ledgerEntryLabel: string;
+  /** null when this row is a legacy single total with no line-level detail. */
+  postedToLedger: boolean | null;
+  stableKey: string;
 };
 
 function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
   if (r.expenseLines && r.expenseLines.length > 0) {
-    return r.expenseLines.map((line) => {
+    return r.expenseLines.map((line, idx) => {
       const kind = savedLineKind(line);
       const description =
         kind === "vendor"
-          ? (line.vendor ?? "").trim() || "Vendor"
+          ? (line.vendor ?? "").trim() || "Ledger book"
           : (line.label ?? "").trim() || "Regular expense";
+      const note =
+        kind === "vendor"
+          ? (line.ledgerNote ?? "").trim()
+          : (line.note ?? "").trim();
+      const lineKindLabel =
+        kind === "vendor" ? "Ledger book" : "Regular expense";
+      const postedToLedger = kind === "vendor" ? Boolean(line.ledgerLink) : null;
+      const idPart =
+        line.lineId && String(line.lineId).trim().length > 0
+          ? String(line.lineId).trim()
+          : `idx-${idx}`;
       return {
         kind,
+        lineKindLabel,
         description,
+        note,
         amount: line.amount,
         receiptCount: line.receiptDataUrls?.length ?? 0,
+        ledgerEntryLabel: expenseSavedLineLedgerLabel(line),
+        postedToLedger,
+        stableKey: `${r.date}:${idPart}`,
       };
     });
   }
@@ -67,9 +90,14 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
     return [
       {
         kind: "vendor" as const,
-        description: "Legacy total",
+        lineKindLabel: "Day total (legacy)",
+        description: "No line detail — stored expense total only",
+        note: "",
         amount: r.expenses ?? 0,
         receiptCount: 0,
+        ledgerEntryLabel: "—",
+        postedToLedger: null,
+        stableKey: `${r.date}:legacy-total`,
       },
     ];
   }
@@ -80,8 +108,11 @@ type ReportRow = {
   id: string;
   dateKey: string;
   displayDate: string;
-  kind: "vendor" | "regular";
+  lineKindLabel: string;
   description: string;
+  note: string;
+  ledgerEntryLabel: string;
+  postedLabel: string;
   amount: number;
   receiptCount: number;
   enteredBy: string;
@@ -95,13 +126,19 @@ function buildReportRows(): ReportRow[] {
     if (lines.length === 0) continue;
     const displayDate = formatDateKeyAsDisplay(r.date);
     const enteredBy = (r.enteredBy ?? "").trim() || "—";
-    lines.forEach((line, idx) => {
+    lines.forEach((line) => {
+      let postedLabel = "—";
+      if (line.postedToLedger === true) postedLabel = "Yes";
+      else if (line.postedToLedger === false) postedLabel = "No";
       out.push({
-        id: `${r.date}-${idx}`,
+        id: line.stableKey,
         dateKey: r.date,
         displayDate,
-        kind: line.kind,
+        lineKindLabel: line.lineKindLabel,
         description: line.description,
+        note: line.note,
+        ledgerEntryLabel: line.ledgerEntryLabel,
+        postedLabel,
         amount: line.amount,
         receiptCount: line.receiptCount,
         enteredBy,
@@ -117,7 +154,10 @@ function rowMatchesQuery(row: ReportRow, q: string): boolean {
     row.dateKey,
     row.displayDate.toLowerCase(),
     row.description.toLowerCase(),
-    row.kind,
+    row.note.toLowerCase(),
+    row.lineKindLabel.toLowerCase(),
+    row.ledgerEntryLabel.toLowerCase(),
+    row.postedLabel.toLowerCase(),
     row.enteredBy.toLowerCase(),
   ].join(" ");
   return hay.includes(q);
@@ -160,14 +200,17 @@ export function ExpenseReportsView() {
     [filteredRows],
   );
 
+  const thBase =
+    "px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]";
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
         <div>
           <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Expense reports</h1>
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            All daily entry expenses in one table — newest dates first; same date appears on each
-            line.
+            One row per saved expense line (ledger books and regular), including ledger entry type,
+            Bills &amp; payments sync, and receipts — aligned with Daily Entry Form.
           </p>
         </div>
       </div>
@@ -182,7 +225,7 @@ export function ExpenseReportsView() {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search date, description, entered by, or type"
+            placeholder="Search date, book, note, ledger type, posted, entered by…"
             className="h-9 w-full cursor-text rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none"
           />
         </label>
@@ -203,25 +246,20 @@ export function ExpenseReportsView() {
               : "No expenses match your search."}
           </div>
         ) : (
-          <table className="w-full min-w-[640px] border-collapse text-center">
+          <table className="w-full min-w-[980px] border-collapse text-center">
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)]">
-                <th className="whitespace-nowrap px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">
-                  Date
+                <th className={`whitespace-nowrap ${thBase}`}>Date</th>
+                <th className={`min-w-[120px] ${thBase}`}>Line kind</th>
+                <th className={`min-w-[160px] text-left ${thBase}`}>Description</th>
+                <th className={`min-w-[120px] text-left ${thBase}`}>Note</th>
+                <th className={`min-w-[100px] ${thBase}`}>Ledger entry</th>
+                <th className={`whitespace-nowrap ${thBase}`} title="Posted to Bills &amp; payments from Daily Entry">
+                  Posted
                 </th>
-                <th className="min-w-[180px] px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">
-                  Description
-                </th>
-                <th className="px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">Type</th>
-                <th className="px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">
-                  Amount
-                </th>
-                <th className="w-24 px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">
-                  Receipts
-                </th>
-                <th className="min-w-[120px] px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]">
-                  Entered by
-                </th>
+                <th className={thBase}>Amount</th>
+                <th className={`w-24 ${thBase}`}>Receipts</th>
+                <th className={`min-w-[100px] ${thBase}`}>Entered by</th>
               </tr>
             </thead>
             <tbody>
@@ -233,10 +271,15 @@ export function ExpenseReportsView() {
                   <td className="whitespace-nowrap px-3 py-2 text-[var(--pos-text-1)]">
                     {row.displayDate}
                   </td>
-                  <td className="max-w-[280px] truncate px-3 py-2 text-[var(--pos-text-1)]">
+                  <td className="px-3 py-2 text-[var(--pos-text-2)]">{row.lineKindLabel}</td>
+                  <td className="max-w-[280px] truncate px-3 py-2 text-left text-[var(--pos-text-1)]">
                     {row.description}
                   </td>
-                  <td className="px-3 py-2 capitalize text-[var(--pos-text-2)]">{row.kind}</td>
+                  <td className="max-w-[200px] truncate px-3 py-2 text-left text-[var(--pos-text-2)]">
+                    {row.note ? row.note : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-[var(--pos-text-2)]">{row.ledgerEntryLabel}</td>
+                  <td className="px-3 py-2 text-[var(--pos-text-2)]">{row.postedLabel}</td>
                   <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
                     {formatMoney(row.amount)}
                   </td>
@@ -249,6 +292,23 @@ export function ExpenseReportsView() {
                 </tr>
               ))}
             </tbody>
+            <tfoot className="sticky bottom-0 z-10 border-t border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/95 backdrop-blur-sm">
+              <tr>
+                <th
+                  className="px-3 py-2 text-right text-[11px] font-semibold text-[var(--pos-text-1)]"
+                  colSpan={6}
+                  scope="row"
+                >
+                  Total (filtered)
+                </th>
+                <td className="px-3 py-2 text-center text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                  {formatMoney(grandTotal)}
+                </td>
+                <td className="px-3 py-2 text-center text-[11px] text-[var(--pos-text-2)]" colSpan={2}>
+                  —
+                </td>
+              </tr>
+            </tfoot>
           </table>
         )}
       </div>
