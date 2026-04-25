@@ -1,0 +1,758 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--accent:#1D9E75;--accent-light:#E1F5EE;--accent-dark:#085041;--warn:#BA7517;--warn-light:#FAEEDA;--danger:#A32D2D;--danger-light:#FCEBEB;--info:#185FA5;--info-light:#E6F1FB}
+.app{width:100%;padding:0.5rem 0}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:0.75rem 1rem;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);margin-bottom:1rem;flex-wrap:wrap;gap:8px}
+.topbar h1{font-size:17px;font-weight:500;color:var(--color-text-primary)}
+.topbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.period-selector{display:flex;align-items:center;gap:6px;background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:4px 10px}
+.period-selector span{font-size:13px;font-weight:500;color:var(--color-text-primary);min-width:90px;text-align:center}
+.period-btn{background:none;border:none;cursor:pointer;color:var(--color-text-secondary);font-size:16px;padding:0 4px;line-height:1}
+.period-btn:hover{color:var(--color-text-primary)}
+.period-status{font-size:11px;padding:3px 10px;border-radius:20px}
+.period-open{background:#E1F5EE;color:#085041}
+.period-closed{background:#FCEBEB;color:#A32D2D}
+.tabs{display:flex;gap:6px;margin-bottom:1rem;flex-wrap:wrap}
+.tab{padding:7px 16px;font-size:13px;border:0.5px solid var(--color-border-tertiary);border-radius:20px;cursor:pointer;background:var(--color-background-primary);color:var(--color-text-secondary);transition:all 0.15s}
+.tab.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:500}
+.tab:hover:not(.active){background:var(--color-background-secondary)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:1rem}
+.card{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:0.85rem 1rem}
+.card .label{font-size:11px;color:var(--color-text-secondary);margin-bottom:4px}
+.card .val{font-size:20px;font-weight:500;color:var(--color-text-primary)}
+.card .sub{font-size:11px;color:var(--color-text-secondary);margin-top:2px}
+.card.red .val{color:var(--danger)}
+.card.green .val{color:var(--accent-dark)}
+.card.amber .val{color:var(--warn)}
+.section{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem;margin-bottom:1rem}
+.section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:0.85rem;flex-wrap:wrap;gap:6px}
+.section-head h2{font-size:14px;font-weight:500;color:var(--color-text-primary)}
+.btn{padding:6px 14px;font-size:13px;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);cursor:pointer;background:var(--color-background-primary);color:var(--color-text-primary);transition:all 0.15s}
+.btn:hover{background:var(--color-background-secondary)}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn.primary:hover{background:var(--accent-dark)}
+.btn.danger{background:var(--danger-light);color:var(--danger);border-color:var(--danger)}
+.btn.warn{background:var(--warn-light);color:var(--warn);border-color:var(--warn)}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:0.4;cursor:default}
+table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+th{text-align:left;padding:7px 10px;font-size:11px;font-weight:500;color:var(--color-text-secondary);border-bottom:0.5px solid var(--color-border-tertiary);background:var(--color-background-secondary)}
+td{padding:8px 10px;border-bottom:0.5px solid var(--color-border-tertiary);color:var(--color-text-primary);vertical-align:middle;word-break:break-word}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--color-background-secondary)}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500}
+.badge.green{background:#E1F5EE;color:#085041}
+.badge.red{background:#FCEBEB;color:#A32D2D}
+.badge.amber{background:#FAEEDA;color:#633806}
+.badge.blue{background:#E6F1FB;color:#0C447C}
+.badge.gray{background:var(--color-background-secondary);color:var(--color-text-secondary)}
+.badge.purple{background:#EEEDFE;color:#3C3489}
+.form-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:8px}
+input,select,textarea{width:100%;padding:7px 10px;font-size:13px;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);font-family:var(--font-sans)}
+input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(29,158,117,0.15)}
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:100;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:var(--color-background-primary);border-radius:var(--border-radius-lg);border:0.5px solid var(--color-border-tertiary);padding:1.25rem;width:min(520px,94vw);max-height:90vh;overflow-y:auto}
+.modal h3{font-size:15px;font-weight:500;margin-bottom:1rem}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:1rem}
+.empty{text-align:center;padding:2rem;color:var(--color-text-secondary);font-size:13px}
+.due-bar{height:5px;background:var(--color-background-secondary);border-radius:3px;margin-top:4px;overflow:hidden}
+.due-fill{height:100%;border-radius:3px;transition:width 0.3s}
+.period-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px}
+.period-row:last-child{border-bottom:none}
+.recur-icon{font-size:14px}
+.info-box{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:0.75rem 1rem;font-size:13px;color:var(--color-text-secondary);margin-bottom:0.75rem}
+.month-compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:1rem}
+.mc-card{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:0.75rem;text-align:center}
+.mc-card .mc-month{font-size:11px;color:var(--color-text-secondary);margin-bottom:4px}
+.mc-card .mc-val{font-size:16px;font-weight:500}
+.mc-card .mc-bar{height:4px;border-radius:2px;margin-top:6px;background:var(--color-border-tertiary)}
+.mc-fill{height:100%;border-radius:2px;background:var(--accent)}
+</style>
+
+<div class="app">
+<div class="topbar">
+  <h1>🍽 RestaurantLedger</h1>
+  <div class="topbar-right">
+    <div class="period-selector">
+      <button class="period-btn" onclick="changePeriod(-1)">&#8592;</button>
+      <span id="period-label"></span>
+      <button class="period-btn" onclick="changePeriod(1)">&#8594;</button>
+    </div>
+    <span class="period-status" id="period-status"></span>
+    <button class="btn sm" onclick="toggleClosePeriod()" id="close-btn"></button>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('dashboard')">Dashboard</div>
+  <div class="tab" onclick="switchTab('expenses')">Expenses</div>
+  <div class="tab" onclick="switchTab('recurring')">Recurring</div>
+  <div class="tab" onclick="switchTab('vendors')">Vendors</div>
+  <div class="tab" onclick="switchTab('employees')">Employees</div>
+  <div class="tab" onclick="switchTab('dues')">Dues</div>
+  <div class="tab" onclick="switchTab('history')">Period history</div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="tab-dashboard">
+  <div class="cards" id="dash-cards"></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem">
+    <div class="section"><div class="section-head"><h2>This period's expenses</h2></div><div id="dash-recent-exp"></div></div>
+    <div class="section"><div class="section-head"><h2>Outstanding dues</h2></div><div id="dash-dues"></div></div>
+  </div>
+  <div class="section">
+    <div class="section-head"><h2>Month-over-month comparison</h2></div>
+    <div class="month-compare" id="mom-compare"></div>
+  </div>
+  <div class="section" id="recur-due-section">
+    <div class="section-head"><h2>Recurring entries due this period</h2><button class="btn sm primary" onclick="applyAllRecurring()">Apply all</button></div>
+    <div id="recur-due-list"></div>
+  </div>
+</div>
+
+<!-- EXPENSES -->
+<div id="tab-expenses" style="display:none">
+  <div class="section">
+    <div class="section-head">
+      <h2>Expenses — <span id="exp-period-label" style="color:var(--color-text-secondary);font-weight:400"></span></h2>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--color-text-secondary)">
+          <input type="checkbox" id="exp-all-periods" onchange="renderExpenses()" style="width:auto"> All periods
+        </label>
+        <button class="btn primary sm" onclick="openModal('exp-modal')" id="add-exp-btn">+ Add expense</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <select id="exp-filter-cat" onchange="renderExpenses()" style="width:auto;font-size:12px;padding:5px 8px">
+        <option value="">All categories</option>
+        <option value="general">General</option>
+        <option value="vendor">Vendor</option>
+        <option value="employee">Employee</option>
+        <option value="utility">Utility</option>
+        <option value="maintenance">Maintenance</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th style="width:80px">Date</th><th>Description</th><th style="width:85px">Category</th><th style="width:75px">Amount</th><th style="width:80px">Period</th><th style="width:65px">Source</th><th style="width:70px">Actions</th>
+    </tr></thead><tbody id="exp-tbody"></tbody></table></div>
+    <div id="exp-total" style="text-align:right;padding:8px 10px;font-size:13px;font-weight:500;border-top:0.5px solid var(--color-border-tertiary)"></div>
+  </div>
+</div>
+
+<!-- RECURRING -->
+<div id="tab-recurring" style="display:none">
+  <div class="section">
+    <div class="section-head">
+      <h2>Recurring expense templates</h2>
+      <button class="btn primary sm" onclick="openModal('recur-modal')">+ New template</button>
+    </div>
+    <div class="info-box">Recurring templates auto-generate expenses each period. Apply them manually per period or use "Apply all" on the dashboard.</div>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Name</th><th style="width:90px">Category</th><th style="width:75px">Amount</th><th style="width:70px">Frequency</th><th style="width:90px">Linked to</th><th style="width:80px">Last applied</th><th style="width:90px">Actions</th>
+    </tr></thead><tbody id="recur-tbody"></tbody></table></div>
+  </div>
+</div>
+
+<!-- VENDORS -->
+<div id="tab-vendors" style="display:none">
+  <div class="section">
+    <div class="section-head"><h2>Vendor directory</h2><button class="btn primary sm" onclick="openModal('vendor-modal')">+ Add vendor</button></div>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Vendor</th><th style="width:90px">Category</th><th style="width:85px">Total billed</th><th style="width:85px">Total paid</th><th style="width:85px">Balance due</th><th style="width:110px">Actions</th>
+    </tr></thead><tbody id="vendor-tbody"></tbody></table></div>
+  </div>
+</div>
+
+<!-- EMPLOYEES -->
+<div id="tab-employees" style="display:none">
+  <div class="section">
+    <div class="section-head"><h2>Staff roster</h2><button class="btn primary sm" onclick="openModal('emp-modal')">+ Add employee</button></div>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Name</th><th style="width:90px">Role</th><th style="width:85px">Monthly salary</th><th style="width:85px">Advances</th><th style="width:85px">Net payable</th><th style="width:110px">Actions</th>
+    </tr></thead><tbody id="emp-tbody"></tbody></table></div>
+  </div>
+</div>
+
+<!-- DUES -->
+<div id="tab-dues" style="display:none">
+  <div class="section">
+    <div class="section-head"><h2>Dues & payments</h2><button class="btn primary sm" onclick="openModal('due-modal')">+ Record due</button></div>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Party</th><th style="width:75px">Type</th><th style="width:80px">Due amount</th><th style="width:80px">Paid</th><th style="width:80px">Remaining</th><th style="width:75px">Due date</th><th style="width:80px">Status</th><th style="width:90px">Actions</th>
+    </tr></thead><tbody id="dues-tbody"></tbody></table></div>
+  </div>
+</div>
+
+<!-- PERIOD HISTORY -->
+<div id="tab-history" style="display:none">
+  <div class="section">
+    <div class="section-head"><h2>Period-by-period summary</h2></div>
+    <div id="period-history-list"></div>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-bg" id="exp-modal"><div class="modal">
+  <h3>Add expense</h3>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Date</label><input type="date" id="exp-date"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Amount (৳)</label><input type="number" id="exp-amt" placeholder="0"></div>
+  </div>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Category</label>
+      <select id="exp-cat" onchange="toggleExpLink()">
+        <option value="general">General</option><option value="vendor">Vendor</option>
+        <option value="employee">Employee</option><option value="utility">Utility</option>
+        <option value="maintenance">Maintenance</option><option value="other">Other</option>
+      </select>
+    </div>
+    <div id="exp-link-wrap" style="display:none"><label style="font-size:12px;color:var(--color-text-secondary)">Link to</label><select id="exp-link"></select></div>
+  </div>
+  <div><label style="font-size:12px;color:var(--color-text-secondary)">Description</label><input type="text" id="exp-desc" placeholder="e.g. Gas cylinder refill"></div>
+  <div style="margin-top:8px"><label style="font-size:12px;color:var(--color-text-secondary)">Payment method</label>
+    <select id="exp-method"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="mobile">Mobile banking</option><option value="credit">Credit/due</option></select>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal('exp-modal')">Cancel</button><button class="btn primary" onclick="saveExpense()">Save</button></div>
+</div></div>
+
+<div class="modal-bg" id="recur-modal"><div class="modal">
+  <h3>New recurring template</h3>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Name</label><input type="text" id="rt-name" placeholder="e.g. Monthly rent"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Amount (৳)</label><input type="number" id="rt-amt" placeholder="0"></div>
+  </div>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Category</label>
+      <select id="rt-cat" onchange="toggleRtLink()">
+        <option value="utility">Utility</option><option value="general">General</option>
+        <option value="vendor">Vendor</option><option value="employee">Employee</option>
+        <option value="maintenance">Maintenance</option><option value="other">Other</option>
+      </select>
+    </div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Frequency</label>
+      <select id="rt-freq"><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="quarterly">Quarterly</option></select>
+    </div>
+  </div>
+  <div id="rt-link-wrap" style="display:none"><label style="font-size:12px;color:var(--color-text-secondary)">Link to</label><select id="rt-link"></select></div>
+  <div style="margin-top:8px"><label style="font-size:12px;color:var(--color-text-secondary)">Payment method</label>
+    <select id="rt-method"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="mobile">Mobile banking</option></select>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal('recur-modal')">Cancel</button><button class="btn primary" onclick="saveRecurring()">Save template</button></div>
+</div></div>
+
+<div class="modal-bg" id="vendor-modal"><div class="modal">
+  <h3>Add vendor</h3>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Vendor name</label><input type="text" id="v-name" placeholder="e.g. Fresh Farms Ltd"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Category</label>
+      <select id="v-cat"><option value="produce">Produce</option><option value="meat">Meat & fish</option><option value="dairy">Dairy</option><option value="dry">Dry goods</option><option value="beverage">Beverage</option><option value="gas">Gas/fuel</option><option value="cleaning">Cleaning</option><option value="equipment">Equipment</option><option value="other">Other</option></select>
+    </div>
+  </div>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Contact</label><input type="text" id="v-contact" placeholder="Name"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Phone</label><input type="text" id="v-phone" placeholder="+880..."></div>
+  </div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal('vendor-modal')">Cancel</button><button class="btn primary" onclick="saveVendor()">Save</button></div>
+</div></div>
+
+<div class="modal-bg" id="emp-modal"><div class="modal">
+  <h3>Add employee</h3>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Full name</label><input type="text" id="em-name" placeholder="e.g. Rahim Mia"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Role</label>
+      <select id="em-role"><option value="chef">Chef</option><option value="waiter">Waiter</option><option value="cashier">Cashier</option><option value="cleaner">Cleaner</option><option value="manager">Manager</option><option value="delivery">Delivery</option><option value="other">Other</option></select>
+    </div>
+  </div>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Monthly salary (৳)</label><input type="number" id="em-salary" placeholder="0"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Join date</label><input type="date" id="em-join"></div>
+  </div>
+  <div><label style="font-size:12px;color:var(--color-text-secondary)">Phone</label><input type="text" id="em-phone"></div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal('emp-modal')">Cancel</button><button class="btn primary" onclick="saveEmployee()">Save</button></div>
+</div></div>
+
+<div class="modal-bg" id="due-modal"><div class="modal">
+  <h3>Record a due</h3>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Party type</label>
+      <select id="due-ptype" onchange="populateDueParty()"><option value="vendor">Vendor</option><option value="employee">Employee</option></select>
+    </div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Select party</label><select id="due-party"></select></div>
+  </div>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Amount (৳)</label><input type="number" id="due-amt" placeholder="0"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Due date</label><input type="date" id="due-date"></div>
+  </div>
+  <div><label style="font-size:12px;color:var(--color-text-secondary)">Description</label><input type="text" id="due-desc" placeholder="e.g. October salary"></div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal('due-modal')">Cancel</button><button class="btn primary" onclick="saveDue()">Save</button></div>
+</div></div>
+
+<div class="modal-bg" id="pay-modal"><div class="modal">
+  <h3>Record payment</h3>
+  <p style="font-size:13px;color:var(--color-text-secondary);margin-bottom:1rem" id="pay-info"></p>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Amount (৳)</label><input type="number" id="pay-amt" placeholder="0"></div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Method</label>
+      <select id="pay-method"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="mobile">Mobile banking</option></select>
+    </div>
+  </div>
+  <div><label style="font-size:12px;color:var(--color-text-secondary)">Date</label><input type="date" id="pay-date"></div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal('pay-modal')">Cancel</button><button class="btn primary" onclick="savePayment()">Confirm</button></div>
+</div></div>
+
+<div class="modal-bg" id="adv-modal"><div class="modal">
+  <h3>Advance / deduction / bonus</h3>
+  <p style="font-size:13px;color:var(--color-text-secondary);margin-bottom:1rem" id="adv-info"></p>
+  <div class="form-row">
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Type</label>
+      <select id="adv-type"><option value="advance">Advance given</option><option value="deduction">Deduction</option><option value="bonus">Bonus</option></select>
+    </div>
+    <div><label style="font-size:12px;color:var(--color-text-secondary)">Amount (৳)</label><input type="number" id="adv-amt" placeholder="0"></div>
+  </div>
+  <div><label style="font-size:12px;color:var(--color-text-secondary)">Note</label><input type="text" id="adv-note" placeholder="Reason..."></div>
+  <div class="modal-footer"><button class="btn" onclick="closeModal('adv-modal')">Cancel</button><button class="btn primary" onclick="saveAdvance()">Save</button></div>
+</div></div>
+</div>
+
+<script>
+let state={expenses:[],vendors:[],employees:[],dues:[],advances:[],recurring:[],periods:{}};
+let activePay=null,activeAdv=null;
+let currentPeriod='';
+
+const uid=()=>Math.random().toString(36).slice(2,9);
+const today=()=>new Date().toISOString().split('T')[0];
+const fmt=n=>'৳'+Number(n).toLocaleString();
+
+function periodKey(d){return d.slice(0,7)}
+function periodLabel(k){return new Date(k+'-01').toLocaleDateString('en-GB',{month:'long',year:'numeric'})}
+function isPeriodClosed(k){return state.periods[k]&&state.periods[k].closed}
+
+function changePeriod(dir){
+  const [y,m]=currentPeriod.split('-').map(Number);
+  const d=new Date(y,m-1+dir,1);
+  currentPeriod=d.toISOString().slice(0,7);
+  renderAll();
+}
+
+function updatePeriodUI(){
+  document.getElementById('period-label').textContent=periodLabel(currentPeriod);
+  const closed=isPeriodClosed(currentPeriod);
+  const sb=document.getElementById('period-status');
+  sb.textContent=closed?'Closed':'Open';
+  sb.className='period-status '+(closed?'period-closed':'period-open');
+  document.getElementById('close-btn').textContent=closed?'Reopen period':'Close period';
+  const addBtn=document.getElementById('add-exp-btn');
+  if(addBtn)addBtn.disabled=closed;
+  document.getElementById('exp-period-label').textContent=periodLabel(currentPeriod);
+}
+
+function toggleClosePeriod(){
+  if(!state.periods[currentPeriod])state.periods[currentPeriod]={};
+  state.periods[currentPeriod].closed=!state.periods[currentPeriod].closed;
+  renderAll();
+}
+
+function getRecurringDueThisPeriod(){
+  return state.recurring.filter(r=>{
+    if(r.lastApplied===currentPeriod)return false;
+    if(r.frequency==='monthly')return true;
+    if(r.frequency==='quarterly'){
+      const[y,m]=currentPeriod.split('-').map(Number);
+      return m%3===1;
+    }
+    return true;
+  });
+}
+
+function applyRecurring(rid){
+  const r=state.recurring.find(x=>x.id===rid);
+  if(!r)return;
+  const[y,m]=currentPeriod.split('-').map(Number);
+  const d=new Date(y,m-1,5).toISOString().split('T')[0];
+  state.expenses.push({id:uid(),date:d,desc:r.name,category:r.category,amount:r.amount,method:r.method,link:r.link,period:currentPeriod,source:'recurring'});
+  if(r.category==='vendor'&&r.link){const v=state.vendors.find(v=>v.id===r.link);if(v)v.billed=Number(v.billed)+Number(r.amount)}
+  r.lastApplied=currentPeriod;
+  renderAll();
+}
+
+function applyAllRecurring(){
+  getRecurringDueThisPeriod().forEach(r=>applyRecurring(r.id));
+}
+
+function renderAll(){
+  updatePeriodUI();
+  renderDashboard();renderExpenses();renderRecurring();renderVendors();renderEmployees();renderDues();renderHistory();
+}
+
+function renderDashboard(){
+  const pExp=state.expenses.filter(e=>(e.period||periodKey(e.date))===currentPeriod);
+  const totalExp=pExp.reduce((s,e)=>s+Number(e.amount),0);
+  const vendorDue=state.dues.filter(d=>d.partyType==='vendor').reduce((s,d)=>s+(Number(d.amount)-Number(d.paid)),0);
+  const empDue=state.dues.filter(d=>d.partyType==='employee').reduce((s,d)=>s+(Number(d.amount)-Number(d.paid)),0);
+  const totalDue=vendorDue+empDue;
+  const overdue=state.dues.filter(d=>(Number(d.amount)-Number(d.paid))>0&&d.dueDate<today()).length;
+  const prevKey=(()=>{const[y,m]=currentPeriod.split('-').map(Number);const d=new Date(y,m-2,1);return d.toISOString().slice(0,7)})();
+  const prevExp=state.expenses.filter(e=>(e.period||periodKey(e.date))===prevKey).reduce((s,e)=>s+Number(e.amount),0);
+  const diff=totalExp-prevExp;
+  const diffStr=prevExp>0?` (${diff>=0?'+':''}${fmt(diff)} vs prev)`:' ';
+  document.getElementById('dash-cards').innerHTML=`
+    <div class="card red"><div class="label">This period</div><div class="val">${fmt(totalExp)}</div><div class="sub">${pExp.length} entries${diffStr}</div></div>
+    <div class="card amber"><div class="label">Total dues</div><div class="val">${fmt(totalDue)}</div><div class="sub">${state.dues.filter(d=>(d.amount-d.paid)>0).length} open</div></div>
+    <div class="card"><div class="label">Vendor dues</div><div class="val">${fmt(vendorDue)}</div><div class="sub">${state.vendors.length} vendors</div></div>
+    <div class="card"><div class="label">Salary dues</div><div class="val">${fmt(empDue)}</div><div class="sub">${state.employees.length} staff</div></div>
+    <div class="card ${overdue>0?'red':'green'}"><div class="label">Overdue items</div><div class="val">${overdue}</div><div class="sub">past due date</div></div>
+  `;
+  const recent=pExp.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,5);
+  document.getElementById('dash-recent-exp').innerHTML=recent.length?`<table><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead><tbody>
+    ${recent.map(e=>`<tr><td style="font-size:11px;color:var(--color-text-secondary)">${e.date}</td><td>${e.desc}${e.source==='recurring'?` <span class="badge purple" style="font-size:10px">auto</span>`:''}</td><td style="font-weight:500">${fmt(e.amount)}</td></tr>`).join('')}
+  </tbody></table>`:`<div class="empty">No expenses this period</div>`;
+  const openDues=state.dues.filter(d=>(Number(d.amount)-Number(d.paid))>0).slice(0,5);
+  document.getElementById('dash-dues').innerHTML=openDues.length?`<table><thead><tr><th>Party</th><th>Remaining</th><th>Due</th></tr></thead><tbody>
+    ${openDues.map(d=>{const rem=Number(d.amount)-Number(d.paid);const over=d.dueDate<today()?`<span class="badge red" style="font-size:10px">late</span>`:'';return`<tr><td>${getPartyName(d.partyType,d.partyId)} ${over}</td><td style="font-weight:500;color:var(--danger)">${fmt(rem)}</td><td style="font-size:11px;color:var(--color-text-secondary)">${d.dueDate}</td></tr>`}).join('')}
+  </tbody></table>`:`<div class="empty">No open dues</div>`;
+  const months=getAllPeriods().slice(-5).reverse();
+  const maxV=Math.max(...months.map(k=>state.expenses.filter(e=>(e.period||periodKey(e.date))===k).reduce((s,e)=>s+Number(e.amount),0)),1);
+  document.getElementById('mom-compare').innerHTML=months.map(k=>{
+    const v=state.expenses.filter(e=>(e.period||periodKey(e.date))===k).reduce((s,e)=>s+Number(e.amount),0);
+    const pct=Math.round((v/maxV)*100);
+    return`<div class="mc-card"><div class="mc-month">${periodLabel(k)}</div><div class="mc-val" style="${k===currentPeriod?'color:var(--accent)':''}">${fmt(v)}</div><div class="mc-bar"><div class="mc-fill" style="width:${pct}%"></div></div></div>`;
+  }).join('');
+  const due=getRecurringDueThisPeriod();
+  document.getElementById('recur-due-list').innerHTML=due.length?`<table><thead><tr><th>Template</th><th style="width:80px">Category</th><th style="width:80px">Amount</th><th style="width:80px">Frequency</th><th style="width:80px">Action</th></tr></thead><tbody>
+    ${due.map(r=>`<tr><td>${r.name}</td><td><span class="badge gray">${r.category}</span></td><td style="font-weight:500">${fmt(r.amount)}</td><td>${r.frequency}</td><td><button class="btn sm primary" onclick="applyRecurring('${r.id}')">Apply</button></td></tr>`).join('')}
+  </tbody></table>`:`<div class="empty">All recurring entries applied for this period</div>`;
+}
+
+function getAllPeriods(){
+  const keys=new Set(state.expenses.map(e=>e.period||periodKey(e.date)));
+  keys.add(currentPeriod);
+  return [...keys].sort();
+}
+
+function renderExpenses(){
+  const allPeriods=document.getElementById('exp-all-periods')&&document.getElementById('exp-all-periods').checked;
+  const cat=document.getElementById('exp-filter-cat').value;
+  let list=state.expenses.filter(e=>(!cat||e.category===cat)&&(allPeriods||(e.period||periodKey(e.date))===currentPeriod));
+  list=list.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  const catColor={general:'gray',vendor:'blue',employee:'green',utility:'amber',maintenance:'amber',other:'gray'};
+  document.getElementById('exp-tbody').innerHTML=list.length?list.map(e=>`
+    <tr>
+      <td style="font-size:11px;color:var(--color-text-secondary)">${e.date}</td>
+      <td>${e.desc}</td>
+      <td><span class="badge ${catColor[e.category]||'gray'}">${e.category}</span></td>
+      <td style="font-weight:500">${fmt(e.amount)}</td>
+      <td style="font-size:11px;color:var(--color-text-secondary)">${periodLabel(e.period||periodKey(e.date))}</td>
+      <td>${e.source==='recurring'?`<span class="badge purple">auto</span>`:`<span class="badge gray">manual</span>`}</td>
+      <td><button class="btn sm danger" onclick="deleteExpense('${e.id}')">Del</button></td>
+    </tr>`).join(''):`<tr><td colspan="7"><div class="empty">No expenses found</div></td></tr>`;
+  const total=list.reduce((s,e)=>s+Number(e.amount),0);
+  document.getElementById('exp-total').textContent=`Total: ${fmt(total)} (${list.length} entries)`;
+}
+
+function renderRecurring(){
+  document.getElementById('recur-tbody').innerHTML=state.recurring.length?state.recurring.map(r=>`
+    <tr>
+      <td style="font-weight:500">${r.name}</td>
+      <td><span class="badge gray">${r.category}</span></td>
+      <td>${fmt(r.amount)}</td>
+      <td><span class="badge blue">${r.frequency}</span></td>
+      <td style="font-size:12px;color:var(--color-text-secondary)">${r.link?getPartyName(r.category==='vendor'?'vendor':'employee',r.link):'—'}</td>
+      <td style="font-size:12px;color:var(--color-text-secondary)">${r.lastApplied?periodLabel(r.lastApplied):'Never'}</td>
+      <td><button class="btn sm primary" onclick="applyRecurring('${r.id}')">Apply now</button> <button class="btn sm danger" onclick="deleteRecurring('${r.id}')">Del</button></td>
+    </tr>`).join(''):`<tr><td colspan="7"><div class="empty">No recurring templates yet</div></td></tr>`;
+}
+
+function renderVendors(){
+  document.getElementById('vendor-tbody').innerHTML=state.vendors.length?state.vendors.map(v=>{
+    const bal=Number(v.billed)-Number(v.paid);
+    return`<tr>
+      <td><div style="font-weight:500">${v.name}</div><div style="font-size:11px;color:var(--color-text-secondary)">${v.contact} · ${v.phone}</div></td>
+      <td><span class="badge gray">${v.category}</span></td>
+      <td>${fmt(v.billed)}</td>
+      <td>${fmt(v.paid)}</td>
+      <td>${bal>0?`<span style="color:var(--danger);font-weight:500">${fmt(bal)}</span>`:`<span class="badge green">Settled</span>`}</td>
+      <td style="white-space:nowrap"><button class="btn sm warn" onclick="openVendorBill('${v.id}')">Bill</button> <button class="btn sm primary" onclick="openVendorPay('${v.id}')">Pay</button></td>
+    </tr>`}).join(''):`<tr><td colspan="6"><div class="empty">No vendors yet</div></td></tr>`;
+}
+
+function renderEmployees(){
+  document.getElementById('emp-tbody').innerHTML=state.employees.length?state.employees.map(e=>{
+    const adv=state.advances.filter(a=>a.empId===e.id&&a.type==='advance').reduce((s,a)=>s+Number(a.amount),0);
+    const ded=state.advances.filter(a=>a.empId===e.id&&a.type==='deduction').reduce((s,a)=>s+Number(a.amount),0);
+    const bon=state.advances.filter(a=>a.empId===e.id&&a.type==='bonus').reduce((s,a)=>s+Number(a.amount),0);
+    const net=Number(e.salary)-adv-ded+bon;
+    return`<tr>
+      <td><div style="font-weight:500">${e.name}</div><div style="font-size:11px;color:var(--color-text-secondary)">${e.phone}</div></td>
+      <td><span class="badge blue">${e.role}</span></td>
+      <td>${fmt(e.salary)}</td>
+      <td style="font-size:12px;color:var(--danger)">${adv>0?`-${fmt(adv)}`:'—'}${ded>0?` /-${fmt(ded)}`:''}</td>
+      <td style="${net<0?'color:var(--danger)':''}font-weight:500">${fmt(net)}</td>
+      <td style="white-space:nowrap"><button class="btn sm warn" onclick="openAdvance('${e.id}')">Advance</button> <button class="btn sm primary" onclick="openEmpDue('${e.id}')">Pay salary</button></td>
+    </tr>`}).join(''):`<tr><td colspan="6"><div class="empty">No employees yet</div></td></tr>`;
+}
+
+function renderDues(){
+  document.getElementById('dues-tbody').innerHTML=state.dues.length?state.dues.slice().sort((a,b)=>a.dueDate.localeCompare(b.dueDate)).map(d=>{
+    const rem=Number(d.amount)-Number(d.paid);
+    const overdue=rem>0&&d.dueDate<today();
+    const settled=rem<=0;
+    const pct=Math.min(100,Math.round((d.paid/d.amount)*100));
+    const status=settled?`<span class="badge green">Settled</span>`:overdue?`<span class="badge red">Overdue</span>`:`<span class="badge amber">Pending</span>`;
+    return`<tr>
+      <td><div style="font-weight:500">${getPartyName(d.partyType,d.partyId)}</div><div style="font-size:11px;color:var(--color-text-secondary)">${d.desc}</div></td>
+      <td><span class="badge ${d.partyType==='vendor'?'blue':'green'}">${d.partyType}</span></td>
+      <td>${fmt(d.amount)}</td>
+      <td>${fmt(d.paid)}<div class="due-bar"><div class="due-fill" style="width:${pct}%;background:${pct>=100?'var(--accent)':'var(--warn)'}"></div></div></td>
+      <td style="${rem>0?'color:var(--danger);font-weight:500':''}">${rem>0?fmt(rem):'—'}</td>
+      <td style="font-size:11px;color:${overdue?'var(--danger)':'var(--color-text-secondary)'}">${d.dueDate}</td>
+      <td>${status}</td>
+      <td>${rem>0?`<button class="btn sm primary" onclick="openDuePay('${d.id}')">Pay</button>`:''} <button class="btn sm danger" onclick="deleteDue('${d.id}')">Del</button></td>
+    </tr>`}).join(''):`<tr><td colspan="8"><div class="empty">No dues recorded</div></td></tr>`;
+}
+
+function renderHistory(){
+  const periods=getAllPeriods().reverse();
+  document.getElementById('period-history-list').innerHTML=periods.length?`
+    <table><thead><tr><th>Period</th><th style="width:90px">Expenses</th><th style="width:80px">Entries</th><th style="width:80px">Status</th><th style="width:100px">Actions</th></tr></thead><tbody>
+    ${periods.map(k=>{
+      const v=state.expenses.filter(e=>(e.period||periodKey(e.date))===k).reduce((s,e)=>s+Number(e.amount),0);
+      const cnt=state.expenses.filter(e=>(e.period||periodKey(e.date))===k).length;
+      const closed=isPeriodClosed(k);
+      return`<tr ${k===currentPeriod?'style="background:var(--color-background-secondary)"':''}>
+        <td style="font-weight:${k===currentPeriod?'500':'400'}">${periodLabel(k)}${k===currentPeriod?' ◀':''}</td>
+        <td style="font-weight:500">${fmt(v)}</td>
+        <td>${cnt}</td>
+        <td>${closed?`<span class="badge red">Closed</span>`:`<span class="badge green">Open</span>`}</td>
+        <td><button class="btn sm" onclick="jumpToPeriod('${k}')">View</button></td>
+      </tr>`;
+    }).join('')}
+    </tbody></table>`:`<div class="empty">No period data yet</div>`;
+}
+
+function jumpToPeriod(k){currentPeriod=k;renderAll();switchTab('dashboard')}
+
+function getPartyName(type,id_){
+  if(type==='vendor'){const v=state.vendors.find(v=>v.id===id_);return v?v.name:'Unknown vendor'}
+  if(type==='employee'){const e=state.employees.find(e=>e.id===id_);return e?e.name:'Unknown employee'}
+  return'Unknown'
+}
+
+function toggleExpLink(){
+  const cat=document.getElementById('exp-cat').value;
+  const wrap=document.getElementById('exp-link-wrap');
+  const sel=document.getElementById('exp-link');
+  if(cat==='vendor'){wrap.style.display='block';sel.innerHTML=state.vendors.map(v=>`<option value="${v.id}">${v.name}</option>`).join('')}
+  else if(cat==='employee'){wrap.style.display='block';sel.innerHTML=state.employees.map(e=>`<option value="${e.id}">${e.name}</option>`).join('')}
+  else wrap.style.display='none';
+}
+
+function toggleRtLink(){
+  const cat=document.getElementById('rt-cat').value;
+  const wrap=document.getElementById('rt-link-wrap');
+  const sel=document.getElementById('rt-link');
+  if(cat==='vendor'){wrap.style.display='block';sel.innerHTML=state.vendors.map(v=>`<option value="${v.id}">${v.name}</option>`).join('')}
+  else if(cat==='employee'){wrap.style.display='block';sel.innerHTML=state.employees.map(e=>`<option value="${e.id}">${e.name}</option>`).join('')}
+  else wrap.style.display='none';
+}
+
+function saveExpense(){
+  if(isPeriodClosed(currentPeriod)){alert('This period is closed. Reopen it to add expenses.');return}
+  const date=document.getElementById('exp-date').value;
+  const amt=parseFloat(document.getElementById('exp-amt').value);
+  const cat=document.getElementById('exp-cat').value;
+  const desc=document.getElementById('exp-desc').value;
+  const method=document.getElementById('exp-method').value;
+  const link=(cat==='vendor'||cat==='employee')?document.getElementById('exp-link').value:null;
+  if(!date||!amt||!desc){alert('Please fill date, amount and description');return}
+  state.expenses.push({id:uid(),date,desc,category:cat,amount:amt,method,link,period:periodKey(date),source:'manual'});
+  if(cat==='vendor'&&link){const v=state.vendors.find(v=>v.id===link);if(v)v.billed=Number(v.billed)+amt}
+  closeModal('exp-modal');
+  document.getElementById('exp-desc').value='';document.getElementById('exp-amt').value='';
+  renderAll();
+}
+
+function deleteExpense(eid){if(!confirm('Delete?'))return;state.expenses=state.expenses.filter(e=>e.id!==eid);renderAll()}
+
+function saveRecurring(){
+  const name=document.getElementById('rt-name').value;
+  const amt=parseFloat(document.getElementById('rt-amt').value);
+  const cat=document.getElementById('rt-cat').value;
+  const freq=document.getElementById('rt-freq').value;
+  const method=document.getElementById('rt-method').value;
+  const link=(cat==='vendor'||cat==='employee')?document.getElementById('rt-link').value:null;
+  if(!name||!amt){alert('Name and amount required');return}
+  state.recurring.push({id:uid(),name,amount:amt,category:cat,frequency:freq,method,link,lastApplied:null});
+  closeModal('recur-modal');
+  document.getElementById('rt-name').value='';document.getElementById('rt-amt').value='';
+  renderAll();
+}
+
+function deleteRecurring(rid){if(!confirm('Delete template?'))return;state.recurring=state.recurring.filter(r=>r.id!==rid);renderAll()}
+
+function saveVendor(){
+  const name=document.getElementById('v-name').value;
+  if(!name){alert('Vendor name required');return}
+  state.vendors.push({id:uid(),name,category:document.getElementById('v-cat').value,contact:document.getElementById('v-contact').value,phone:document.getElementById('v-phone').value,billed:0,paid:0});
+  closeModal('vendor-modal');document.getElementById('v-name').value='';document.getElementById('v-contact').value='';document.getElementById('v-phone').value='';
+  renderAll();
+}
+
+function saveEmployee(){
+  const name=document.getElementById('em-name').value;
+  if(!name){alert('Name required');return}
+  state.employees.push({id:uid(),name,role:document.getElementById('em-role').value,salary:parseFloat(document.getElementById('em-salary').value)||0,join:document.getElementById('em-join').value,phone:document.getElementById('em-phone').value});
+  closeModal('emp-modal');document.getElementById('em-name').value='';document.getElementById('em-salary').value='';
+  renderAll();
+}
+
+function populateDueParty(){
+  const type=document.getElementById('due-ptype').value;
+  const sel=document.getElementById('due-party');
+  sel.innerHTML=(type==='vendor'?state.vendors:state.employees).map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
+}
+
+function saveDue(){
+  const ptype=document.getElementById('due-ptype').value;
+  const partyId=document.getElementById('due-party').value;
+  const amt=parseFloat(document.getElementById('due-amt').value);
+  const dueDate=document.getElementById('due-date').value;
+  const desc=document.getElementById('due-desc').value;
+  if(!partyId||!amt||!dueDate){alert('Fill all fields');return}
+  state.dues.push({id:uid(),partyType:ptype,partyId,desc,amount:amt,paid:0,dueDate});
+  closeModal('due-modal');document.getElementById('due-amt').value='';document.getElementById('due-desc').value='';
+  renderAll();
+}
+
+function openDuePay(did){
+  const due=state.dues.find(d=>d.id===did);
+  activePay={type:'due',id:did};
+  const rem=Number(due.amount)-Number(due.paid);
+  document.getElementById('pay-info').textContent=`Paying: ${due.desc} — Remaining: ${fmt(rem)}`;
+  document.getElementById('pay-amt').value=rem;document.getElementById('pay-date').value=today();
+  openModal('pay-modal');
+}
+
+function openVendorPay(vid){
+  const v=state.vendors.find(v=>v.id===vid);
+  activePay={type:'vendor',id:vid};
+  const bal=Number(v.billed)-Number(v.paid);
+  document.getElementById('pay-info').textContent=`Paying vendor: ${v.name} — Balance: ${fmt(bal)}`;
+  document.getElementById('pay-amt').value=bal>0?bal:0;document.getElementById('pay-date').value=today();
+  openModal('pay-modal');
+}
+
+function openVendorBill(vid){
+  document.getElementById('exp-cat').value='vendor';toggleExpLink();
+  document.getElementById('exp-link').value=vid;
+  document.getElementById('exp-date').value=today();
+  openModal('exp-modal');
+}
+
+function openEmpDue(eid){
+  const e=state.employees.find(e=>e.id===eid);
+  document.getElementById('due-ptype').value='employee';populateDueParty();
+  document.getElementById('due-party').value=eid;
+  document.getElementById('due-amt').value=e.salary;
+  document.getElementById('due-desc').value=e.name+' salary — '+periodLabel(currentPeriod);
+  document.getElementById('due-date').value=currentPeriod+'-30';
+  openModal('due-modal');
+}
+
+function savePayment(){
+  const amt=parseFloat(document.getElementById('pay-amt').value);
+  const date=document.getElementById('pay-date').value;
+  const method=document.getElementById('pay-method').value;
+  if(!amt||amt<=0){alert('Enter a valid amount');return}
+  if(activePay.type==='due'){
+    const due=state.dues.find(d=>d.id===activePay.id);
+    due.paid=Math.min(Number(due.paid)+amt,Number(due.amount));
+    state.expenses.push({id:uid(),date,desc:'Payment: '+due.desc,category:due.partyType,amount:amt,method,link:due.partyId,period:periodKey(date),source:'manual'});
+    if(due.partyType==='vendor'){const v=state.vendors.find(v=>v.id===due.partyId);if(v)v.paid=Number(v.paid)+amt}
+  }else if(activePay.type==='vendor'){
+    const v=state.vendors.find(v=>v.id===activePay.id);
+    if(v){v.paid=Number(v.paid)+amt;state.expenses.push({id:uid(),date,desc:'Vendor payment: '+v.name,category:'vendor',amount:amt,method,link:v.id,period:periodKey(date),source:'manual'})}
+  }
+  closeModal('pay-modal');activePay=null;renderAll();
+}
+
+function openAdvance(eid){
+  const e=state.employees.find(e=>e.id===eid);
+  activeAdv=eid;
+  document.getElementById('adv-info').textContent=`${e.name} | Salary: ${fmt(e.salary)}`;
+  document.getElementById('adv-amt').value='';document.getElementById('adv-note').value='';
+  openModal('adv-modal');
+}
+
+function saveAdvance(){
+  const type=document.getElementById('adv-type').value;
+  const amt=parseFloat(document.getElementById('adv-amt').value);
+  const note=document.getElementById('adv-note').value;
+  if(!amt||amt<=0){alert('Enter a valid amount');return}
+  state.advances.push({id:uid(),empId:activeAdv,type,amount:amt,note,date:today()});
+  if(type==='advance')state.expenses.push({id:uid(),date:today(),desc:'Advance: '+note,category:'employee',amount:amt,method:'cash',link:activeAdv,period:currentPeriod,source:'manual'});
+  closeModal('adv-modal');activeAdv=null;renderAll();
+}
+
+function deleteDue(did){if(!confirm('Delete?'))return;state.dues=state.dues.filter(d=>d.id!==did);renderAll()}
+
+function openModal(id_){
+  if(id_==='due-modal')populateDueParty();
+  document.getElementById(id_).classList.add('open');
+}
+function closeModal(id_){document.getElementById(id_).classList.remove('open')}
+function switchTab(t){
+  ['dashboard','expenses','recurring','vendors','employees','dues','history'].forEach(n=>{
+    document.getElementById('tab-'+n).style.display=n===t?'block':'none';
+  });
+  document.querySelectorAll('.tab').forEach((el,i)=>{
+    el.classList.toggle('active',['dashboard','expenses','recurring','vendors','employees','dues','history'][i]===t);
+  });
+  renderAll();
+}
+document.querySelectorAll('.modal-bg').forEach(m=>{m.addEventListener('click',function(e){if(e.target===this)this.classList.remove('open')})});
+
+function init(){
+  currentPeriod=today().slice(0,7);
+  state.vendors=[
+    {id:'v1',name:'Green Valley Produce',category:'produce',contact:'Karim',phone:'017...',billed:42000,paid:35000},
+    {id:'v2',name:'City Gas Supply',category:'gas',contact:'Reza',phone:'018...',billed:12000,paid:12000},
+    {id:'v3',name:'Ocean Fresh Fish',category:'meat',contact:'Salim',phone:'019...',billed:28000,paid:20000}
+  ];
+  state.employees=[
+    {id:'e1',name:'Abdul Hossain',role:'chef',salary:20000,join:'2023-01-15',phone:'017...'},
+    {id:'e2',name:'Rina Begum',role:'cashier',salary:12000,join:'2023-03-01',phone:'018...'},
+    {id:'e3',name:'Farhan Islam',role:'waiter',salary:10000,join:'2024-06-01',phone:'019...'}
+  ];
+  state.advances=[
+    {id:'a1',empId:'e1',type:'advance',amount:5000,note:'Medical emergency',date:'2025-04-10'},
+    {id:'a2',empId:'e3',type:'advance',amount:2000,note:'Advance request',date:'2025-04-15'}
+  ];
+  state.recurring=[
+    {id:'r1',name:'Monthly rent',amount:45000,category:'utility',frequency:'monthly',method:'bank',link:null,lastApplied:'2025-03'},
+    {id:'r2',name:'Electricity bill',amount:8500,category:'utility',frequency:'monthly',method:'bank',link:null,lastApplied:'2025-03'},
+    {id:'r3',name:'Gas supply',amount:4000,category:'vendor',frequency:'monthly',method:'cash',link:'v2',lastApplied:'2025-04'},
+    {id:'r4',name:'Equipment maintenance',amount:5000,category:'maintenance',frequency:'quarterly',method:'cash',link:null,lastApplied:null}
+  ];
+  state.expenses=[
+    {id:'x1',date:'2025-04-17',desc:'Vegetable purchase',category:'vendor',amount:7000,method:'cash',link:'v1',period:'2025-04',source:'manual'},
+    {id:'x2',date:'2025-04-20',desc:'Chef salary April',category:'employee',amount:20000,method:'bank',link:'e1',period:'2025-04',source:'manual'},
+    {id:'x3',date:'2025-04-10',desc:'Kitchen repair',category:'maintenance',amount:3200,method:'cash',link:null,period:'2025-04',source:'manual'},
+    {id:'x4',date:'2025-03-15',desc:'Monthly rent',category:'utility',amount:45000,method:'bank',link:null,period:'2025-03',source:'recurring'},
+    {id:'x5',date:'2025-03-18',desc:'Vegetable purchase',category:'vendor',amount:6500,method:'cash',link:'v1',period:'2025-03',source:'manual'},
+    {id:'x6',date:'2025-03-20',desc:'Electricity bill',category:'utility',amount:8500,method:'bank',link:null,period:'2025-03',source:'recurring'},
+    {id:'x7',date:'2025-02-15',desc:'Monthly rent',category:'utility',amount:45000,method:'bank',link:null,period:'2025-02',source:'recurring'},
+    {id:'x8',date:'2025-02-22',desc:'Staff bonus',category:'employee',amount:15000,method:'cash',link:null,period:'2025-02',source:'manual'},
+  ];
+  state.dues=[
+    {id:'d1',partyType:'vendor',partyId:'v1',desc:'April produce dues',amount:7000,paid:0,dueDate:'2025-04-30'},
+    {id:'d2',partyType:'vendor',partyId:'v3',desc:'Fish supply dues',amount:8000,paid:3000,dueDate:'2025-04-28'},
+    {id:'d3',partyType:'employee',partyId:'e2',desc:'April salary',amount:12000,paid:0,dueDate:'2025-04-30'},
+    {id:'d4',partyType:'employee',partyId:'e3',desc:'April salary',amount:10000,paid:10000,dueDate:'2025-04-30'}
+  ];
+  renderAll();
+}
+init();
+</script>

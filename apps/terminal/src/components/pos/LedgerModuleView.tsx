@@ -9,15 +9,15 @@ import {
   type ReactNode,
 } from "react";
 import {
+  Banknote,
   Paperclip,
   Pencil,
   Plus,
   Receipt,
   Search,
-  ShoppingCart,
-  Trash2,
   X,
 } from "lucide-react";
+import { sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
 
 /** Match ExpenseRecordsView layout: bordered card, calm header, filter strip, stats on page bg, scrollable table. */
 const purchaseShell =
@@ -32,8 +32,6 @@ const purchaseStatCell =
   "rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2";
 const purchaseSearchInput =
   "h-9 w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none";
-const purchaseSelect =
-  "h-9 cursor-pointer rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)]";
 const purchaseField =
   "mt-1 h-9 w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)]";
 const purchaseLabel = "text-[11px] text-[var(--pos-text-2)]";
@@ -42,7 +40,6 @@ const purchaseTh = "px-4 py-2 text-left text-[11px] font-semibold text-[var(--po
 export const LEDGER_LEAF_IDS = new Set([
   "lm-ledger",
   "lm-suppliers",
-  "lm-return",
 ]);
 
 /** Why this ledger book exists — vendor AP, owner equity/draws, or employee advances/payables. */
@@ -64,23 +61,17 @@ export const EMPLOYEE_LEDGER_BOOK_NAME_PREFIX = "Staff — ";
 export type EmployeeLedgerLineKind =
   | "salary"
   | "service_charge"
-  | "house_rent"
-  | "deal"
-  | "advance"
   | "bonus"
-  | "other";
+  | "overtime";
 
 export const EMPLOYEE_LEDGER_LINE_OPTIONS: {
   value: EmployeeLedgerLineKind;
   label: string;
 }[] = [
   { value: "salary", label: "Salary" },
-  { value: "service_charge", label: "Service charge" },
-  { value: "house_rent", label: "House rent" },
-  { value: "deal", label: "Deal / one-off" },
-  { value: "advance", label: "Advance" },
+  { value: "service_charge", label: "Service Charge" },
   { value: "bonus", label: "Bonus" },
-  { value: "other", label: "Other" },
+  { value: "overtime", label: "Overtime" },
 ];
 
 type Supplier = {
@@ -129,36 +120,6 @@ type PurchaseReturn = {
 
 type StockMove = PurchaseOrder | PurchaseReturn;
 
-/** Native `<select>` options for line unit; keep in sensible kitchen / purchasing order. */
-const PURCHASE_UNIT_OPTIONS: readonly string[] = [
-  "each",
-  "case",
-  "box",
-  "bag",
-  "kg",
-  "g",
-  "lb",
-  "oz",
-  "L",
-  "mL",
-  "pack",
-  "dozen",
-  "bottle",
-  "can",
-  "crate",
-  "pair",
-  "set",
-  "roll",
-];
-
-function purchaseUnitSelectOptions(currentUnit: string): string[] {
-  const t = currentUnit.trim();
-  if (!t || PURCHASE_UNIT_OPTIONS.includes(t)) {
-    return [...PURCHASE_UNIT_OPTIONS];
-  }
-  return [...PURCHASE_UNIT_OPTIONS, t];
-}
-
 /** Receipt / invoice image or PDF stored in-browser (data URL). */
 type LedgerAttachment = {
   fileName: string;
@@ -179,7 +140,7 @@ type LedgerEntry = {
   /** Positive: amount payable increases. Negative: payment or credit. */
   amountCents: number;
   attachment?: LedgerAttachment;
-  /** When set, this row belongs to an employee book (salary, rent, deals, etc.). */
+  /** When set, this row belongs to an employee book (salary, service charge, bonus, overtime). */
   employeeLineKind?: EmployeeLedgerLineKind;
 };
 
@@ -190,6 +151,8 @@ type Workspace = {
   ledgerSupplierFilter: string;
   /** Ledger book list → open ledger drawer on New bill with lines for this book. */
   ledgerInvoiceDrawerPrefillSupplierId: string | null;
+  /** Ledger book list → open ledger drawer with Payment selected for this book. */
+  ledgerPaymentDrawerPrefillSupplierId: string | null;
 };
 
 function formatMoney(cents: number): string {
@@ -526,9 +489,9 @@ const initialWorkspace: Workspace = {
       date: "2026-04-05",
       type: "payment",
       ref: "EM-APRHR1",
-      memo: "House rent · Bank Transfer · April",
+      memo: "Overtime · Bank Transfer · April",
       amountCents: -800000,
-      employeeLineKind: "house_rent",
+      employeeLineKind: "overtime",
     },
     {
       id: "lg-emp-3",
@@ -546,13 +509,14 @@ const initialWorkspace: Workspace = {
       date: "2026-04-01",
       type: "adjustment",
       ref: "ADJ-EMPQ1",
-      memo: "Deal / one-off · Opening true-up from prior system",
+      memo: "Bonus · Opening true-up from prior system",
       amountCents: 150000,
-      employeeLineKind: "deal",
+      employeeLineKind: "bonus",
     },
   ],
   ledgerSupplierFilter: "",
   ledgerInvoiceDrawerPrefillSupplierId: null,
+  ledgerPaymentDrawerPrefillSupplierId: null,
 };
 
 let workspaceSnapshot: Workspace = structuredClone(initialWorkspace);
@@ -626,11 +590,20 @@ export function isEmployeesLedgerSupplierId(supplierId: string): boolean {
   return isEmployeesBookSupplierId(supplierId);
 }
 
+const LEGACY_EMPLOYEE_LINE_KIND_LABEL: Record<string, string> = {
+  house_rent: "House rent",
+  deal: "Deal / one-off",
+  advance: "Advance",
+  other: "Other",
+};
+
 export function employeeLedgerLineKindLabel(
-  k: EmployeeLedgerLineKind | undefined,
+  k: EmployeeLedgerLineKind | string | undefined,
 ): string {
   if (!k) return "—";
-  return EMPLOYEE_LEDGER_LINE_OPTIONS.find((o) => o.value === k)?.label ?? k;
+  const hit = EMPLOYEE_LEDGER_LINE_OPTIONS.find((o) => o.value === k);
+  if (hit) return hit.label;
+  return LEGACY_EMPLOYEE_LINE_KIND_LABEL[k] ?? k;
 }
 
 function supplierBalance(supplierId: string, ledger: LedgerEntry[]): number {
@@ -1124,351 +1097,6 @@ function DangerGhostButton({
 }
 
 
-function ReturnPurchaseForm() {
-  const ws = useWorkspace();
-  const purchases = useMemo(
-    () => ws.moves.filter((m): m is PurchaseOrder => m.kind === "purchase"),
-    [ws.moves],
-  );
-  const vendorSuppliers = useMemo(
-    () => ws.suppliers.filter((s) => (s.bookPurpose ?? "vendor") === "vendor"),
-    [ws.suppliers],
-  );
-  const [supplierId, setSupplierId] = useState("");
-  const [linkedPurchaseId, setLinkedPurchaseId] = useState("");
-  const [reason, setReason] = useState("");
-  const [date, setDate] = useState(todayIso());
-  const [lines, setLines] = useState<ReturnLine[]>([
-    {
-      id: "r1",
-      description: "",
-      qty: 1,
-      unit: "each",
-      creditCents: 0,
-    },
-  ]);
-
-  useEffect(() => {
-    const vid = vendorSuppliers[0]?.id ?? "";
-    if (!vid) return;
-    if (!supplierId || !vendorSuppliers.some((s) => s.id === supplierId)) {
-      setSupplierId(vid);
-      setLinkedPurchaseId(purchases.find((p) => p.supplierId === vid)?.id ?? "");
-    }
-  }, [vendorSuppliers, purchases, supplierId]);
-
-  const supplierName = useCallback(
-    (id: string) => ws.suppliers.find((s) => s.id === id)?.name ?? id,
-    [ws.suppliers],
-  );
-
-  const purchasesForSupplier = useMemo(
-    () => purchases.filter((p) => p.supplierId === supplierId),
-    [purchases, supplierId],
-  );
-
-  const addLine = useCallback(() => {
-    setLines((L) => [
-      ...L,
-      {
-        id: `r-${Date.now()}`,
-        description: "",
-        qty: 1,
-        unit: "each",
-        creditCents: 0,
-      },
-    ]);
-  }, []);
-
-  const totalCredit = useMemo(() => lines.reduce((s, l) => s + l.creditCents, 0), [lines]);
-
-  const submit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!supplierId || !linkedPurchaseId) return;
-      const okLines = lines.filter((l) => l.description.trim());
-      if (!okLines.length) return;
-      setWorkspace((w) => {
-        const ids = w.moves.filter((m) => m.kind === "return").map((m) => m.id);
-        const id = nextId("pr", ids);
-        const ref = `PR-${date.replace(/-/g, "")}-${String(ids.length + 1).padStart(3, "0")}`;
-        const ret: PurchaseReturn = {
-          kind: "return",
-          id,
-          ref,
-          supplierId,
-          linkedPurchaseId,
-          date,
-          reason: reason.trim() || "—",
-          status: "draft",
-          lines: okLines.map((l) => ({
-            ...l,
-            unit: l.unit.trim() || "each",
-          })),
-        };
-        const led: LedgerEntry = {
-          id: nextId(
-            "lg",
-            w.ledger.map((x) => x.id),
-          ),
-          supplierId,
-          date,
-          type: "return_credit",
-          ref,
-          memo: reason.trim() || "Supplier return",
-          amountCents: -okLines.reduce((s, l) => s + l.creditCents, 0),
-        };
-        return {
-          ...w,
-          moves: [ret, ...w.moves],
-          ledger: [led, ...w.ledger],
-        };
-      });
-      setReason("");
-      setLines([
-        {
-          id: `r-${Date.now()}`,
-          description: "",
-          qty: 1,
-          unit: "each",
-          creditCents: 0,
-        },
-      ]);
-    },
-    [supplierId, linkedPurchaseId, reason, date, lines],
-  );
-
-  if (vendorSuppliers.length === 0) {
-    return (
-      <p className="text-[12px] text-[var(--pos-text-2)]">
-        Returns apply to vendor purchases only. Add at least one ledger book with type Vendor, then
-        record a purchase for that book.
-      </p>
-    );
-  }
-
-  return (
-    <form onSubmit={submit} className="space-y-4">
-      <p className="text-[11px] text-[var(--pos-text-2)]">
-        <span className="font-medium text-[var(--pos-text-1)]">Total</span> = qty × unit credit. Set{" "}
-        <span className="font-medium text-[var(--pos-text-1)]">Unit</span> (case, box, kg…) to match the purchase.
-        Pick a vendor ledger book that has a purchase.
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block">
-          <span className={purchaseLabel}>Vendor ledger book</span>
-          <select
-            value={supplierId}
-            onChange={(e) => {
-              const v = e.target.value;
-              setSupplierId(v);
-              const firstPo = purchases.find((p) => p.supplierId === v);
-              setLinkedPurchaseId(firstPo?.id ?? "");
-            }}
-            required
-            className={purchaseField}
-          >
-            {vendorSuppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className={purchaseLabel}>Link to purchase</span>
-          <select
-            value={linkedPurchaseId}
-            onChange={(e) => setLinkedPurchaseId(e.target.value)}
-            required
-            className={purchaseField}
-          >
-            {purchasesForSupplier.length === 0 ? (
-              <option value="">No purchase for this ledger book</option>
-            ) : (
-              purchasesForSupplier.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.ref} · {p.date} · {formatMoney(purchaseTotalCents(p))}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
-        <label className="block sm:col-span-2">
-          <span className={purchaseLabel}>Reason / memo</span>
-          <input
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Why items are going back"
-            className={`${purchaseField} placeholder:text-[var(--pos-text-2)]`}
-          />
-        </label>
-        <label className="block">
-          <span className={purchaseLabel}>Date</span>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            required
-            className={purchaseField}
-          />
-        </label>
-      </div>
-
-      <div className="border-t border-solid [border-color:var(--pos-divider)] pt-4">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className={purchaseLabel}>Credit lines</span>
-          <GhostButton type="button" onClick={addLine}>
-            Add line
-          </GhostButton>
-        </div>
-        <div className="space-y-2 overflow-auto">
-          <div
-            className="grid min-w-[700px] grid-cols-[1fr_64px_104px_104px_104px_36px] gap-2 px-2"
-            aria-hidden
-          >
-            <span className={purchaseLabel}>Description</span>
-            <span className={purchaseLabel}>Qty</span>
-            <span className={purchaseLabel}>Unit</span>
-            <span className={`${purchaseLabel} text-right`}>Unit credit (৳)</span>
-            <span className={`${purchaseLabel} text-right`}>Total (৳)</span>
-            <span className="sr-only">Remove line</span>
-          </div>
-          {lines.map((line, idx) => {
-            const unitCreditTaka =
-              line.qty > 0 ? line.creditCents / line.qty / 100 : 0;
-            return (
-            <div
-              key={line.id}
-              className="grid min-w-[700px] grid-cols-[1fr_64px_104px_104px_104px_36px] gap-2 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-2"
-            >
-              <input
-                value={line.description}
-                onChange={(e) =>
-                  setLines((L) =>
-                    L.map((x) =>
-                      x.id === line.id ? { ...x, description: e.target.value } : x,
-                    ),
-                  )
-                }
-                placeholder="Item / lot"
-                className={`${purchaseField} !mt-0`}
-                aria-label="Description"
-              />
-              <input
-                type="number"
-                min={1}
-                value={line.qty}
-                onChange={(e) =>
-                  setLines((L) =>
-                    L.map((x) => {
-                      if (x.id !== line.id) return x;
-                      const oldQty = x.qty;
-                      const newQty = Math.max(1, Number(e.target.value) || 1);
-                      if (oldQty <= 0) return { ...x, qty: newQty };
-                      const nextCredit = Math.round((x.creditCents / oldQty) * newQty);
-                      return { ...x, qty: newQty, creditCents: nextCredit };
-                    }),
-                  )
-                }
-                className={`${purchaseField} !mt-0`}
-                aria-label="Quantity"
-              />
-              <select
-                value={line.unit.trim() || "each"}
-                onChange={(e) =>
-                  setLines((L) =>
-                    L.map((x) =>
-                      x.id === line.id ? { ...x, unit: e.target.value } : x,
-                    ),
-                  )
-                }
-                className={`${purchaseSelect} mt-0 h-9 w-full min-w-0`}
-                aria-label="Unit"
-              >
-                {purchaseUnitSelectOptions(line.unit).map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                value={unitCreditTaka}
-                onChange={(e) =>
-                  setLines((L) =>
-                    L.map((x) =>
-                      x.id === line.id
-                        ? {
-                            ...x,
-                            creditCents:
-                              Math.round((Number(e.target.value) || 0) * 100) * x.qty,
-                          }
-                        : x,
-                    ),
-                  )
-                }
-                className={`${purchaseField} !mt-0 font-mono`}
-                aria-label="Unit credit in taka"
-              />
-              <div
-                className="flex h-9 items-center justify-end font-mono text-[12px] tabular-nums text-[var(--pos-text-1)]"
-                aria-label="Line credit total"
-              >
-                {formatMoney(line.creditCents)}
-              </div>
-              <button
-                type="button"
-                onClick={() => setLines((L) => L.filter((x) => x.id !== line.id))}
-                disabled={lines.length <= 1}
-                className="flex items-center justify-center rounded-[9px] text-[var(--pos-text-2)] hover:bg-[var(--pos-card)] hover:text-[#8a3030] disabled:opacity-30"
-                aria-label={`Remove return line ${idx + 1}`}
-              >
-                <Trash2 className="size-4" strokeWidth={2} />
-              </button>
-            </div>
-            );
-          })}
-        </div>
-        <p className="mt-3 text-right text-[12px] font-medium text-[var(--pos-text-1)]">
-          Credit total · <span className="font-mono tabular-nums">{formatMoney(totalCredit)}</span>
-        </p>
-      </div>
-
-      {purchasesForSupplier.length === 0 ? (
-        <p className="text-[12px] text-[var(--pos-text-2)]">
-          No purchases for {supplierName(supplierId)}. Add a bill from Bills & payments first,
-          then record the return.
-        </p>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2 pt-1">
-        <PrimaryButton type="submit" disabled={!linkedPurchaseId}>
-          Save return
-        </PrimaryButton>
-      </div>
-    </form>
-  );
-}
-
-function SupplierReturnView() {
-  return (
-    <div className={purchaseShell}>
-      <div className={purchaseHead}>
-        <ModuleTitle
-          title="Returns"
-          subtitle="Link to a purchase you recorded in the ledger, then log credits. They also appear in Bills & payments."
-        />
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <ReturnPurchaseForm />
-      </div>
-    </div>
-  );
-}
-
 function SupplierListView() {
   const ws = useWorkspace();
   const [q, setQ] = useState("");
@@ -1544,21 +1172,24 @@ function SupplierListView() {
     cancelEdit();
   }, [draft, cancelEdit]);
 
-  const openLedger = useCallback((supplierId: string) => {
+  const startNewPurchaseFor = useCallback((supplierId: string) => {
     setWorkspace((w) => ({
       ...w,
       ledgerSupplierFilter: supplierId,
+      ledgerInvoiceDrawerPrefillSupplierId: supplierId,
+      ledgerPaymentDrawerPrefillSupplierId: null,
     }));
     window.dispatchEvent(
       new CustomEvent("pos-select-leaf", { detail: { leafId: "lm-ledger" } }),
     );
   }, []);
 
-  const startNewPurchaseFor = useCallback((supplierId: string) => {
+  const startPaymentFor = useCallback((supplierId: string) => {
     setWorkspace((w) => ({
       ...w,
       ledgerSupplierFilter: supplierId,
-      ledgerInvoiceDrawerPrefillSupplierId: supplierId,
+      ledgerPaymentDrawerPrefillSupplierId: supplierId,
+      ledgerInvoiceDrawerPrefillSupplierId: null,
     }));
     window.dispatchEvent(
       new CustomEvent("pos-select-leaf", { detail: { leafId: "lm-ledger" } }),
@@ -1697,20 +1328,20 @@ function SupplierListView() {
                             Edit
                           </span>
                         </GhostButton>
-                        <GhostButton onClick={() => openLedger(s.id)}>
-                          <span className="inline-flex items-center gap-1">
-                            <Receipt className="size-3.5" strokeWidth={2} />
-                            Bills
-                          </span>
-                        </GhostButton>
-                        {s.bookPurpose === "vendor" ? (
+                        {s.bookPurpose !== "employees" ? (
                           <GhostButton onClick={() => startNewPurchaseFor(s.id)}>
                             <span className="inline-flex items-center gap-1">
-                              <ShoppingCart className="size-3.5" strokeWidth={2} />
-                              Add bill
+                              <Receipt className="size-3.5" strokeWidth={2} />
+                              Bill
                             </span>
                           </GhostButton>
                         ) : null}
+                        <GhostButton onClick={() => startPaymentFor(s.id)}>
+                          <span className="inline-flex items-center gap-1">
+                            <Banknote className="size-3.5" strokeWidth={2} />
+                            Pay
+                          </span>
+                        </GhostButton>
                       </div>
                     </td>
                   </tr>
@@ -1803,7 +1434,7 @@ function SupplierListView() {
                   ? "Vendor · supplier bills and trade payables."
                   : (draft.bookPurpose ?? "vendor") === "owners"
                     ? "Owners · partner draws, capital, and equity-style movements."
-                    : `Employees · advances, wages, and staff balances (name the book “${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX.trimEnd()} …”).`}
+                    : `Employees · salary, service charge, bonus, and overtime (name the book “${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX.trimEnd()} …”).`}
               </p>
             </label>
             <label className="block sm:col-span-2">
@@ -1882,7 +1513,7 @@ function ledgerKindForDisplay(t: LedgerEntry["type"]): string {
   }
 }
 
-/** Table / chips: employee books show salary, house rent, etc.; vendors show bill / payment / … */
+/** Table / chips: employee books show salary, service charge, etc.; vendors show bill / payment / … */
 function ledgerEntryLineLabel(e: LedgerEntry): string {
   if (e.employeeLineKind) {
     return employeeLedgerLineKindLabel(e.employeeLineKind);
@@ -1913,22 +1544,24 @@ const LEDGER_PAYMENT_METHODS = [
   "Mobile Banking",
 ] as const;
 
-export const LEDGER_DRAWER_KINDS: { value: LedgerEntry["type"]; label: string }[] = [
+/** Kinds exposed when adding a line (vendor books). Return / adjustment stay in data & detail views only. */
+export type LedgerEntryDrawerKind = Extract<LedgerEntry["type"], "invoice" | "payment">;
+
+export const LEDGER_DRAWER_KINDS: { value: LedgerEntryDrawerKind; label: string }[] = [
   { value: "invoice", label: "Bill" },
   { value: "payment", label: "Payment" },
-  { value: "return_credit", label: "Return" },
-  { value: "adjustment", label: "Adjust" },
 ];
 
 type LedgerEntryDraft = {
   supplierId: string;
   date: string;
+  /** Vendor drawer: invoice | payment only. Staff books always commit as payment. */
   kind: LedgerEntry["type"];
   amount: string;
   method: (typeof LEDGER_PAYMENT_METHODS)[number];
   notes: string;
   attachment: LedgerAttachment | null;
-  /** Set on employee ledger books — salary, house rent, deals, etc. */
+  /** Set on employee ledger books — salary, service charge, bonus, overtime. */
   employeeLineKind: "" | EmployeeLedgerLineKind;
 };
 
@@ -1993,15 +1626,14 @@ function memoFromLedgerDraft(d: LedgerEntryDraft): string {
 }
 
 function amountCentsFromLedgerDraft(d: LedgerEntryDraft): number | null {
+  const nRaw = Number.parseFloat(d.amount);
+  if (!Number.isFinite(nRaw)) return null;
+  const n = Math.max(0, nRaw);
   if (isEmployeesBookSupplierId(d.supplierId) && d.employeeLineKind) {
-    const n = Number.parseFloat(d.amount);
-    if (!Number.isFinite(n)) return null;
     const cents = Math.round(n * 100);
     if (cents <= 0) return null;
     return -cents;
   }
-  const n = Number.parseFloat(d.amount);
-  if (!Number.isFinite(n)) return null;
   const cents = Math.round(n * 100);
   switch (d.kind) {
     case "invoice":
@@ -2168,7 +1800,7 @@ export function validateDailyExpenseLedgerAmount(params: {
     employeeLineKind: params.employeeLineKind,
   };
   if (isEmployeesBookSupplierId(params.supplierId)) {
-    if (!params.employeeLineKind) return "Select a payment or deal type.";
+    if (!params.employeeLineKind) return "Select a payment type.";
     if (!params.amountStr.trim()) return "Enter an amount for this ledger line.";
     const cents = amountCentsFromLedgerDraft(d);
     if (cents !== null) return null;
@@ -2317,15 +1949,7 @@ function LedgerEntryDrawerForm({
     });
   };
 
-  const amountLabel = isEmployeeBook
-    ? "Amount paid (৳)"
-    : ledgerDraft.kind === "invoice"
-      ? "Amount (৳)"
-      : ledgerDraft.kind === "payment"
-        ? "Amount (৳)"
-        : ledgerDraft.kind === "return_credit"
-          ? "Credit (৳)"
-          : "Correction (৳)";
+  const amountLabel = isEmployeeBook ? "Amount paid (৳)" : "Amount (৳)";
 
   const running = ledgerDraft.supplierId
     ? (runningBySupplier.get(ledgerDraft.supplierId) ?? 0)
@@ -2398,7 +2022,7 @@ function LedgerEntryDrawerForm({
         {isEmployeeBook ? (
           <>
             <label className="col-span-2 block min-w-0">
-              <span className={purchaseLabel}>Payment / deal type</span>
+              <span className={purchaseLabel}>Payment type</span>
               <select
                 value={ledgerDraft.employeeLineKind}
                 onChange={(e) =>
@@ -2423,9 +2047,13 @@ function LedgerEntryDrawerForm({
                   type="number"
                   inputMode="decimal"
                   min={0}
-                  step={0.01}
+                  step="any"
                   value={ledgerDraft.amount}
-                  onChange={(e) => patchLedgerDraft({ amount: e.target.value })}
+                  onChange={(e) =>
+                    patchLedgerDraft({
+                      amount: sanitizeNonNegativeDecimalInput(e.target.value),
+                    })
+                  }
                   placeholder="0"
                   className={`${purchaseField} font-mono placeholder:text-[var(--pos-text-2)]`}
                 />
@@ -2455,7 +2083,7 @@ function LedgerEntryDrawerForm({
                 value={ledgerDraft.notes}
                 onChange={(e) => patchLedgerDraft({ notes: e.target.value })}
                 rows={2}
-                placeholder="Period, ref #, deal notes…"
+                placeholder="Period, ref #, notes…"
                 className="mt-1 min-h-[40px] w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 py-1.5 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]"
               />
             </label>
@@ -2467,7 +2095,7 @@ function LedgerEntryDrawerForm({
               <select
                 value={ledgerDraft.kind}
                 onChange={(e) => {
-                  const kind = e.target.value as LedgerEntry["type"];
+                  const kind = e.target.value as LedgerEntryDrawerKind;
                   patchLedgerDraft({ kind });
                 }}
                 className={purchaseField}
@@ -2488,9 +2116,13 @@ function LedgerEntryDrawerForm({
                     type="number"
                     inputMode="decimal"
                     min={0}
-                    step={0.01}
+                    step="any"
                     value={ledgerDraft.amount}
-                    onChange={(e) => patchLedgerDraft({ amount: e.target.value })}
+                    onChange={(e) =>
+                      patchLedgerDraft({
+                        amount: sanitizeNonNegativeDecimalInput(e.target.value),
+                      })
+                    }
                     placeholder="0"
                     className={`${purchaseField} font-mono placeholder:text-[var(--pos-text-2)]`}
                   />
@@ -2520,18 +2152,17 @@ function LedgerEntryDrawerForm({
                 <input
                   type="number"
                   inputMode="decimal"
-                  min={ledgerDraft.kind === "adjustment" ? undefined : 0}
-                  step={0.01}
+                  min={0}
+                  step="any"
                   value={ledgerDraft.amount}
-                  onChange={(e) => patchLedgerDraft({ amount: e.target.value })}
-                  placeholder={ledgerDraft.kind === "adjustment" ? "+/− taka" : "0"}
+                  onChange={(e) =>
+                    patchLedgerDraft({
+                      amount: sanitizeNonNegativeDecimalInput(e.target.value),
+                    })
+                  }
+                  placeholder="0"
                   className={`${purchaseField} font-mono placeholder:text-[var(--pos-text-2)]`}
                 />
-                {ledgerDraft.kind === "adjustment" ? (
-                  <p className="mt-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
-                    + increases due · − reduces
-                  </p>
-                ) : null}
               </div>
             )}
             <label className="col-span-2 block min-w-0">
@@ -2543,13 +2174,7 @@ function LedgerEntryDrawerForm({
                 onChange={(e) => patchLedgerDraft({ notes: e.target.value })}
                 rows={2}
                 placeholder={
-                  ledgerDraft.kind === "payment"
-                    ? "Ref #, invoice #…"
-                    : ledgerDraft.kind === "invoice"
-                      ? "Short description"
-                      : ledgerDraft.kind === "return_credit"
-                        ? "Reason"
-                        : "Why"
+                  ledgerDraft.kind === "payment" ? "Ref #, invoice #…" : "Short description"
                 }
                 className="mt-1 min-h-[40px] w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 py-1.5 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]"
               />
@@ -2578,7 +2203,8 @@ function SupplierLedgerView() {
     defaultLedgerEntryDraft(""),
   );
   const [ledgerSearchQ, setLedgerSearchQ] = useState("");
-  const [ledgerTypeFilter, setLedgerTypeFilter] = useState<"all" | LedgerEntry["type"]>("all");
+  /** "payment" includes legacy return credits in the list. Corrections (adjustment) only under All. */
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState<"all" | "invoice" | "payment">("all");
   const [ledgerDateFrom, setLedgerDateFrom] = useState("");
   const [ledgerDateTo, setLedgerDateTo] = useState("");
   const [selectedLedgerEntryId, setSelectedLedgerEntryId] = useState<string | null>(null);
@@ -2598,16 +2224,31 @@ function SupplierLedgerView() {
   }, [ws.ledger, selectedLedgerEntryId]);
 
   useEffect(() => {
-    const sid = ws.ledgerInvoiceDrawerPrefillSupplierId;
+    const invSid = ws.ledgerInvoiceDrawerPrefillSupplierId;
+    const paySid = ws.ledgerPaymentDrawerPrefillSupplierId;
+    const sid = invSid || paySid;
     if (!sid) return;
     if (!getWorkspace().suppliers.some((s) => s.id === sid)) {
-      setWorkspace((w) => ({ ...w, ledgerInvoiceDrawerPrefillSupplierId: null }));
+      setWorkspace((w) => ({
+        ...w,
+        ledgerInvoiceDrawerPrefillSupplierId: null,
+        ledgerPaymentDrawerPrefillSupplierId: null,
+      }));
       return;
     }
-    setLedgerDraft(defaultLedgerEntryDraft(sid));
+    if (invSid) {
+      setLedgerDraft(defaultLedgerEntryDraft(invSid));
+    } else {
+      const base = defaultLedgerEntryDraft(sid);
+      setLedgerDraft({ ...base, kind: "payment" });
+    }
     setLedgerDrawerOpen(true);
-    setWorkspace((w) => ({ ...w, ledgerInvoiceDrawerPrefillSupplierId: null }));
-  }, [ws.ledgerInvoiceDrawerPrefillSupplierId]);
+    setWorkspace((w) => ({
+      ...w,
+      ledgerInvoiceDrawerPrefillSupplierId: null,
+      ledgerPaymentDrawerPrefillSupplierId: null,
+    }));
+  }, [ws.ledgerInvoiceDrawerPrefillSupplierId, ws.ledgerPaymentDrawerPrefillSupplierId]);
 
   const supplierName = useCallback(
     (id: string) => ws.suppliers.find((s) => s.id === id)?.name ?? id,
@@ -2620,8 +2261,10 @@ function SupplierLedgerView() {
   const entries = useMemo(() => {
     let e = ws.ledger.slice().sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
     if (filter) e = e.filter((x) => x.supplierId === filter);
-    if (ledgerTypeFilter !== "all") {
-      e = e.filter((x) => x.type === ledgerTypeFilter);
+    if (ledgerTypeFilter === "invoice") {
+      e = e.filter((x) => x.type === "invoice");
+    } else if (ledgerTypeFilter === "payment") {
+      e = e.filter((x) => x.type === "payment" || x.type === "return_credit");
     }
     const q = ledgerSearchQ.trim().toLowerCase();
     if (q) {
@@ -2756,7 +2399,7 @@ function SupplierLedgerView() {
           title={viewingEmployeeBook ? "Staff ledger" : "Bills & payments"}
           subtitle={
             viewingEmployeeBook
-              ? "Record salary, service charge, house rent, deals, and other staff payments — not vendor bills."
+              ? "Record salary, service charge, bonus, and overtime — not vendor bills."
               : "Add a bill with one amount and a note, record payments and credits, and filter by book for balance."
           }
         />
@@ -2815,7 +2458,7 @@ function SupplierLedgerView() {
           <select
             value={ledgerTypeFilter}
             onChange={(e) =>
-              setLedgerTypeFilter(e.target.value as "all" | LedgerEntry["type"])
+              setLedgerTypeFilter(e.target.value as "all" | "invoice" | "payment")
             }
             className={purchaseField}
             aria-label="Filter by entry type"
@@ -2823,8 +2466,6 @@ function SupplierLedgerView() {
             <option value="all">All</option>
             <option value="invoice">Bill</option>
             <option value="payment">Payment</option>
-            <option value="return_credit">Return</option>
-            <option value="adjustment">Correction</option>
           </select>
         </label>
         <label className="block min-w-[120px] max-w-[140px]">
@@ -3063,8 +2704,6 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
   switch (leafId) {
     case "lm-suppliers":
       return <SupplierListView />;
-    case "lm-return":
-      return <SupplierReturnView />;
     case "lm-ledger":
       return <SupplierLedgerView />;
     default:

@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  bankSaleNetAfterServiceCharge,
   DAILY_ENTRY_STORAGE_KEY,
   DAILY_ENTRY_STORAGE_UPDATE_EVENT,
   type DailyEntryRow,
@@ -42,8 +43,9 @@ function formatMoney(value: number) {
 function channelSalesTotal(r: DailyEntryRow): number {
   return (
     r.cashSale +
-    r.bankSale +
+    bankSaleNetAfterServiceCharge(r.bankSale) +
     r.bkashSale +
+    r.nagadSale +
     r.pathaoSale +
     r.foodiSale +
     r.foodpandaSale
@@ -61,6 +63,7 @@ type SalesRow = {
   cash: number;
   bank: number;
   bkash: number;
+  nagad: number;
   pathao: number;
   foodi: number;
   foodpanda: number;
@@ -79,8 +82,9 @@ function rowFromEntry(r: DailyEntryRow): SalesRow {
     displayDate: formatDateKeyAsDisplay(r.date),
     openingBalance: r.openingBalance,
     cash: r.cashSale,
-    bank: r.bankSale,
+    bank: bankSaleNetAfterServiceCharge(r.bankSale),
     bkash: r.bkashSale,
+    nagad: r.nagadSale,
     pathao: r.pathaoSale,
     foodi: r.foodiSale,
     foodpanda: r.foodpandaSale,
@@ -109,6 +113,7 @@ type SalesFooterTotals = {
   cash: number;
   bank: number;
   bkash: number;
+  nagad: number;
   pathao: number;
   foodi: number;
   foodpanda: number;
@@ -124,6 +129,7 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
       cash: acc.cash + row.cash,
       bank: acc.bank + row.bank,
       bkash: acc.bkash + row.bkash,
+      nagad: acc.nagad + row.nagad,
       pathao: acc.pathao + row.pathao,
       foodi: acc.foodi + row.foodi,
       foodpanda: acc.foodpanda + row.foodpanda,
@@ -136,6 +142,7 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
       cash: 0,
       bank: 0,
       bkash: 0,
+      nagad: 0,
       pathao: 0,
       foodi: 0,
       foodpanda: 0,
@@ -206,7 +213,7 @@ export function SalesReportView() {
           <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Sales report</h1>
           <p className="text-[12px] text-[var(--pos-text-2)]">
             Saved daily entries: channel sales, voids, net sales, expenses, and closing balance
-            (same figures as Daily Entry Form).
+            (same figures as Daily Entry Form). Bank column is net after a 1.75% bank service charge.
           </p>
         </div>
       </div>
@@ -251,7 +258,7 @@ export function SalesReportView() {
               : "No rows match your search."}
           </div>
         ) : (
-          <table className="w-full min-w-[1320px] border-collapse text-center">
+          <table className="w-full min-w-[1400px] border-collapse text-center">
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)]">
                 <th className={thClass}>Date</th>
@@ -259,8 +266,14 @@ export function SalesReportView() {
                   Opening
                 </th>
                 <th className={thClass}>Cash</th>
-                <th className={thClass}>Bank</th>
+                <th
+                  className={thClass}
+                  title="Net after 1.75% bank service charge (daily entry stores gross bank sales)"
+                >
+                  Bank
+                </th>
                 <th className={thClass}>bKash</th>
+                <th className={thClass}>Nagad</th>
                 <th className={thClass}>Pathao</th>
                 <th className={thClass}>Foodi</th>
                 <th className={thClass}>Foodpanda</th>
@@ -292,6 +305,7 @@ export function SalesReportView() {
                   <td className={tdNum}>{formatMoney(row.cash)}</td>
                   <td className={tdNum}>{formatMoney(row.bank)}</td>
                   <td className={tdNum}>{formatMoney(row.bkash)}</td>
+                  <td className={tdNum}>{formatMoney(row.nagad)}</td>
                   <td className={tdNum}>{formatMoney(row.pathao)}</td>
                   <td className={tdNum}>{formatMoney(row.foodi)}</td>
                   <td className={tdNum}>{formatMoney(row.foodpanda)}</td>
@@ -320,6 +334,7 @@ export function SalesReportView() {
                 <td className={footTd}>{formatMoney(footerTotals.cash)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bank)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bkash)}</td>
+                <td className={footTd}>{formatMoney(footerTotals.nagad)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.pathao)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.foodi)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.foodpanda)}</td>

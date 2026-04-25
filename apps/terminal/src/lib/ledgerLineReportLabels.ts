@@ -12,16 +12,15 @@ const LEDGER_KIND_LABEL: Record<NonNullable<ExpenseLineSaved["ledgerKind"]>, str
   adjustment: "Adjust",
 };
 
-const EMPLOYEE_LINE_LABEL: Record<
-  NonNullable<ExpenseLineSaved["ledgerEmployeeLineKind"]>,
-  string
-> = {
+/** Current kinds plus legacy values still present in older saved daily rows. */
+const EMPLOYEE_LINE_LABEL: Record<string, string> = {
   salary: "Salary",
-  service_charge: "Service charge",
+  service_charge: "Service Charge",
+  bonus: "Bonus",
+  overtime: "Overtime",
   house_rent: "House rent",
   deal: "Deal / one-off",
   advance: "Advance",
-  bonus: "Bonus",
   other: "Other",
 };
 

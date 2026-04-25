@@ -19,15 +19,12 @@ export type ExpenseLineSaved = {
   lineId?: string;
   /** When set with a matching ledger book, daily save also posts this line to Bills & payments. */
   ledgerKind?: "invoice" | "payment" | "return_credit" | "adjustment";
-  /** Staff books only — salary, rent, etc. (matches Ledger Management payment / deal type). */
+  /** Staff books only — matches Ledger Management payment type. */
   ledgerEmployeeLineKind?:
     | "salary"
     | "service_charge"
-    | "house_rent"
-    | "deal"
-    | "advance"
     | "bonus"
-    | "other";
+    | "overtime";
   ledgerNote?: string;
   /** Set after a successful post so later edits can update/remove the workspace ledger row. */
   ledgerLink?: LedgerExpenseLink;
@@ -37,8 +34,10 @@ export type DailyEntryRow = {
   date: string;
   openingBalance: number;
   cashSale: number;
+  /** Gross bank-channel sales; totals use {@link bankSaleNetAfterServiceCharge}. */
   bankSale: number;
   bkashSale: number;
+  nagadSale: number;
   pathaoSale: number;
   foodiSale: number;
   foodpandaSale: number;
@@ -58,6 +57,22 @@ export type DailyEntryRow = {
 
 export type DailyEntryMap = Record<string, DailyEntryRow>;
 
+/** Applied to `bankSale` (gross) when summing sales and closing balance. */
+export const BANK_SALE_SERVICE_CHARGE_RATE = 0.0175;
+
+/** Net bank-channel sales after the bank’s service charge; `bankSale` in storage remains gross. */
+export function bankSaleNetAfterServiceCharge(gross: number): number {
+  const g = Number(gross);
+  if (!Number.isFinite(g) || g <= 0) return 0;
+  return g * (1 - BANK_SALE_SERVICE_CHARGE_RATE);
+}
+
+export function bankSaleServiceChargeAmount(gross: number): number {
+  const g = Number(gross);
+  if (!Number.isFinite(g) || g <= 0) return 0;
+  return g * BANK_SALE_SERVICE_CHARGE_RATE;
+}
+
 export const DAILY_ENTRY_STORAGE_KEY = "upos.dailyEntryRows.v1";
 
 /** Fired on this window after a successful save (same tab). */
@@ -67,12 +82,26 @@ export function savedLineKind(line: ExpenseLineSaved): "vendor" | "regular" {
   return line.kind === "regular" ? "regular" : "vendor";
 }
 
+function coerceDailyEntryRow(row: DailyEntryRow): DailyEntryRow {
+  return {
+    ...row,
+    nagadSale: row.nagadSale ?? 0,
+  };
+}
+
 export function readDailyEntryMap(): DailyEntryMap {
   try {
     const raw = localStorage.getItem(DAILY_ENTRY_STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as DailyEntryMap;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: DailyEntryMap = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v && typeof v === "object") {
+        out[k] = coerceDailyEntryRow(v as DailyEntryRow);
+      }
+    }
+    return out;
   } catch {
     return {};
   }
@@ -109,8 +138,9 @@ function dummyDailyEntryMap(): DailyEntryMap {
     date: "2026-04-17",
     openingBalance: 5_000,
     cashSale: 12_000,
-    bankSale: 5_000,
+    bankSale: 5_000, // gross; totals use net after 1.75% charge
     bkashSale: 3_000,
+    nagadSale: 450,
     pathaoSale: 2_000,
     foodiSale: 1_500,
     foodpandaSale: 1_000,
@@ -122,7 +152,16 @@ function dummyDailyEntryMap(): DailyEntryMap {
       { kind: "vendor", vendor: "City Wholesale", amount: 3_500 },
       { kind: "regular", label: "Cleaning supplies", amount: 800, note: "Monthly stock-up" },
     ],
-    remainingBalance: 5_000 + 24_500 - 4_300,
+    remainingBalance:
+      5_000 +
+      12_000 +
+      bankSaleNetAfterServiceCharge(5_000) +
+      3_000 +
+      450 +
+      2_000 +
+      1_500 +
+      1_000 -
+      4_300,
     updatedAt: t0,
     enteredBy: "Demo",
   };
@@ -133,6 +172,7 @@ function dummyDailyEntryMap(): DailyEntryMap {
     cashSale: 11_000,
     bankSale: 4_500,
     bkashSale: 2_800,
+    nagadSale: 380,
     pathaoSale: 1_900,
     foodiSale: 1_200,
     foodpandaSale: 900,
@@ -145,7 +185,16 @@ function dummyDailyEntryMap(): DailyEntryMap {
       { kind: "regular", label: "Fuel (delivery)", amount: 600 },
     ],
     remainingBalance:
-      apr17.remainingBalance + 22_300 - 150 - 3_400,
+      apr17.remainingBalance +
+      11_000 +
+      bankSaleNetAfterServiceCharge(4_500) +
+      2_800 +
+      380 +
+      1_900 +
+      1_200 +
+      900 -
+      150 -
+      3_400,
     updatedAt: t1,
     enteredBy: "Demo",
   };
@@ -156,6 +205,7 @@ function dummyDailyEntryMap(): DailyEntryMap {
     cashSale: 13_000,
     bankSale: 6_000,
     bkashSale: 3_200,
+    nagadSale: 520,
     pathaoSale: 2_100,
     foodiSale: 1_600,
     foodpandaSale: 1_100,
@@ -164,7 +214,16 @@ function dummyDailyEntryMap(): DailyEntryMap {
     voidSaleAttachmentDataUrls: undefined,
     expenses: 4_000,
     expenseLines: [{ kind: "vendor", vendor: "Dairy Direct", amount: 4_000 }],
-    remainingBalance: apr18.remainingBalance + 27_000 - 4_000,
+    remainingBalance:
+      apr18.remainingBalance +
+      13_000 +
+      bankSaleNetAfterServiceCharge(6_000) +
+      3_200 +
+      520 +
+      2_100 +
+      1_600 +
+      1_100 -
+      4_000,
     updatedAt: t2,
     enteredBy: "Demo",
   };
