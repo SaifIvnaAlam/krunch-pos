@@ -5,7 +5,6 @@ import {
   getClosingBalanceForDate,
   getDailyEntry,
 } from '../../../lib/dailyEntryStore';
-import { DailyEntryDateControl } from './DailyEntryDateControl';
 import { DailyEntryForm } from './DailyEntryForm';
 
 function todayKeyUtc(): string {
