@@ -5,15 +5,8 @@ import {
   BookOpen,
   Building2,
   NotebookPen,
-  Package,
-  Factory,
   Receipt,
-  RotateCcw,
   TrendingUp,
-  Truck,
-  Users,
-  CalendarDays,
-  CalendarOff,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -45,17 +38,6 @@ const SIDEBAR_NAV_NODES: NavNode[] = [
   { kind: "leaf", id: "exp-daily", label: "Daily Entry Form", icon: NotebookPen },
   {
     kind: "branch",
-    id: "purchase-management",
-    label: "Purchase",
-    icon: Truck,
-    children: [
-      { kind: "leaf", id: "pu-ledger", label: "Purchase ledger", icon: BookOpen },
-      { kind: "leaf", id: "pu-suppliers", label: "Suppliers", icon: Building2 },
-      { kind: "leaf", id: "pu-return", label: "Returns", icon: RotateCcw },
-    ],
-  },
-  {
-    kind: "branch",
     id: "ledger-management",
     label: "Ledger Management",
     icon: BookMarked,
@@ -72,38 +54,6 @@ const SIDEBAR_NAV_NODES: NavNode[] = [
     children: [
       { kind: "leaf", id: "rep-expenses", label: "Expense reports", icon: Receipt },
       { kind: "leaf", id: "rep-sales", label: "Sales report", icon: TrendingUp },
-    ],
-  },
-  {
-    kind: "branch",
-    id: "inventory-management",
-    label: "Inventory Management",
-    icon: Package,
-    children: [
-      {
-        kind: "leaf",
-        id: "inv-overview",
-        label: "Stock overview",
-        icon: Package,
-      },
-      {
-        kind: "leaf",
-        id: "inv-adjust",
-        label: "Stock in & out",
-        icon: Factory,
-      },
-    ],
-  },
-  {
-    kind: "branch",
-    id: "employee-management",
-    label: "Employee Management",
-    icon: Users,
-    children: [
-      { kind: "leaf", id: "hr-directory", label: "Employee List", icon: Users },
-      { kind: "leaf", id: "hr-roster", label: "Roster & Attendance", icon: CalendarDays },
-      { kind: "leaf", id: "hr-leave", label: "Leave", icon: CalendarOff },
-      { kind: "leaf", id: "hr-payroll", label: "Salaries", icon: Receipt },
     ],
   },
 ];
