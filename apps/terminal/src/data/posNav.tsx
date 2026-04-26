@@ -43,7 +43,7 @@ const SIDEBAR_NAV_NODES: NavNode[] = [
     icon: BookMarked,
     children: [
       { kind: "leaf", id: "lm-suppliers", label: "Ledger books", icon: Building2 },
-      { kind: "leaf", id: "lm-ledger", label: "Purchase ledger", icon: BookOpen },
+      { kind: "leaf", id: "lm-ledger", label: "Bills & Payments", icon: BookOpen },
     ],
   },
   {
