@@ -15,20 +15,23 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useDevAuth } from "../context/DevAuthContext";
+import { useSession } from "@/features/auth";
 import { MENU_VIEW_IDS, findLeafMeta } from "../data/posNav";
 import {
   resolveInitialLeafId,
   writeStoredLastLeafId,
 } from "../posSectionStorage";
 import {
-  DEMO_CATEGORIES,
   buildOrderLineDisplay,
   computeLineUnitPrice,
   defaultOrderLineConfig,
+  useMenuCatalog,
   type CatalogItem,
   type OrderLineConfig,
-} from "../data/demoMenuCatalog";
+} from "@/features/menu";
+import { createOrderOnApi, holdOrderOnApi } from "@/features/orders";
+import { processPaymentOnApi } from "@/features/payments/paymentsApi";
+import { StorageImage } from "@/features/storage";
 import { PosSidebar } from "../components/pos/PosSidebar";
 import { DashboardView } from "../components/pos/DashboardView";
 import { OrdersManageView } from "../components/pos/OrdersManageView";
@@ -190,42 +193,17 @@ function lineWithConfig(
   };
 }
 
-function cloneDemoCategories() {
-  return DEMO_CATEGORIES.map((cat) => ({
-    ...cat,
-    items: cat.items.map((item) => ({
-      ...item,
-      variantGroups: item.variantGroups.map((group) => ({
-        ...group,
-        choices: group.choices.map((choice) => ({ ...choice })),
-      })),
-      addons: item.addons.map((addon) => ({ ...addon })),
-    })),
-  }));
-}
-
 export function PosTerminalPage() {
   const navigate = useNavigate();
-  const { signOut } = useDevAuth();
-  const [menuCategories, setMenuCategories] = useState(() => cloneDemoCategories());
-  const [addonTemplates, setAddonTemplates] = useState<AddonTemplate[]>(() => {
-    const map = new Map<string, AddonTemplate>();
-    for (const cat of DEMO_CATEGORIES) {
-      for (const item of cat.items) {
-        for (const addon of item.addons) {
-          const key = `${addon.name.toLowerCase()}|${addon.priceCents}`;
-          if (!map.has(key)) {
-            map.set(key, {
-              id: `${key}-${Math.random().toString(36).slice(2, 6)}`,
-              name: addon.name,
-              priceCents: addon.priceCents,
-            });
-          }
-        }
-      }
-    }
-    return Array.from(map.values());
-  });
+  const { signOut } = useSession();
+  const {
+    categories: menuCategories,
+    setCategories: setMenuCategories,
+    loading: menuLoading,
+    error: menuError,
+    refresh: refreshMenuCatalog,
+  } = useMenuCatalog();
+  const [addonTemplates, setAddonTemplates] = useState<AddonTemplate[]>([]);
   const orderedMenuCategories = useMemo(
     () => [...menuCategories].sort((a, b) => a.name.localeCompare(b.name)),
     [menuCategories],
@@ -282,10 +260,24 @@ export function PosTerminalPage() {
     writeStoredLastLeafId(activeLeafId);
   }, [activeLeafId]);
 
-  // Keep POS menu aligned with source catalog after hot-reload/session drift.
   useEffect(() => {
-    setMenuCategories(cloneDemoCategories());
-  }, []);
+    const map = new Map<string, AddonTemplate>();
+    for (const cat of menuCategories) {
+      for (const item of cat.items) {
+        for (const addon of item.addons) {
+          const key = `${addon.name.toLowerCase()}|${addon.priceCents}`;
+          if (!map.has(key)) {
+            map.set(key, {
+              id: `${key}-${Math.random().toString(36).slice(2, 6)}`,
+              name: addon.name,
+              priceCents: addon.priceCents,
+            });
+          }
+        }
+      }
+    }
+    setAddonTemplates(Array.from(map.values()));
+  }, [menuCategories]);
 
   const items = useMemo((): CatalogRow[] => {
     const q = menuSearch.trim().toLowerCase();
@@ -569,22 +561,56 @@ export function PosTerminalPage() {
     setCheckoutNotice("No-sale recorded for this terminal.");
   };
 
-  const handleHold = () => {
+  const submitCartToApi = async (mode: "hold" | "pay") => {
     if (cart.length === 0) {
       setCheckoutNotice("Cart is empty.");
       return;
     }
-    clearOrder();
-    setCheckoutNotice("Order placed on hold.");
+    const apiItems = cart
+      .filter((line) => !line.itemId.startsWith("misc-"))
+      .map((line) => ({
+        menuItemId: line.itemId,
+        quantity: line.qty,
+        modifiers: { lineConfig: line.lineConfig },
+        notes: line.note,
+      }));
+    if (apiItems.length === 0) {
+      setCheckoutNotice("Misc-only carts cannot sync — add menu items.");
+      return;
+    }
+    try {
+      const order = await createOrderOnApi({
+        tableNumber: String(tableNumber),
+        items: apiItems,
+      });
+      if (mode === "hold") {
+        await holdOrderOnApi(order.id);
+        clearOrder();
+        setCheckoutNotice("Order placed on hold.");
+        return;
+      }
+      const amount =
+        cart.reduce((sum, line) => sum + lineNetCents(line), 0) / 100;
+      await processPaymentOnApi({
+        orderId: order.id,
+        method: "CASH",
+        amount,
+      });
+      clearOrder();
+      setCheckoutNotice("Payment completed.");
+    } catch (e) {
+      setCheckoutNotice(
+        e instanceof Error ? e.message : "Could not save order.",
+      );
+    }
+  };
+
+  const handleHold = () => {
+    void submitCartToApi("hold");
   };
 
   const handlePay = () => {
-    if (cart.length === 0) {
-      setCheckoutNotice("Cart is empty.");
-      return;
-    }
-    clearOrder();
-    setCheckoutNotice("Payment completed.");
+    void submitCartToApi("pay");
   };
 
   const showOrderPanel = showMenuSurface;
@@ -606,6 +632,18 @@ export function PosTerminalPage() {
               <h1 className="text-[15px] font-medium text-[var(--pos-text-1)]">
                 Menu / POS
               </h1>
+              {menuLoading ? (
+                <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">Loading menu…</p>
+              ) : menuError ? (
+                <p className="mt-1 text-[12px] text-red-600" role="alert">
+                  {menuError}
+                </p>
+              ) : menuCategories.length === 0 ? (
+                <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">
+                  No menu items yet — add items in Food management or run{" "}
+                  <span className="font-mono">npm run db:seed</span>.
+                </p>
+              ) : null}
             </div>
             <div className="relative w-full min-w-[200px] shrink-0 sm:max-w-[320px]">
               <Search
@@ -698,8 +736,17 @@ export function PosTerminalPage() {
                       }
                       type="button"
                       onClick={() => addItemToCart(item)}
-                      className={`rounded-[12px] bg-[var(--pos-card)] px-4 py-[14px] text-left transition-colors hover:bg-[var(--pos-nav-hover)]/40 ${border0}`}
+                      className={`overflow-hidden rounded-[12px] bg-[var(--pos-card)] text-left transition-colors hover:bg-[var(--pos-nav-hover)]/40 ${border0}`}
                     >
+                      {item.imageRef ? (
+                        <StorageImage
+                          mediaRef={item.imageRef}
+                          alt={item.name}
+                          className="aspect-[16/10] w-full object-cover"
+                          placeholderClassName="flex aspect-[16/10] w-full items-center justify-center bg-[var(--pos-page)] text-[10px] text-[var(--pos-text-2)]"
+                        />
+                      ) : null}
+                      <div className="px-4 py-[14px]">
                       {showCat ? (
                         <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--pos-text-2)]">
                           {item.categoryName}
@@ -715,6 +762,7 @@ export function PosTerminalPage() {
                         Sold today ·{" "}
                         <span className="font-mono">{item.soldToday}</span>
                       </p>
+                      </div>
                     </button>
                   );
                 })}
@@ -759,7 +807,8 @@ export function PosTerminalPage() {
       activeLeafId === "menu-mgmt" ||
       activeLeafId === "fd-cat" ||
       activeLeafId === "fd-items" ||
-      activeLeafId === "fd-addon"
+      activeLeafId === "fd-addon" ||
+      activeLeafId === "fd-menu"
     ) {
       return (
         <FoodManagementPanel
@@ -768,6 +817,7 @@ export function PosTerminalPage() {
           addonTemplates={addonTemplates}
           setAddonTemplates={setAddonTemplates}
           initialLeaf={foodManagementInitialLeaf(activeLeafId)}
+          onMenuRefresh={refreshMenuCatalog}
         />
       );
     }

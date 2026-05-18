@@ -1,12 +1,11 @@
 import { Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   bankSaleNetAfterServiceCharge,
-  DAILY_ENTRY_STORAGE_KEY,
-  DAILY_ENTRY_STORAGE_UPDATE_EVENT,
+  listDailyEntriesDescendingFromMap,
+  useDailyEntryMap,
   type DailyEntryRow,
-  listDailyEntriesDescending,
-} from "../../lib/dailyEntryStorage";
+} from "@/features/daily-entry";
 
 const MONTH_ABBR = [
   "Jan",
@@ -155,30 +154,13 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
 }
 
 export function SalesReportView() {
-  const [dataEpoch, setDataEpoch] = useState(0);
+  const { map, loading, error } = useDailyEntryMap();
   const [search, setSearch] = useState("");
 
-  const bump = useCallback(() => setDataEpoch((n) => n + 1), []);
-
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === DAILY_ENTRY_STORAGE_KEY) bump();
-    };
-    window.addEventListener(DAILY_ENTRY_STORAGE_UPDATE_EVENT, bump);
-    window.addEventListener("storage", onStorage);
-    const onFocus = () => bump();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener(DAILY_ENTRY_STORAGE_UPDATE_EVENT, bump);
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [bump]);
-
-  const allRows = useMemo(() => {
-    void dataEpoch;
-    return listDailyEntriesDescending().map(rowFromEntry);
-  }, [dataEpoch]);
+  const allRows = useMemo(
+    () => listDailyEntriesDescendingFromMap(map).map(rowFromEntry),
+    [map],
+  );
 
   const query = search.trim().toLowerCase();
   const filteredRows = useMemo(
@@ -251,7 +233,15 @@ export function SalesReportView() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {filteredRows.length === 0 ? (
+        {loading ? (
+          <div className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]">
+            Loading daily entries…
+          </div>
+        ) : error ? (
+          <div className="px-4 py-10 text-center text-[13px] text-red-600" role="alert">
+            {error}
+          </div>
+        ) : filteredRows.length === 0 ? (
           <div className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]">
             {allRows.length === 0
               ? "No daily entries yet. Save a daily entry from Daily Entry Form to see sales here."

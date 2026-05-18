@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useMemo,
   useState,
   type Dispatch,
@@ -13,10 +12,12 @@ import {
   type StockDirection,
   type StockItemMeta,
   balanceForItem,
-  loadInventoryStore,
-  saveInventoryStore,
-  seedInventoryStore,
 } from "../../lib/inventoryLedger";
+import {
+  createStockItemOnApi,
+  createStockMovementOnApi,
+  useStockInventory,
+} from "@/features/inventory";
 
 export const INVENTORY_LEAF_IDS = new Set(["inv-overview", "inv-adjust"]);
 
@@ -190,34 +191,39 @@ function InvShell({
   );
 }
 
-function usePersistedInventory(): [InventoryStore, Dispatch<SetStateAction<InventoryStore>>] {
-  const [store, setStore] = useState<InventoryStore>(() => loadInventoryStore() ?? seedInventoryStore());
-
-  useEffect(() => {
-    saveInventoryStore(store);
-  }, [store]);
-
-  return [store, setStore];
-}
-
 export function InventoryModuleView({ leafId }: { leafId: string }) {
-  const [store, setStore] = usePersistedInventory();
+  const { store, setStore, loading, error, refresh } = useStockInventory();
 
-  if (leafId === "inv-adjust") {
+  if (loading) {
     return (
-      <MovementsSection store={store} setStore={setStore} />
+      <p className="px-4 py-8 text-[13px] text-[var(--pos-text-2)]">Loading inventory…</p>
+    );
+  }
+  if (error) {
+    return (
+      <p className="px-4 py-8 text-[13px] text-red-600" role="alert">
+        {error}
+      </p>
     );
   }
 
-  return <StockOverviewSection store={store} setStore={setStore} />;
+  if (leafId === "inv-adjust") {
+    return (
+      <MovementsSection store={store} setStore={setStore} refresh={refresh} />
+    );
+  }
+
+  return <StockOverviewSection store={store} setStore={setStore} refresh={refresh} />;
 }
 
 function StockOverviewSection({
   store,
   setStore,
+  refresh,
 }: {
   store: InventoryStore;
   setStore: Dispatch<SetStateAction<InventoryStore>>;
+  refresh: () => Promise<void>;
 }) {
   const { items, movements } = store;
 
@@ -293,7 +299,7 @@ function StockOverviewSection({
     setModal("edit");
   }
 
-  function saveStock() {
+  async function saveStock() {
     const par = Number.parseFloat(draft.parLevel);
     if (
       !draft.sku.trim() ||
@@ -310,33 +316,16 @@ function StockOverviewSection({
         openingRaw === "" ? 0 : Number.parseFloat(openingRaw);
       if (openingRaw !== "" && (!Number.isFinite(opening) || opening < 0)) return;
 
-      const id = `stk-${Date.now()}`;
-      const item: StockItemMeta = {
-        id,
+      await createStockItemOnApi({
         sku: draft.sku.trim(),
         name: draft.name.trim(),
         category: draft.category,
         unit: draft.unit,
         parLevel: par,
-        lastCounted: draft.lastCounted,
-      };
-
-      const newMovements = [...movements];
-      if (opening > 0) {
-        newMovements.unshift({
-          id: `mov-${id}-open`,
-          stockItemId: id,
-          direction: "IN",
-          quantity: opening,
-          date: draft.lastCounted,
-          note: "Opening balance",
-        });
-      }
-
-      setStore((prev) => ({
-        items: [item, ...prev.items],
-        movements: newMovements,
-      }));
+        openingQuantity: opening > 0 ? opening : undefined,
+        openingReason: opening > 0 ? "Opening balance" : undefined,
+      });
+      await refresh();
     } else if (modal === "edit" && editingId) {
       setStore((prev) => ({
         ...prev,
@@ -658,9 +647,11 @@ function StockOverviewSection({
 function MovementsSection({
   store,
   setStore,
+  refresh,
 }: {
   store: InventoryStore;
   setStore: Dispatch<SetStateAction<InventoryStore>>;
+  refresh: () => Promise<void>;
 }) {
   const { items, movements } = store;
 
@@ -808,7 +799,7 @@ function MovementsSection({
     setModal("edit");
   }
 
-  function saveMovement() {
+  async function saveMovement() {
     const qty = Number.parseFloat(draft.qty);
     if (
       !draft.itemId ||
@@ -823,23 +814,20 @@ function MovementsSection({
     if (!item) return;
 
     if (modal === "create") {
-      const next: LedgerMovement = {
-        id: `mov-${Date.now()}`,
-        stockItemId: draft.itemId,
-        direction: draft.direction,
-        quantity: qty,
-        date: draft.date,
-        note: draft.note.trim(),
-      };
-      const trial = [...movements, next];
-      if (draft.direction === "OUT" && balanceAfterMovements(trial, draft.itemId) < 0) {
+      const trialQty =
+        draft.direction === "OUT"
+          ? balanceForItem(movements, draft.itemId) - qty
+          : balanceForItem(movements, draft.itemId) + qty;
+      if (draft.direction === "OUT" && trialQty < 0) {
         setMoveError("OUT quantity is greater than the current balance for this item.");
         return;
       }
-      setStore((prev) => ({
-        ...prev,
-        movements: [next, ...prev.movements],
-      }));
+      await createStockMovementOnApi(draft.itemId, {
+        direction: draft.direction,
+        quantity: qty,
+        note: draft.note.trim(),
+      });
+      await refresh();
     } else if (modal === "edit" && editingId && prevRow) {
       const updated: LedgerMovement = {
         id: editingId,

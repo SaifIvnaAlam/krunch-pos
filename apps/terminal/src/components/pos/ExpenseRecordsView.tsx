@@ -246,55 +246,7 @@ function ExpenseFormFields({
   );
 }
 
-const STARTING_ROWS: ExpenseRow[] = [
-  {
-    id: "EXP-9021",
-    reason: "Weekly dairy and produce restock",
-    date: "2026-04-08",
-    vendor: "FreshFarm Suppliers",
-    category: "Inventory",
-    method: "Bank Transfer",
-    billTotal: 12850,
-    notes: "Dairy and produce",
-  },
-  {
-    id: "EXP-9020",
-    reason: "Electricity bill",
-    date: "2026-04-07",
-    vendor: "City Power",
-    category: "Utilities",
-    method: "Card",
-    billTotal: 3900,
-  },
-  {
-    id: "EXP-9019",
-    reason: "Takeaway boxes and bags",
-    date: "2026-04-07",
-    vendor: "Rapid Packaging",
-    category: "Packaging",
-    method: "Cash",
-    billTotal: 1720,
-  },
-  {
-    id: "EXP-9018",
-    reason: "Kitchen equipment repair",
-    date: "2026-04-06",
-    vendor: "FixIt Services",
-    category: "Maintenance",
-    method: "Bank Transfer",
-    billTotal: 5650,
-    notes: "Paid in full after service",
-  },
-  {
-    id: "EXP-9017",
-    reason: "Ice delivery",
-    date: "2026-04-05",
-    vendor: "Metro Ice",
-    category: "Inventory",
-    method: "Cash",
-    billTotal: 2100,
-  },
-];
+const STARTING_ROWS: ExpenseRow[] = [];
 
 function shortDate(isoDate: string) {
   return new Date(isoDate).toLocaleDateString("en-GB", {

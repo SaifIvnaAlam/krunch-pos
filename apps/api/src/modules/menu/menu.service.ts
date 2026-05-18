@@ -5,22 +5,9 @@ import { asJsonInput } from '../../common/prisma-json';
 import { AuditService } from '../audit/audit.service';
 import { RedisService } from '../../redis/redis.service';
 
-interface CreateMenuItemDto {
-  name: string;
-  description?: string;
-  price: number;
-  category: string;
-  modifiers?: Record<string, unknown>;
-}
-
-interface UpdateMenuItemDto {
-  name?: string;
-  description?: string;
-  price?: number;
-  category?: string;
-  isAvailable?: boolean;
-  modifiers?: Record<string, unknown>;
-}
+import { normalizeStorageObjectKey } from '../../common/storage-key';
+import { CreateMenuItemDto } from './dto/create-menu-item.dto';
+import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 
 @Injectable()
 export class MenuService {
@@ -47,6 +34,7 @@ export class MenuService {
         description: dto.description,
         price: dto.price,
         category: dto.category,
+        imageKey: dto.imageKey ? normalizeStorageObjectKey(dto.imageKey) : undefined,
         modifiers: asJsonInput(dto.modifiers ?? undefined),
       },
     });
@@ -68,6 +56,12 @@ export class MenuService {
       ...(dto.price !== undefined && { price: dto.price }),
       ...(dto.category !== undefined && { category: dto.category }),
       ...(dto.isAvailable !== undefined && { isAvailable: dto.isAvailable }),
+      ...(dto.imageKey !== undefined && {
+        imageKey:
+          dto.imageKey === null || dto.imageKey === ''
+            ? null
+            : normalizeStorageObjectKey(dto.imageKey),
+      }),
       ...(dto.modifiers !== undefined && { modifiers: asJsonInput(dto.modifiers) }),
     };
     const updated = await this.prisma.menuItem.update({ where: { id: itemId }, data });

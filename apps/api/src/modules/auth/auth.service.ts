@@ -14,6 +14,7 @@ import { RedisService } from '../../redis/redis.service';
 import { TokenService } from './token.service';
 import { AuthResult, OverrideResult } from './auth.types';
 import { asJsonInput } from '../../common/prisma-json';
+import { parseEnvSeconds } from '../../common/parse-env-int';
 
 interface LoginWithPinDto {
   staffId: string;
@@ -194,7 +195,7 @@ export class AuthService {
     await this.redis.set(
       `blacklist:${refreshToken}`,
       '1',
-      this.configService.get<number>('JWT_REFRESH_EXPIRY', 28800),
+      parseEnvSeconds(this.configService, 'JWT_REFRESH_EXPIRY', 28800),
     );
 
     const staff = await this.prisma.staff.findUnique({

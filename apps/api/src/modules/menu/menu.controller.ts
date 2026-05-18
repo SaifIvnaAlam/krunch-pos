@@ -3,6 +3,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { MenuService } from './menu.service';
+import { CreateMenuItemDto } from './dto/create-menu-item.dto';
+import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequirePermission } from '../rbac/decorators/require-permission.decorator';
@@ -28,7 +30,7 @@ export class MenuController {
   @Post()
   @RequirePermission('menu:create')
   @ApiOperation({ summary: 'Create menu item' })
-  async createItem(@Body() dto: { name: string; description?: string; price: number; category: string; modifiers?: Record<string, unknown> }, @Req() req: Request) {
+  async createItem(@Body() dto: CreateMenuItemDto, @Req() req: Request) {
     const user = req.user as JwtPayload;
     return this.menuService.createItem(dto, user.staffId, user.branchId, user.terminalId);
   }
@@ -36,7 +38,7 @@ export class MenuController {
   @Patch(':id')
   @RequirePermission('menu:edit')
   @ApiOperation({ summary: 'Edit menu item' })
-  async updateItem(@Param('id') id: string, @Body() dto: { name?: string; description?: string; price?: number; category?: string; isAvailable?: boolean; modifiers?: Record<string, unknown> }, @Req() req: Request) {
+  async updateItem(@Param('id') id: string, @Body() dto: UpdateMenuItemDto, @Req() req: Request) {
     const user = req.user as JwtPayload;
     return this.menuService.updateItem(id, dto, user.staffId, user.branchId, user.terminalId);
   }

@@ -422,7 +422,7 @@ export function PosSidebar({
           <div className="flex flex-col items-center gap-2">
             <div
               className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--pos-sb-brand-bg)] text-[11px] font-bold text-[var(--pos-sb-text-1)]"
-              title="Demo server"
+              title="Connected server"
             >
               D
             </div>
@@ -443,10 +443,10 @@ export function PosSidebar({
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12px] font-semibold text-[var(--pos-sb-text-1)]">
-                Demo server
+                API server
               </p>
               <p className="truncate text-[10px] text-[var(--pos-sb-text-2)]">
-                Sample session
+                Live session
               </p>
             </div>
             <button

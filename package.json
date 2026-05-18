@@ -7,14 +7,18 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "node scripts/check-node.mjs && npm run db:up && node scripts/wait-for-postgres.mjs && turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "generate:openapi": "turbo run generate:openapi --filter=@universal-pos/api",
-    "db:migrate": "turbo run db:migrate --filter=@universal-pos/database-schema",
-    "db:seed": "turbo run db:seed --filter=@universal-pos/database-schema",
+    "db:up": "docker compose up -d postgres adminer",
+    "db:down": "docker compose down",
+    "db:setup": "npm run db:up && npm run db:push",
+    "db:push": "sh -c 'set -a && . ./apps/api/.env && set +a && turbo run db:push --filter=@universal-pos/database-schema'",
+    "db:migrate": "sh -c 'set -a && . ./apps/api/.env && set +a && turbo run db:migrate --filter=@universal-pos/database-schema'",
+    "db:seed": "sh -c 'set -a && . ./apps/api/.env && set +a && turbo run db:seed --filter=@universal-pos/database-schema'",
     "db:generate": "turbo run db:generate --filter=@universal-pos/database-schema"
   },
   "devDependencies": {

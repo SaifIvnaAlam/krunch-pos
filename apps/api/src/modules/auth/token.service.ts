@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { parseEnvSeconds } from '../../common/parse-env-int';
 
 interface TokenPayload {
   staffId: string;
@@ -25,7 +26,11 @@ export class TokenService {
     private readonly configService: ConfigService,
   ) {
     this.refreshSecret = this.configService.getOrThrow<string>('JWT_REFRESH_SECRET');
-    this.refreshExpiry = this.configService.get<number>('JWT_REFRESH_EXPIRY', 28800);
+    this.refreshExpiry = parseEnvSeconds(
+      this.configService,
+      'JWT_REFRESH_EXPIRY',
+      28800,
+    );
   }
 
   async generateTokenPair(

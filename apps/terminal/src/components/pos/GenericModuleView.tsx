@@ -5,26 +5,7 @@ const border0 =
 
 type Row = { id: string; primary: string; secondary: string; meta: string };
 
-const DEMO_ROWS: Row[] = [
-  {
-    id: "1",
-    primary: "Demo record A",
-    secondary: "Last updated today · sample",
-    meta: "Active",
-  },
-  {
-    id: "2",
-    primary: "Demo record B",
-    secondary: "Synced · offline-safe",
-    meta: "Draft",
-  },
-  {
-    id: "3",
-    primary: "Demo record C",
-    secondary: "Assigned to outlet 1",
-    meta: "Active",
-  },
-];
+const DEMO_ROWS: Row[] = [];
 
 export function GenericModuleView({
   title,

@@ -1,4 +1,6 @@
-/** KPI + flat charts — no shadows/gradients per style guide. */
+/** KPI + flat charts — data from Nest reports + daily entries. */
+
+import { useDashboardData } from "@/features/reports";
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
@@ -13,33 +15,40 @@ const PASTEL_BARS = [
   "#d8edd0",
 ] as const;
 
-const SALES_BY_DAY = [
-  { label: "Mon", cents: 4200_00 },
-  { label: "Tue", cents: 3800_00 },
-  { label: "Wed", cents: 5100_00 },
-  { label: "Thu", cents: 4600_00 },
-  { label: "Fri", cents: 6200_00 },
-  { label: "Sat", cents: 7800_00 },
-  { label: "Sun", cents: 5400_00 },
-];
-
-const ORDERS_HOURLY = [2, 4, 6, 8, 12, 18, 24, 32, 28, 22, 16, 10, 6];
-
-const CATEGORY_SHARE = [
-  { name: "Premium cuts", pct: 24 },
-  { name: "Premium platter", pct: 18 },
-  { name: "Mocktails & smoothie", pct: 16 },
-  { name: "Appetizer & econo", pct: 22 },
-  { name: "Rest", pct: 20 },
-];
-
-function fmtMoney(cents: number) {
-  return (cents / 100).toFixed(0);
+function fmtMoney(value: string | number) {
+  const n = typeof value === "string" ? Number.parseFloat(value) : value;
+  if (!Number.isFinite(n)) return "0";
+  return Math.round(n).toLocaleString("en-BD");
 }
 
 export function DashboardView() {
-  const maxDay = Math.max(...SALES_BY_DAY.map((d) => d.cents), 1);
-  const maxHr = Math.max(...ORDERS_HOURLY, 1);
+  const { sales, items, dailyEntryCount, loading, error } = useDashboardData();
+
+  const topItems = items.slice(0, 7);
+  const maxQty = Math.max(...topItems.map((i) => i.quantity), 1);
+
+  const kpis = [
+    {
+      label: "Gross sales (7d)",
+      value: sales ? `৳${fmtMoney(sales.totalRevenue)}` : "—",
+      sub: sales ? `${sales.totalOrders} paid orders` : "Loading…",
+    },
+    {
+      label: "Avg ticket",
+      value: sales ? `৳${fmtMoney(sales.averageOrderValue)}` : "—",
+      sub: "Paid orders only",
+    },
+    {
+      label: "Daily entries",
+      value: String(dailyEntryCount),
+      sub: "Saved in Daily Entry Form",
+    },
+    {
+      label: "Menu performers",
+      value: String(items.length),
+      sub: "Items with sales this week",
+    },
+  ];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto pr-1">
@@ -52,13 +61,17 @@ export function DashboardView() {
         </h1>
       </div>
 
+      {loading ? (
+        <p className="text-[13px] text-[var(--pos-text-2)]">Loading dashboard…</p>
+      ) : null}
+      {error ? (
+        <p className="text-[13px] text-red-600" role="alert">
+          {error}
+        </p>
+      ) : null}
+
       <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
-        {[
-          { label: "Gross sales", value: "৳4,286", sub: "vs yesterday +12%" },
-          { label: "Orders", value: "142", sub: "in-store + QR" },
-          { label: "Avg ticket", value: "৳30.18", sub: "after discounts" },
-          { label: "Open tables", value: "8", sub: "of 24 seated" },
-        ].map((k) => (
+        {kpis.map((k) => (
           <div
             key={k.label}
             className={`rounded-[14px] bg-[var(--pos-card)] p-4 ${border0}`}
@@ -72,121 +85,36 @@ export function DashboardView() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className={`rounded-[14px] bg-[var(--pos-card)] p-4 ${border0}`}>
-          <h2 className="text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]">
-            Sales by day
-          </h2>
-          <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
-            Last 7 days · demo currency
-          </p>
-          <div className="mt-6 flex h-[140px] items-end justify-between gap-2">
-            {SALES_BY_DAY.map((d, i) => {
-              const h = Math.round((d.cents / maxDay) * 100);
-              const bg = PASTEL_BARS[i % PASTEL_BARS.length];
-              return (
-                <div
-                  key={d.label}
-                  className="flex min-w-0 flex-1 flex-col items-center gap-2"
-                >
-                  <div className="flex h-[100px] w-full max-w-[40px] items-end justify-center">
-                    <div
-                      className="w-full rounded-t-[8px] rounded-b-[4px] border border-solid [border-color:var(--pos-border-hairline)]"
-                      style={{
-                        height: `${Math.max(h, 8)}%`,
-                        backgroundColor: bg,
-                      }}
-                      title={`৳${fmtMoney(d.cents)}`}
-                    />
-                  </div>
-                  <span className="font-mono text-[10px] text-[var(--pos-text-2)]">
-                    {d.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className={`rounded-[14px] bg-[var(--pos-card)] p-4 ${border0}`}>
-          <h2 className="text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]">
-            Orders by hour
-          </h2>
-          <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
-            Today · covers logged
-          </p>
-          <div className="mt-4">
-            <svg
-              viewBox="0 0 320 120"
-              className="h-[120px] w-full"
-              role="img"
-              aria-label="Orders by hour line chart"
-            >
-              <polyline
-                fill="none"
-                stroke="#2f6dae"
-                strokeWidth="2"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                points={ORDERS_HOURLY.map((v, i) => {
-                  const x = 12 + (i * (320 - 24)) / (ORDERS_HOURLY.length - 1);
-                  const y = 108 - (v / maxHr) * 96;
-                  return `${x},${y}`;
-                }).join(" ")}
-              />
-              {ORDERS_HOURLY.map((v, i) => {
-                const x = 12 + (i * (320 - 24)) / (ORDERS_HOURLY.length - 1);
-                const y = 108 - (v / maxHr) * 96;
-                return (
-                  <circle
-                    key={i}
-                    cx={x}
-                    cy={y}
-                    r="3"
-                    fill="var(--pos-card)"
-                    stroke="#2f6dae"
-                    strokeWidth="2"
-                  />
-                );
-              })}
-            </svg>
-            <div className="mt-2 flex justify-between font-mono text-[10px] text-[var(--pos-text-2)]">
-              <span>11:00</span>
-              <span>16:00</span>
-              <span>21:00</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className={`rounded-[14px] bg-[var(--pos-card)] p-4 ${border0}`}>
         <h2 className="text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]">
-          Sales mix by category
+          Top items (7 days)
         </h2>
         <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
-          Share of net · rounded demo
+          From order history — save orders at the register to populate this chart.
         </p>
-        <div className="mt-4 flex flex-col gap-3">
-          {CATEGORY_SHARE.map((row, i) => (
-            <div key={row.name}>
-              <div className="mb-1 flex justify-between text-[13px]">
-                <span className="text-[var(--pos-text-3)]">{row.name}</span>
-                <span className="font-mono text-[var(--pos-text-2)]">
-                  {row.pct}%
-                </span>
-              </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--pos-sidebar)]">
+        {topItems.length === 0 ? (
+          <p className="mt-6 text-center text-[13px] text-[var(--pos-text-2)]">
+            No item sales yet this week.
+          </p>
+        ) : (
+          <div className="mt-4 flex h-40 items-end gap-2">
+            {topItems.map((row, i) => (
+              <div key={row.menuItemId} className="flex min-w-0 flex-1 flex-col items-center gap-1">
                 <div
-                  className="h-full rounded-full border border-solid [border-color:var(--pos-border-hairline)]"
+                  className="w-full rounded-t-[6px]"
                   style={{
-                    width: `${row.pct}%`,
+                    height: `${Math.max(8, (row.quantity / maxQty) * 100)}%`,
                     backgroundColor: PASTEL_BARS[i % PASTEL_BARS.length],
                   }}
+                  title={`${row.name}: ${row.quantity}`}
                 />
+                <span className="max-w-full truncate text-[9px] text-[var(--pos-text-2)]">
+                  {row.name.split(" ")[0]}
+                </span>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

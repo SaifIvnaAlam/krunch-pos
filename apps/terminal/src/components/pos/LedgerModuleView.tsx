@@ -18,6 +18,9 @@ import {
   X,
 } from "lucide-react";
 import { sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
+import { uploadFileToStorage, resolveMediaUrl } from "@/features/storage";
+import { StorageImage } from "@/features/storage/StorageImage";
+import { isStorageRef } from "@/features/storage/storageRef";
 
 /** Match ExpenseRecordsView layout: bordered card, calm header, filter strip, stats on page bg, scrollable table. */
 const purchaseShell =
@@ -187,333 +190,9 @@ function nextId(prefix: string, existing: string[]): string {
 }
 
 const initialWorkspace: Workspace = {
-  suppliers: [
-    {
-      id: "v-1",
-      name: "Fresh Foods Wholesale",
-      bookPurpose: "vendor",
-      contactPerson: "Roksana Ahmed",
-      phone: "+880 1711‑000111",
-      email: "orders@freshfoods.example",
-      address: "Tejgaon IA, Dhaka",
-      notes: "Net 14 · delivery Tue/Fri",
-    },
-    {
-      id: "v-2",
-      name: "Capital Beverage Co.",
-      bookPurpose: "vendor",
-      contactPerson: "Karim Hassan",
-      phone: "+880 1812‑000222",
-      email: "b2b@capitalbev.example",
-      address: "Uttara Sector 7",
-      notes: "COD under ৳50k",
-    },
-    {
-      id: "v-3",
-      name: "Prime Packaging Ltd.",
-      bookPurpose: "vendor",
-      contactPerson: "Sabrina Alam",
-      phone: "+880 1913‑000333",
-      email: "sales@primepack.example",
-      address: "Narayanganj",
-      notes: "",
-    },
-    {
-      id: "v-4",
-      name: "Bay Seafood Trading",
-      bookPurpose: "vendor",
-      contactPerson: "Nusrat Jahan",
-      phone: "+880 1614‑000444",
-      email: "supply@bayseafood.example",
-      address: "Khatunganj, Chattogram",
-      notes: "Live catch · order by 10am",
-    },
-    {
-      id: "v-5",
-      name: "Golden Grain Mills",
-      bookPurpose: "vendor",
-      contactPerson: "Jamil Hossain",
-      phone: "+880 1715‑000555",
-      email: "b2b@goldengrain.example",
-      address: "Gazipur",
-      notes: "Flour · rice · bulk sacks",
-    },
-    {
-      id: "v-6",
-      name: "Dhaka Dairy Collective",
-      bookPurpose: "vendor",
-      contactPerson: "Ayesha Siddiqui",
-      phone: "+880 1816‑000666",
-      email: "orders@dhakadairy.example",
-      address: "Mohammadpur, Dhaka",
-      notes: "Daily milk & cream · AM drop",
-    },
-    {
-      id: "v-7",
-      name: "Spice Route Imports",
-      bookPurpose: "vendor",
-      contactPerson: "Farid Uddin",
-      phone: "+880 1917‑000777",
-      email: "import@spiceroute.example",
-      address: "Motijheel C/A, Dhaka",
-      notes: "Whole spices · MOQ 5kg",
-    },
-    {
-      id: "v-8",
-      name: "EcoClean Janitorial Supply",
-      bookPurpose: "vendor",
-      contactPerson: "Mehedi Hasan",
-      phone: "+880 1318‑000888",
-      email: "sales@ecoclean.example",
-      address: "Banani, Dhaka",
-      notes: "Chemicals · SDS on file",
-    },
-    {
-      id: "o-1",
-      name: "Owner — Rahim Chowdhury",
-      bookPurpose: "owners",
-      contactPerson: "Rahim Chowdhury",
-      phone: "+880 1711‑900001",
-      email: "rahim@krunch.example",
-      address: "Dhanmondi, Dhaka",
-      notes: "Capital injections · owner draws",
-    },
-    {
-      id: "o-2",
-      name: "Owner — Nadia Rahman",
-      bookPurpose: "owners",
-      contactPerson: "Nadia Rahman",
-      phone: "+880 1811‑900002",
-      email: "nadia@krunch.example",
-      address: "Gulshan 2, Dhaka",
-      notes: "Silent partner · quarterly true-up",
-    },
-    {
-      id: "o-3",
-      name: "Partnership operating pool",
-      bookPurpose: "owners",
-      contactPerson: "Kamal Hossain",
-      phone: "—",
-      email: "finance@krunch.example",
-      address: "Head office",
-      notes: "Shared owner float · reimbursements · treasurer of record",
-    },
-    {
-      id: "e-1",
-      name: `${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}Faisal Mahmud`,
-      bookPurpose: "employees",
-      contactPerson: "Faisal Mahmud",
-      phone: "+880 1911‑700001",
-      email: "faisal.mahmud@krunch.example",
-      address: "Same as venue",
-      notes: "Kitchen line prep · net wages · tips settlement",
-    },
-    {
-      id: "e-2",
-      name: `${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}Tanvir Islam`,
-      bookPurpose: "employees",
-      contactPerson: "Tanvir Islam",
-      phone: "+880 1611‑700002",
-      email: "tanvir.islam@krunch.example",
-      address: "Dhaka metro",
-      notes: "Delivery (Pathao / in-house) · advances · fuel top-ups · bonuses",
-    },
-    {
-      id: "e-3",
-      name: `${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}Sharmin Akter`,
-      bookPurpose: "employees",
-      contactPerson: "Sharmin Akter",
-      phone: "+880 1511‑700003",
-      email: "sharmin.akter@krunch.example",
-      address: "Venue",
-      notes: "Shift supervisor · petty cash recoveries · salary loans",
-    },
-  ],
-  moves: [
-    {
-      kind: "purchase",
-      id: "po-0005",
-      ref: "PO-2026-0422",
-      supplierId: "v-5",
-      date: "2026-04-09",
-      status: "draft",
-      amountCents: 3120000,
-      note: "Basmati rice 25kg ×4 bag; Atta flour 50lb ×6 bag",
-    },
-    {
-      kind: "purchase",
-      id: "po-0004",
-      ref: "PO-2026-0421",
-      supplierId: "v-4",
-      date: "2026-04-08",
-      status: "partial",
-      amountCents: 2235000,
-      note: "Pomfret (fresh) ×15 kg; Prawn medium ×8 kg",
-    },
-    {
-      kind: "purchase",
-      id: "po-0003",
-      ref: "PO-2026-0420",
-      supplierId: "v-3",
-      date: "2026-04-07",
-      status: "received",
-      amountCents: 620400,
-      note: "Kraft takeout boxes 12in ×50; Packaging tape rolls ×24",
-    },
-    {
-      kind: "purchase",
-      id: "po-0001",
-      ref: "PO-2026-0412",
-      supplierId: "v-1",
-      date: "2026-04-02",
-      status: "received",
-      amountCents: 3956000,
-      note: "Ribeye 12oz (case) ×2; Frozen fries 4kg ×8 bag",
-    },
-    {
-      kind: "purchase",
-      id: "po-0002",
-      ref: "PO-2026-0415",
-      supplierId: "v-2",
-      date: "2026-04-05",
-      status: "sent",
-      amountCents: 4000000,
-      note: "Cola syrup · cases",
-    },
-    {
-      kind: "return",
-      id: "pr-0001",
-      ref: "PR-2026-0401",
-      supplierId: "v-1",
-      linkedPurchaseId: "po-0001",
-      date: "2026-04-04",
-      reason: "Temperature excursion — one case compromised",
-      status: "credited",
-      lines: [
-        {
-          id: "rl1",
-          description: "Ribeye 12oz (case)",
-          qty: 1,
-          unit: "case",
-          creditCents: 1850000,
-        },
-      ],
-    },
-  ],
-  ledger: [
-    {
-      id: "lg-8",
-      supplierId: "v-5",
-      date: "2026-04-09",
-      type: "invoice",
-      ref: "PO-2026-0422",
-      memo: "Golden Grain · weekly dry stock",
-      amountCents: 3120000,
-    },
-    {
-      id: "lg-7",
-      supplierId: "v-4",
-      date: "2026-04-08",
-      type: "invoice",
-      ref: "PO-2026-0421",
-      memo: "Bay Seafood · morning lot",
-      amountCents: 2235000,
-    },
-    {
-      id: "lg-6",
-      supplierId: "v-3",
-      date: "2026-04-07",
-      type: "invoice",
-      ref: "PO-2026-0420",
-      memo: "Prime Packaging · disposables restock",
-      amountCents: 620400,
-    },
-    {
-      id: "lg-1",
-      supplierId: "v-1",
-      date: "2026-04-02",
-      type: "invoice",
-      ref: "PO-2026-0412",
-      memo: "Goods receipt · walk-in",
-      amountCents: 3956000,
-    },
-    {
-      id: "lg-2",
-      supplierId: "v-1",
-      date: "2026-04-04",
-      type: "return_credit",
-      ref: "PR-2026-0401",
-      memo: "Return credited · QC",
-      amountCents: -1850000,
-    },
-    {
-      id: "lg-3",
-      supplierId: "v-1",
-      date: "2026-04-06",
-      type: "payment",
-      ref: "PV-88431",
-      memo: "Bank transfer",
-      amountCents: -1500000,
-    },
-    {
-      id: "lg-4",
-      supplierId: "v-2",
-      date: "2026-04-03",
-      type: "invoice",
-      ref: "PO-2026-0415",
-      memo: "Capital Beverage · cases (৳40,000)",
-      amountCents: 4000000,
-    },
-    {
-      id: "lg-5",
-      supplierId: "v-2",
-      date: "2026-04-05",
-      type: "return_credit",
-      ref: "PR-2026-0410",
-      memo: "Return credit · damaged crates (৳4,000)",
-      amountCents: -400000,
-    },
-    {
-      id: "lg-emp-1",
-      supplierId: "e-1",
-      date: "2026-04-10",
-      type: "payment",
-      ref: "EM-MAR26A1",
-      memo: "Salary · Bank Transfer · March payroll",
-      amountCents: -5200000,
-      employeeLineKind: "salary",
-    },
-    {
-      id: "lg-emp-2",
-      supplierId: "e-1",
-      date: "2026-04-05",
-      type: "payment",
-      ref: "EM-APRHR1",
-      memo: "Overtime · Bank Transfer · April",
-      amountCents: -800000,
-      employeeLineKind: "overtime",
-    },
-    {
-      id: "lg-emp-3",
-      supplierId: "e-2",
-      date: "2026-04-08",
-      type: "payment",
-      ref: "EM-SCBONUS",
-      memo: "Service charge · Cash · Q1 pool",
-      amountCents: -125000,
-      employeeLineKind: "service_charge",
-    },
-    {
-      id: "lg-emp-4",
-      supplierId: "e-3",
-      date: "2026-04-01",
-      type: "adjustment",
-      ref: "ADJ-EMPQ1",
-      memo: "Bonus · Opening true-up from prior system",
-      amountCents: 150000,
-      employeeLineKind: "bonus",
-    },
-  ],
+  suppliers: [],
+  moves: [],
+  ledger: [],
   ledgerSupplierFilter: "",
   ledgerInvoiceDrawerPrefillSupplierId: null,
   ledgerPaymentDrawerPrefillSupplierId: null,
@@ -653,27 +332,43 @@ function returnCreditTotalCents(r: PurchaseReturn): number {
 
 function LedgerAttachmentDetail({ attachment }: { attachment: LedgerAttachment }) {
   const isImage = attachment.mimeType.startsWith("image/");
+  const [href, setHref] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void resolveMediaUrl(attachment.dataUrl).then((url) => {
+      if (!cancelled) setHref(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.dataUrl]);
+
   return (
     <div className="mt-4 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2.5">
       <p className={purchaseLabel}>Attachment</p>
-      {isImage ? (
-        <img
-          src={attachment.dataUrl}
+      {isImage &&
+      (isStorageRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
+        <StorageImage
+          mediaRef={attachment.dataUrl}
           alt=""
           className="mt-2 max-h-40 w-full rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-contain"
         />
       ) : null}
-      <a
-        href={attachment.dataUrl}
-        download={attachment.fileName}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium underline-offset-2 hover:underline"
-        style={{ color: "var(--pos-sb-base)" }}
-      >
-        <Paperclip className="size-3.5 shrink-0" strokeWidth={2} aria-hidden />
-        {attachment.fileName}
-      </a>
+      {href ? (
+        <a
+          href={href}
+          download={attachment.fileName}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium underline-offset-2 hover:underline"
+          style={{ color: "var(--pos-sb-base)" }}
+        >
+          <Paperclip className="size-3.5 shrink-0" strokeWidth={2} aria-hidden />
+          {attachment.fileName}
+        </a>
+      ) : (
+        <p className="mt-2 text-[12px] text-[var(--pos-text-2)]">{attachment.fileName}</p>
+      )}
     </div>
   );
 }
@@ -698,16 +393,18 @@ function LedgerEntryAttachmentField({
         return;
       }
       setError(null);
-      const reader = new FileReader();
-      reader.onload = () => {
-        onChange({
-          fileName: file.name,
-          mimeType: file.type || "application/octet-stream",
-          dataUrl: reader.result as string,
-        });
-      };
-      reader.onerror = () => setError("Could not read file");
-      reader.readAsDataURL(file);
+      void (async () => {
+        try {
+          const dataUrl = await uploadFileToStorage(file, "ledger", file.name);
+          onChange({
+            fileName: file.name,
+            mimeType: file.type || "application/octet-stream",
+            dataUrl,
+          });
+        } catch {
+          setError("Could not upload file");
+        }
+      })();
     },
     [onChange],
   );
@@ -758,9 +455,10 @@ function LedgerEntryAttachmentField({
           Photo, PDF, or HEIC — up to 5 MB
         </p>
       )}
-      {attachment?.mimeType.startsWith("image/") ? (
-        <img
-          src={attachment.dataUrl}
+      {attachment?.mimeType.startsWith("image/") &&
+      (isStorageRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
+        <StorageImage
+          mediaRef={attachment.dataUrl}
           alt=""
           className="mt-2 max-h-28 w-full rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-cover"
         />

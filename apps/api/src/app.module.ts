@@ -14,6 +14,8 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { KitchenModule } from './modules/kitchen/kitchen.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { DailyEntriesModule } from './modules/daily-entries/daily-entries.module';
+import { StorageModule } from './modules/storage/storage.module';
 import { HealthModule } from './modules/health/health.module';
 
 @Module({
@@ -34,6 +36,8 @@ import { HealthModule } from './modules/health/health.module';
     KitchenModule,
     SyncModule,
     ReportsModule,
+    DailyEntriesModule,
+    StorageModule,
   ],
 })
 export class AppModule {}

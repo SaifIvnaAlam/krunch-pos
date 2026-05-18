@@ -1,12 +1,11 @@
 import { Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
-  DAILY_ENTRY_STORAGE_KEY,
-  DAILY_ENTRY_STORAGE_UPDATE_EVENT,
-  type DailyEntryRow,
-  listDailyEntriesDescending,
+  listDailyEntriesDescendingFromMap,
   savedLineKind,
-} from "../../lib/dailyEntryStorage";
+  useDailyEntryMap,
+  type DailyEntryRow,
+} from "@/features/daily-entry";
 import { expenseSavedLineLedgerLabel } from "../../lib/ledgerLineReportLabels";
 
 const MONTH_ABBR = [
@@ -118,8 +117,7 @@ type ReportRow = {
   enteredBy: string;
 };
 
-function buildReportRows(): ReportRow[] {
-  const saved = listDailyEntriesDescending();
+function buildReportRows(saved: DailyEntryRow[]): ReportRow[] {
   const out: ReportRow[] = [];
   for (const r of saved) {
     const lines = expenseLinesFromDailyRow(r);
@@ -164,30 +162,13 @@ function rowMatchesQuery(row: ReportRow, q: string): boolean {
 }
 
 export function ExpenseReportsView() {
-  const [dataEpoch, setDataEpoch] = useState(0);
+  const { map, loading, error } = useDailyEntryMap();
   const [search, setSearch] = useState("");
 
-  const bump = useCallback(() => setDataEpoch((n) => n + 1), []);
-
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === DAILY_ENTRY_STORAGE_KEY) bump();
-    };
-    window.addEventListener(DAILY_ENTRY_STORAGE_UPDATE_EVENT, bump);
-    window.addEventListener("storage", onStorage);
-    const onFocus = () => bump();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener(DAILY_ENTRY_STORAGE_UPDATE_EVENT, bump);
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [bump]);
-
-  const allRows = useMemo(() => {
-    void dataEpoch;
-    return buildReportRows();
-  }, [dataEpoch]);
+  const allRows = useMemo(
+    () => buildReportRows(listDailyEntriesDescendingFromMap(map)),
+    [map],
+  );
 
   const query = search.trim().toLowerCase();
   const filteredRows = useMemo(
@@ -239,7 +220,15 @@ export function ExpenseReportsView() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {filteredRows.length === 0 ? (
+        {loading ? (
+          <div className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]">
+            Loading daily entries…
+          </div>
+        ) : error ? (
+          <div className="px-4 py-10 text-center text-[13px] text-red-600" role="alert">
+            {error}
+          </div>
+        ) : filteredRows.length === 0 ? (
           <div className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]">
             {allRows.length === 0
               ? "No expenses yet. Save a daily entry with expense lines to see them here."

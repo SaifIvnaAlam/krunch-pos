@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -28,6 +28,8 @@ const SYSTEM_ROLES = [
       'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
       'staff:assign_role', 'roles:create', 'roles:edit', 'roles:delete',
       'reports:branch', 'reports:global', 'audit:read', 'system:config',
+      'daily_entry:read', 'daily_entry:write',
+      'storage:read', 'storage:write',
     ],
   },
   {
@@ -44,6 +46,8 @@ const SYSTEM_ROLES = [
       'staff:edit', 'staff:deactivate', 'staff:assign_role', 'roles:create',
       'roles:edit', 'roles:delete', 'reports:branch', 'reports:global',
       'audit:read', 'system:config',
+      'daily_entry:read', 'daily_entry:write',
+      'storage:read', 'storage:write',
     ],
   },
   {
@@ -59,6 +63,8 @@ const SYSTEM_ROLES = [
       'inventory:read', 'inventory:adjust', 'inventory:waste_log',
       'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
       'staff:assign_role', 'reports:branch', 'audit:read',
+      'daily_entry:read', 'daily_entry:write',
+      'storage:read', 'storage:write',
     ],
   },
   {
@@ -94,7 +100,7 @@ const SYSTEM_ROLES = [
     permissions: [
       'payments:view', 'payments:report', 'menu:read',
       'inventory:read', 'staff:read', 'reports:branch',
-      'reports:global', 'audit:read',
+      'reports:global', 'audit:read', 'storage:read',
     ],
   },
 ];
@@ -105,6 +111,8 @@ function derivePbkdf2(pin: string, salt: Buffer): string {
 
 async function main(): Promise<void> {
   console.log('Seeding system roles...');
+
+  const DEFAULT_BRANCH_ID = 'a0000000-0000-4000-8000-000000000001';
 
   const systemStaffId = 'system-seeder';
 
@@ -138,6 +146,18 @@ async function main(): Promise<void> {
   const pbkdf2Salt = crypto.randomBytes(32);
   const pbkdf2Hash = derivePbkdf2(defaultPin, pbkdf2Salt);
 
+  await prisma.branch.upsert({
+    where: { id: DEFAULT_BRANCH_ID },
+    update: { name: 'Default Branch', isActive: true },
+    create: {
+      id: DEFAULT_BRANCH_ID,
+      name: 'Default Branch',
+      address: '1 Demo Street',
+      timezone: 'UTC',
+      isActive: true,
+    },
+  });
+
   const owner = await prisma.staff.upsert({
     where: { id: 'default-owner' },
     update: {
@@ -145,6 +165,7 @@ async function main(): Promise<void> {
       pinHash,
       pbkdf2Hash,
       pbkdf2Salt: pbkdf2Salt.toString('hex'),
+      primaryBranchId: DEFAULT_BRANCH_ID,
     },
     create: {
       id: 'default-owner',
@@ -155,6 +176,22 @@ async function main(): Promise<void> {
       pbkdf2Hash,
       pbkdf2Salt: pbkdf2Salt.toString('hex'),
       isActive: true,
+      primaryBranchId: DEFAULT_BRANCH_ID,
+    },
+  });
+
+  await prisma.menuItem.upsert({
+    where: { id: 'seed-welcome-burger' },
+    update: {},
+    create: {
+      id: 'seed-welcome-burger',
+      branchId: DEFAULT_BRANCH_ID,
+      name: 'Welcome Burger',
+      description: 'Seeded item for terminal/API checks',
+      price: new Prisma.Decimal('12.50'),
+      category: 'mains',
+      isAvailable: true,
+      is86d: false,
     },
   });
 

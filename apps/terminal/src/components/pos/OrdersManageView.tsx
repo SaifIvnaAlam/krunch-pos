@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useOrders } from "@/features/orders";
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
@@ -14,63 +15,6 @@ export type OrderFilter =
 
 type OrderStatus = "pending" | "kitchen" | "completed" | "cancelled";
 type OrderType = "dine_in" | "takeaway" | "online_delivery" | "online_pickup";
-
-const DEMO_ORDERS = [
-  {
-    id: "#1040",
-    table: "2",
-    status: "pending" as const,
-    type: "dine_in" as const,
-    total: "42.50",
-    time: "12:04",
-    date: "2026-03-25",
-  },
-  {
-    id: "#1041",
-    table: "7",
-    status: "kitchen" as const,
-    type: "takeaway" as const,
-    total: "28.00",
-    time: "12:18",
-    date: "2026-03-25",
-  },
-  {
-    id: "#1042",
-    table: "4",
-    status: "kitchen" as const,
-    type: "dine_in" as const,
-    total: "51.20",
-    time: "12:22",
-    date: "2026-03-24",
-  },
-  {
-    id: "#1038",
-    table: "QR-12",
-    status: "pending" as const,
-    type: "online_delivery" as const,
-    total: "36.75",
-    time: "12:01",
-    date: "2026-03-25",
-  },
-  {
-    id: "#1035",
-    table: "1",
-    status: "completed" as const,
-    type: "dine_in" as const,
-    total: "24.00",
-    time: "11:40",
-    date: "2026-03-24",
-  },
-  {
-    id: "#1033",
-    table: "6",
-    status: "cancelled" as const,
-    type: "online_pickup" as const,
-    total: "0.00",
-    time: "11:22",
-    date: "2026-03-23",
-  },
-];
 
 const CONSOLIDATED_ORDER_STATUSES: OrderStatus[] = [
   "pending",
@@ -129,6 +73,7 @@ export function OrdersManageView({
 }: {
   defaultFilter?: OrderFilter;
 }) {
+  const { rows: allOrders, loading, error } = useOrders();
   const [activeStatuses, setActiveStatuses] = useState<Set<OrderStatus>>(
     () => buildInitialStatusSet(defaultFilter),
   );
@@ -145,9 +90,9 @@ export function OrdersManageView({
       completed: 0,
       cancelled: 0,
     };
-    for (const order of DEMO_ORDERS) base[order.status] += 1;
+    for (const order of allOrders) base[order.status] += 1;
     return base;
-  }, []);
+  }, [allOrders]);
 
   const subtitle = useMemo(() => {
     const statusLabels = Array.from(activeStatuses).map((s) => STATUS_LABELS[s]);
@@ -164,7 +109,7 @@ export function OrdersManageView({
 
   const rows = useMemo(
     () =>
-      DEMO_ORDERS.filter(
+      allOrders.filter(
         (o) =>
           activeStatuses.has(o.status) &&
           activeTypes.has(o.type) &&
@@ -173,7 +118,7 @@ export function OrdersManageView({
             o.id.toLowerCase().includes(query.toLowerCase()) ||
             o.table.toLowerCase().includes(query.toLowerCase())),
       ),
-    [activeStatuses, activeTypes, orderDate, query],
+    [allOrders, activeStatuses, activeTypes, orderDate, query],
   );
 
   const toggleStatus = (status: OrderStatus) => {
@@ -295,9 +240,17 @@ export function OrdersManageView({
           <span className="text-right">Total</span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-          {rows.length === 0 ? (
+          {loading ? (
             <p className="px-4 py-8 text-center text-[13px] text-[var(--pos-text-2)]">
-              No orders in this view.
+              Loading orders…
+            </p>
+          ) : error ? (
+            <p className="px-4 py-8 text-center text-[13px] text-red-600" role="alert">
+              {error}
+            </p>
+          ) : rows.length === 0 ? (
+            <p className="px-4 py-8 text-center text-[13px] text-[var(--pos-text-2)]">
+              No orders in this view. Save orders from the register to see them here.
             </p>
           ) : (
             rows.map((o) => (

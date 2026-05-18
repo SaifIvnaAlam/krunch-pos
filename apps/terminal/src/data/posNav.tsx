@@ -4,9 +4,25 @@ import {
   BookMarked,
   BookOpen,
   Building2,
+  CalendarDays,
+  CalendarOff,
+  ClipboardList,
+  Factory,
+  Globe,
+  LayoutDashboard,
+  LayoutList,
+  ListOrdered,
   NotebookPen,
+  Package,
+  PlusCircle,
   Receipt,
+  RotateCcw,
+  Salad,
+  Tags,
   TrendingUp,
+  Truck,
+  Users,
+  UtensilsCrossed,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -35,7 +51,44 @@ export type NavSection = {
 };
 
 const SIDEBAR_NAV_NODES: NavNode[] = [
+  { kind: "leaf", id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { kind: "leaf", id: "menu", label: "POS register", icon: UtensilsCrossed },
+  {
+    kind: "branch",
+    id: "orders",
+    label: "Orders",
+    icon: ClipboardList,
+    children: [
+      { kind: "leaf", id: "mo-list", label: "All orders", icon: ListOrdered },
+      { kind: "leaf", id: "mo-online", label: "Online orders", icon: Globe },
+    ],
+  },
+  { kind: "leaf", id: "reservations", label: "Reservations", icon: CalendarDays },
   { kind: "leaf", id: "exp-daily", label: "Daily Entry Form", icon: NotebookPen },
+  { kind: "leaf", id: "exp-list", label: "Expense records", icon: Receipt },
+  {
+    kind: "branch",
+    id: "food-management",
+    label: "Food management",
+    icon: Salad,
+    children: [
+      { kind: "leaf", id: "fd-cat", label: "Categories", icon: Tags },
+      { kind: "leaf", id: "fd-items", label: "Menu items", icon: UtensilsCrossed },
+      { kind: "leaf", id: "fd-addon", label: "Add-ons", icon: PlusCircle },
+      { kind: "leaf", id: "fd-menu", label: "Menu builder", icon: LayoutList },
+    ],
+  },
+  {
+    kind: "branch",
+    id: "purchase-management",
+    label: "Purchase",
+    icon: Truck,
+    children: [
+      { kind: "leaf", id: "pu-ledger", label: "Purchase ledger", icon: BookOpen },
+      { kind: "leaf", id: "pu-suppliers", label: "Suppliers", icon: Building2 },
+      { kind: "leaf", id: "pu-return", label: "Returns", icon: RotateCcw },
+    ],
+  },
   {
     kind: "branch",
     id: "ledger-management",
@@ -54,6 +107,28 @@ const SIDEBAR_NAV_NODES: NavNode[] = [
     children: [
       { kind: "leaf", id: "rep-expenses", label: "Expense reports", icon: Receipt },
       { kind: "leaf", id: "rep-sales", label: "Sales report", icon: TrendingUp },
+    ],
+  },
+  {
+    kind: "branch",
+    id: "inventory-management",
+    label: "Inventory Management",
+    icon: Package,
+    children: [
+      { kind: "leaf", id: "inv-overview", label: "Stock overview", icon: Package },
+      { kind: "leaf", id: "inv-adjust", label: "Stock in & out", icon: Factory },
+    ],
+  },
+  {
+    kind: "branch",
+    id: "employee-management",
+    label: "Employee Management",
+    icon: Users,
+    children: [
+      { kind: "leaf", id: "hr-directory", label: "Employee List", icon: Users },
+      { kind: "leaf", id: "hr-roster", label: "Roster & Attendance", icon: CalendarDays },
+      { kind: "leaf", id: "hr-leave", label: "Leave", icon: CalendarOff },
+      { kind: "leaf", id: "hr-payroll", label: "Salaries", icon: Receipt },
     ],
   },
 ];

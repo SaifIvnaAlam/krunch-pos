@@ -27,6 +27,8 @@
     "@nestjs/platform-socket.io": "^10.x",
     "@nestjs/swagger": "^7.x",
     "@nestjs/websockets": "^10.x",
+    "@aws-sdk/client-s3": "^3.758.0",
+    "@aws-sdk/s3-request-presigner": "^3.758.0",
     "@prisma/client": "^5.x",
     "bcrypt": "^5.x",
     "class-transformer": "^0.5.x",

@@ -16,7 +16,6 @@ import {
   defaultDocForNewMonth,
   distributeServiceChargePool,
   emptySalaryRow,
-  exampleSalaryDocForMonth,
   isMonthKey,
   labelFromMonthKey,
   readSalarySheetBundle,
@@ -28,6 +27,7 @@ import {
   type SalarySheetDoc,
   type SalarySheetRow,
 } from "../../lib/salarySheetStorage";
+import { useStaffList } from "@/features/staff";
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
@@ -42,45 +42,6 @@ export const HR_LEAF_IDS = new Set([
   "hr-attendance",
 ]);
 
-const DEMO_STAFF = [
-  {
-    id: "1",
-    name: "Nadia Islam",
-    role: "Floor lead",
-    dept: "Front of house",
-    phone: "+880 1711‑555012",
-    status: "active" as const,
-    hired: "Jan 12, 2024",
-  },
-  {
-    id: "2",
-    name: "Rafiq Hassan",
-    role: "Line cook",
-    dept: "Kitchen",
-    phone: "+880 1812‑555044",
-    status: "active" as const,
-    hired: "Aug 3, 2023",
-  },
-  {
-    id: "3",
-    name: "Samira Chowdhury",
-    role: "Host",
-    dept: "Front of house",
-    phone: "+880 1913‑555078",
-    status: "leave" as const,
-    hired: "Feb 20, 2025",
-  },
-  {
-    id: "4",
-    name: "Omar Karim",
-    role: "Bar lead",
-    dept: "Bar",
-    phone: "+880 1614‑555091",
-    status: "active" as const,
-    hired: "Nov 1, 2022",
-  },
-];
-
 const STAFF_STATUS: Record<"active" | "leave", string> = {
   active: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
   leave: "border-[#8a6a2a] bg-[#f8f0e0] text-[#5c4010]",
@@ -88,12 +49,7 @@ const STAFF_STATUS: Record<"active" | "leave", string> = {
 
 const DEPT_FILTERS = ["All", "Front of house", "Kitchen", "Bar"] as const;
 
-const DEMO_SHIFTS = [
-  { staff: "Nadia Islam", mon: "4–close", tue: "4–close", wed: "off", thu: "4–close", fri: "4–close", sat: "11–6", sun: "off" },
-  { staff: "Rafiq Hassan", mon: "10–6", tue: "10–6", wed: "10–6", thu: "10–6", fri: "12–close", sat: "12–close", sun: "off" },
-  { staff: "Samira Chowdhury", mon: "off", tue: "5–close", wed: "5–close", thu: "5–close", fri: "5–close", sat: "5–close", sun: "brunch" },
-  { staff: "Omar Karim", mon: "3–11", tue: "3–11", wed: "off", thu: "3–11", fri: "3–close", sat: "3–close", sun: "brunch" },
-];
+const DEMO_SHIFTS: Array<Record<string, string>> = [];
 
 function PageHeader({
   section,
@@ -180,11 +136,12 @@ function GhostButton({
 }
 
 function EmployeeDirectory() {
+  const { staff, loading, error } = useStaffList();
   const [q, setQ] = useState("");
   const [dept, setDept] = useState<(typeof DEPT_FILTERS)[number]>("All");
 
   const rows = useMemo(() => {
-    let r = DEMO_STAFF;
+    let r = staff;
     if (dept !== "All") r = r.filter((s) => s.dept === dept);
     const t = q.trim().toLowerCase();
     if (t)
@@ -195,10 +152,12 @@ function EmployeeDirectory() {
           s.phone.replace(/\s/g, "").includes(t.replace(/\s/g, "")),
       );
     return r;
-  }, [q, dept]);
+  }, [q, dept, staff]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden pr-1">
+      {loading ? <p className="text-[12px] text-[var(--pos-text-2)]">Loading staff…</p> : null}
+      {error ? <p className="text-[12px] text-red-600" role="alert">{error}</p> : null}
       <PageHeader
         section="Employee management"
         title="Employee List"
@@ -373,17 +332,12 @@ function ScheduleWeekPanel() {
   );
 }
 
-const DEMO_ATTENDANCE = [
-  { name: "Nadia Islam", in: "09:58", out: "—", status: "On shift" as const },
-  { name: "Rafiq Hassan", in: "10:04", out: "18:12", status: "Completed" as const },
-  { name: "Samira Chowdhury", in: "—", out: "—", status: "Leave" as const },
-  { name: "Omar Karim", in: "14:55", out: "—", status: "On shift" as const },
-];
+const DEMO_ATTENDANCE: Array<{ staff: string; date: string; status: "present" | "late" | "absent" }> = [];
 
 const ATT_STATUS: Record<(typeof DEMO_ATTENDANCE)[number]["status"], string> = {
-  "On shift": "border-[#2f6dae] bg-[#c8def5] text-[#1a4a6c]",
-  Completed: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
-  Leave: "border-[#8a6a2a] bg-[#f8f0e0] text-[#5c4010]",
+  present: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
+  late: "border-[#8a6a2a] bg-[#f8f0e0] text-[#5c4010]",
+  absent: "border-[#8a3a3a] bg-[#f8e8e8] text-[#5c1a1a]",
 };
 
 function AttendanceTodayPanel() {
@@ -413,14 +367,21 @@ function AttendanceTodayPanel() {
               </tr>
             </thead>
             <tbody>
+              {DEMO_ATTENDANCE.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-[13px] text-[var(--pos-text-2)]">
+                    No attendance records yet. Connect a time clock when available.
+                  </td>
+                </tr>
+              ) : null}
               {DEMO_ATTENDANCE.map((row) => (
                 <tr
-                  key={row.name}
+                  key={`${row.staff}-${row.date}`}
                   className="border-b border-solid [border-color:var(--pos-border-hairline)] transition-colors hover:bg-[var(--pos-sidebar)]/60"
                 >
-                  <td className="px-4 py-3 font-medium text-[var(--pos-text-1)]">{row.name}</td>
-                  <td className="px-4 py-3 font-mono text-[11px] text-[var(--pos-text-2)]">{row.in}</td>
-                  <td className="px-4 py-3 font-mono text-[11px] text-[var(--pos-text-2)]">{row.out}</td>
+                  <td className="px-4 py-3 font-medium text-[var(--pos-text-1)]">{row.staff}</td>
+                  <td className="px-4 py-3 font-mono text-[11px] text-[var(--pos-text-2)]">—</td>
+                  <td className="px-4 py-3 font-mono text-[11px] text-[var(--pos-text-2)]">—</td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-semibold ${ATT_STATUS[row.status]}`}
@@ -457,15 +418,12 @@ function RosterAndAttendance() {
   );
 }
 
-const DEMO_LEAVE = [
-  { staff: "Samira Chowdhury", type: "Annual", from: "Apr 5", to: "Apr 9", state: "Approved" as const },
-  { staff: "Omar Karim", type: "Sick", from: "Apr 12", to: "Apr 12", state: "Pending" as const },
-  { staff: "Rafiq Hassan", type: "Personal", from: "Apr 20", to: "Apr 21", state: "Approved" as const },
-];
+const DEMO_LEAVE: Array<{ staff: string; type: string; from: string; to: string; state: "pending" | "approved" | "denied" }> = [];
 
 const LEAVE_STATE: Record<(typeof DEMO_LEAVE)[number]["state"], string> = {
-  Approved: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
-  Pending: "border-[#8a6a2a] bg-[#f8f0e0] text-[#5c4010]",
+  approved: "border-[#3a5a3a] bg-[#e8f2e8] text-[#1a3a1a]",
+  pending: "border-[#8a6a2a] bg-[#f8f0e0] text-[#5c4010]",
+  denied: "border-[#8a3a3a] bg-[#f8e8e8] text-[#5c1a1a]",
 };
 
 function LeaveRequests() {
@@ -888,7 +846,7 @@ function PayrollSalaries() {
                 ...b,
                 months: {
                   ...b.months,
-                  [b.selectedMonthKey]: exampleSalaryDocForMonth(b.selectedMonthKey),
+                  [b.selectedMonthKey]: defaultDocForNewMonth(b.selectedMonthKey),
                 },
               }));
               setPoolDraft("");

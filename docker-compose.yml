@@ -1,0 +1,39 @@
+# Local Postgres for development — matches apps/api/.env.example DATABASE_URL
+#
+# Postgres is NOT a website: port 5433 is the DB wire protocol only (browser → ERR_EMPTY_RESPONSE).
+# Web UI: start adminer and open http://localhost:5050 — System: PostgreSQL, Server: postgres,
+# User: postgres, Password: password, Database: postgres
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: krunch-pos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+    ports:
+      # 5433 avoids conflict when another Postgres (e.g. Herd) already uses 5432
+      - "5433:5432"
+    volumes:
+      - krunch-pos-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+
+  adminer:
+    image: adminer:4
+    container_name: krunch-pos-adminer
+    restart: unless-stopped
+    ports:
+      - "5050:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  krunch-pos-pgdata:

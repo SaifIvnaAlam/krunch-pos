@@ -93,73 +93,7 @@ function formatFullDate(d: Date): string {
   });
 }
 
-const INITIAL_BOOKINGS_BY_OFFSET: Record<number, DemoBooking[]> = {
-  0: [
-    {
-      id: "1",
-      time: "5:30 PM",
-      title: "Anniversary dinner",
-      guest: "Patel party",
-      phone: "+1 (416) 555-0142",
-      headCount: 6,
-      table: "T7",
-      source: "phone",
-      notes: "Nut allergy — kitchen notified",
-      status: "confirmed",
-    },
-    {
-      id: "2",
-      time: "6:00 PM",
-      title: "Walk-in hold",
-      guest: "Walk-in hold",
-      phone: "—",
-      headCount: 2,
-      table: "T2",
-      source: "walk_in",
-      notes: "—",
-      status: "seated",
-    },
-    {
-      id: "3",
-      time: "7:15 PM",
-      title: "Quiet table",
-      guest: "Nguyen",
-      phone: "+1 (647) 555-0199",
-      headCount: 4,
-      table: "T5",
-      source: "web",
-      notes: "Prefers booth if free",
-      status: "confirmed",
-    },
-    {
-      id: "4",
-      time: "8:30 PM",
-      title: "Acme corporate",
-      guest: "Corporate (Acme)",
-      phone: "+1 (212) 555-0100",
-      headCount: 8,
-      table: "Combine",
-      source: "pos",
-      notes: "Separate checks · AV at 8:15",
-      status: "late",
-    },
-  ],
-  1: [
-    {
-      id: "5",
-      time: "6:30 PM",
-      title: "Birthday",
-      guest: "Kim",
-      phone: "+1 (416) 555-0177",
-      headCount: 3,
-      table: "T3",
-      source: "phone",
-      notes: "Small cake arriving 6:45",
-      status: "confirmed",
-    },
-  ],
-  2: [],
-};
+const INITIAL_BOOKINGS_BY_OFFSET: Record<number, DemoBooking[]> = {};
 
 type Closure = {
   id: string;

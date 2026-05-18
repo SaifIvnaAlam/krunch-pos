@@ -6,19 +6,11 @@ export const POS_LAST_LEAF_STORAGE_KEY = "remi-pos-last-leaf";
 /** First visit (no valid stored section): daily entry form. */
 export const POS_DEFAULT_LEAF_ID = "exp-daily";
 
-/** Routes not listed in the sidebar but still reachable (e.g. `pos-select-leaf`). */
+/** Legacy / deep-link ids not in the sidebar tree (e.g. `pos-select-leaf`). */
 const EXTRA_RESTORE_LEAF_IDS = new Set([
-  "dashboard",
-  "menu",
-  "mo-list",
-  "mo-online",
-  "reservations",
-  "exp-list",
   "menu-mgmt",
-  "fd-cat",
-  "fd-items",
-  "fd-addon",
-  "fd-menu",
+  "hr-schedule",
+  "hr-attendance",
 ]);
 
 const validLeafIds = new Set<string>([
@@ -34,6 +26,9 @@ const LEGACY_LEAF_ID_MAP: Record<string, string> = {
   "pu-list": "pu-ledger",
   /** Old single Reports leaf → expense reports under Reports branch. */
   reports: "rep-expenses",
+  "menu-mgmt": "fd-menu",
+  "hr-schedule": "hr-roster",
+  "hr-attendance": "hr-roster",
 };
 
 export function readStoredLastLeafId(): string | null {

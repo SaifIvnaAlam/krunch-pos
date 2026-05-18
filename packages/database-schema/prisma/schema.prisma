@@ -16,10 +16,11 @@ model Branch {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  staff       Staff[]
-  orders      Order[]
-  menuItems   MenuItem[]
-  stockItems  StockItem[]
+  staff        Staff[]
+  orders       Order[]
+  menuItems    MenuItem[]
+  stockItems   StockItem[]
+  dailyEntries DailyEntry[]
 }
 
 model Staff {
@@ -44,6 +45,7 @@ model Staff {
   auditLogs       AuditLog[]
   orders          Order[]
   stockMovements  StockMovement[]
+  dailyEntries    DailyEntry[]
 }
 
 model Role {
@@ -154,6 +156,7 @@ model MenuItem {
   category    String
   isAvailable Boolean     @default(true)
   is86d       Boolean     @default(false)
+  imageKey    String?
   modifiers   Json?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
@@ -241,4 +244,37 @@ enum PaymentStatus {
   FAILED
   REFUNDED
   VOIDED
+}
+
+/// Branch-scoped end-of-day sales & expense record (terminal Daily Entry Form).
+model DailyEntry {
+  id                         String   @id @default(uuid())
+  branchId                   String
+  /// Calendar day `YYYY-MM-DD` in branch context.
+  date                       String
+  openingBalance             Decimal  @db.Decimal(14, 2)
+  cashSale                   Decimal  @db.Decimal(14, 2)
+  /// Gross bank-channel sales; net uses 1.75% service charge on the client.
+  bankSale                   Decimal  @db.Decimal(14, 2)
+  bkashSale                  Decimal  @db.Decimal(14, 2)
+  nagadSale                  Decimal  @default(0) @db.Decimal(14, 2)
+  pathaoSale                 Decimal  @db.Decimal(14, 2)
+  foodiSale                  Decimal  @db.Decimal(14, 2)
+  foodpandaSale              Decimal  @db.Decimal(14, 2)
+  voidSale                   Decimal? @db.Decimal(14, 2)
+  voidSaleRemarks            String?
+  voidSaleAttachmentDataUrls Json?
+  expenses                   Decimal  @db.Decimal(14, 2)
+  expenseLines               Json?
+  remainingBalance           Decimal  @db.Decimal(14, 2)
+  enteredByStaffId           String?
+  enteredByName              String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  branch    Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  enteredBy Staff? @relation(fields: [enteredByStaffId], references: [id])
+
+  @@unique([branchId, date])
+  @@index([branchId, date])
 }

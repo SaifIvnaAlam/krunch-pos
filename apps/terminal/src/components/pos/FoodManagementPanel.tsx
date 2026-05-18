@@ -1,5 +1,13 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useMemo, useState } from "react";
+import { ImageUploadField } from "./ImageUploadField";
+import {
+  catalogItemToModifiers,
+  createMenuItemOnApi,
+  updateMenuItemOnApi,
+} from "@/features/menu";
+import { fromStorageRef, uploadFileToStorage } from "@/features/storage";
+import { isDemoDataMode } from "@/shared/config/env";
 import type { CatalogCategory, CatalogItem, MenuVariantGroup } from "../../data/demoMenuCatalog";
 
 export type AddonTemplate = {
@@ -14,6 +22,7 @@ type Props = {
   addonTemplates: AddonTemplate[];
   setAddonTemplates: Dispatch<SetStateAction<AddonTemplate[]>>;
   initialLeaf: "fd-cat" | "fd-items" | "fd-addon" | "fd-menu";
+  onMenuRefresh?: () => Promise<void>;
 };
 
 function slug(input: string) {
@@ -39,6 +48,7 @@ export function FoodManagementPanel({
   addonTemplates,
   setAddonTemplates,
   initialLeaf,
+  onMenuRefresh,
 }: Props) {
   const [categoryName, setCategoryName] = useState("");
   const [itemName, setItemName] = useState("");
@@ -56,6 +66,11 @@ export function FoodManagementPanel({
   const [addonPrice, setAddonPrice] = useState("0");
   const [addonParentGroupId, setAddonParentGroupId] = useState("");
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+  const [itemImageRef, setItemImageRef] = useState<string | null>(null);
+  const [itemSaveError, setItemSaveError] = useState<string | null>(null);
+  const [itemSaving, setItemSaving] = useState(false);
+  const [photoSaveError, setPhotoSaveError] = useState<string | null>(null);
+  const [photoSaving, setPhotoSaving] = useState(false);
 
   const selectedCategory = useMemo(
     () => categories.find((c) => c.id === selectedCategoryId),
@@ -80,34 +95,99 @@ export function FoodManagementPanel({
   };
 
   const createItem = () => {
-    const priceCents = Math.round(Number(itemPrice) * 100);
-    if (!itemName.trim() || !newItemCategory || Number.isNaN(priceCents)) return;
-    const templateAddons = addonTemplates
-      .filter((t) => selectedTemplateIds.includes(t.id))
-      .map((t) => ({
-        id: uniqueId(t.name),
-        name: t.name,
-        priceCents: t.priceCents,
-      }));
-    const nextItem: CatalogItem = {
-      id: uniqueId(itemName),
-      name: itemDescription.trim()
-        ? `${itemName.trim()} (${itemDescription.trim()})`
-        : itemName.trim(),
-      priceCents: Math.max(0, priceCents),
-      soldToday: 0,
-      variantGroups: [],
-      addons: templateAddons,
-    };
-    setCategories((prev) =>
-      prev.map((c) => (c.id === newItemCategory ? { ...c, items: [...c.items, nextItem] } : c)),
-    );
-    setItemName("");
-    setItemDescription("");
-    setItemPrice("0");
-    setSelectedTemplateIds([]);
-    setSelectedCategoryId(newItemCategory);
-    setSelectedItemId(nextItem.id);
+    void (async () => {
+      const priceCents = Math.round(Number(itemPrice) * 100);
+      if (!itemName.trim() || !newItemCategory || Number.isNaN(priceCents)) return;
+      const categoryName =
+        categories.find((c) => c.id === newItemCategory)?.name ?? "Uncategorized";
+      const displayName = itemName.trim();
+      const templateAddons = addonTemplates
+        .filter((t) => selectedTemplateIds.includes(t.id))
+        .map((t) => ({
+          id: uniqueId(t.name),
+          name: t.name,
+          priceCents: t.priceCents,
+        }));
+      const draftItem: CatalogItem = {
+        id: uniqueId(itemName),
+        name: itemDescription.trim()
+          ? `${displayName} (${itemDescription.trim()})`
+          : displayName,
+        priceCents: Math.max(0, priceCents),
+        soldToday: 0,
+        variantGroups: [],
+        addons: templateAddons,
+        imageRef: itemImageRef,
+      };
+
+      if (!isDemoDataMode()) {
+        setItemSaving(true);
+        setItemSaveError(null);
+        try {
+          const imageKey = itemImageRef ? fromStorageRef(itemImageRef) ?? undefined : undefined;
+          await createMenuItemOnApi({
+            name: displayName,
+            description: itemDescription.trim() || undefined,
+            price: Math.max(0, priceCents) / 100,
+            category: categoryName,
+            imageKey,
+            modifiers: catalogItemToModifiers(draftItem),
+          });
+          await onMenuRefresh?.();
+        } catch (e) {
+          setItemSaveError(e instanceof Error ? e.message : "Could not save item.");
+          setItemSaving(false);
+          return;
+        }
+        setItemSaving(false);
+      } else {
+        setCategories((prev) =>
+          prev.map((c) =>
+            c.id === newItemCategory ? { ...c, items: [...c.items, draftItem] } : c,
+          ),
+        );
+        setSelectedItemId(draftItem.id);
+      }
+
+      setItemName("");
+      setItemDescription("");
+      setItemPrice("0");
+      setItemImageRef(null);
+      setSelectedTemplateIds([]);
+      setSelectedCategoryId(newItemCategory);
+    })();
+  };
+
+  const updateSelectedItemPhoto = (ref: string | null) => {
+    if (!selectedCategory || !selectedItem) return;
+    void (async () => {
+      setPhotoSaving(true);
+      setPhotoSaveError(null);
+      try {
+        if (!isDemoDataMode()) {
+          const imageKey = ref ? (fromStorageRef(ref) ?? undefined) : null;
+          await updateMenuItemOnApi(selectedItem.id, { imageKey: imageKey ?? null });
+          await onMenuRefresh?.();
+        } else {
+          setCategories((prev) =>
+            prev.map((c) =>
+              c.id !== selectedCategory.id
+                ? c
+                : {
+                    ...c,
+                    items: c.items.map((i) =>
+                      i.id === selectedItem.id ? { ...i, imageRef: ref } : i,
+                    ),
+                  },
+            ),
+          );
+        }
+      } catch (e) {
+        setPhotoSaveError(e instanceof Error ? e.message : "Could not update photo.");
+      } finally {
+        setPhotoSaving(false);
+      }
+    })();
   };
 
   const createGroup = () => {
@@ -312,6 +392,15 @@ export function FoodManagementPanel({
               <input value={itemPrice} onChange={(e) => setItemPrice(e.target.value)} placeholder="Base price (e.g. 12.99)" className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
               <input value={itemDescription} onChange={(e) => setItemDescription(e.target.value)} placeholder="Short note (optional)" className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
             </div>
+            <div className="mt-3">
+              <ImageUploadField
+                label="Item photo"
+                mediaRef={itemImageRef}
+                onMediaRefChange={setItemImageRef}
+                disabled={itemSaving}
+                onUpload={(file) => uploadFileToStorage(file, "menu", itemName || "menu-item")}
+              />
+            </div>
             <p className="mt-3 text-[12px] text-[var(--pos-text-2)]">Pick from add-on library for this item</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {addonTemplates.map((a) => {
@@ -336,7 +425,17 @@ export function FoodManagementPanel({
                 );
               })}
             </div>
-            <button type="button" onClick={createItem} className="mt-3 h-10 rounded-[10px] bg-[var(--pos-primary-bg)] px-4 text-[12px] font-medium text-[var(--pos-primary-fg)]">Create item</button>
+            {itemSaveError ? (
+              <p className="mt-2 text-[12px] text-red-600">{itemSaveError}</p>
+            ) : null}
+            <button
+              type="button"
+              onClick={createItem}
+              disabled={itemSaving}
+              className="mt-3 h-10 rounded-[10px] bg-[var(--pos-primary-bg)] px-4 text-[12px] font-medium text-[var(--pos-primary-fg)] disabled:opacity-50"
+            >
+              {itemSaving ? "Saving…" : "Create item"}
+            </button>
           </section>
 
           <section className="rounded-[12px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-4">
@@ -353,6 +452,19 @@ export function FoodManagementPanel({
             {!selectedItem ? (
               <p className="mt-3 text-[12px] text-[var(--pos-text-2)]">Select an item to continue.</p>
             ) : (
+              <>
+              <div className="mt-3 max-w-sm">
+                <ImageUploadField
+                  label="Item photo"
+                  mediaRef={selectedItem.imageRef ?? null}
+                  onMediaRefChange={updateSelectedItemPhoto}
+                  disabled={photoSaving}
+                  onUpload={(file) => uploadFileToStorage(file, "menu", selectedItem.name)}
+                />
+                {photoSaveError ? (
+                  <p className="mt-1 text-[12px] text-red-600">{photoSaveError}</p>
+                ) : null}
+              </div>
               <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <div className="rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] p-3">
                   <p className="text-[12px] font-medium">Modifier group</p>
@@ -394,6 +506,7 @@ export function FoodManagementPanel({
                   </div>
                 </div>
               </div>
+              </>
             )}
           </section>
         </>

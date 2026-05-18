@@ -19,6 +19,9 @@ import {
   type ChangeEvent,
   type InputHTMLAttributes,
 } from "react";
+import { uploadFileToStorage, fromStorageRef } from "@/features/storage";
+import { MediaThumb } from "./MediaThumb";
+import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
 import {
   commitLedgerFromDailyExpenseLine,
   EMPLOYEE_LEDGER_LINE_OPTIONS,
@@ -34,16 +37,16 @@ import {
 import {
   bankSaleNetAfterServiceCharge,
   bankSaleServiceChargeAmount,
+  deleteDailyEntry,
+  listDailyEntriesDescendingFromMap,
+  saveDailyEntry,
+  savedLineKind,
+  useDailyEntryMap,
   type DailyEntryRow,
   type ExpenseLineSaved,
-  listDailyEntriesDescending,
-  readDailyEntryMap,
-  savedLineKind,
-  seedDummyDailyEntriesIfEmpty,
-  writeDailyEntryMap,
-} from "../../lib/dailyEntryStorage";
+} from "@/features/daily-entry";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
-import { useDevAuth } from "../../context/DevAuthContext";
+import { useSession } from "@/features/auth";
 
 type ExpenseLineDraft = {
   id: string;
@@ -66,61 +69,18 @@ const MAX_RECEIPTS_PER_LINE = 4;
 const MAX_VOID_ATTACHMENTS = 4;
 const MAX_RECEIPT_BYTES = 2_500_000;
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith("image/")) {
-      reject(new Error("Only image files can be attached as receipts."));
-      return;
-    }
-    if (file.size > MAX_RECEIPT_BYTES) {
-      reject(
-        new Error(
-          `Each receipt image must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
-        ),
-      );
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error("Could not read the image."));
-    };
-    reader.onerror = () => reject(new Error("Could not read the image."));
-    reader.readAsDataURL(file);
-  });
-}
-
 function isPdfOrImageFile(file: File): boolean {
   return file.type.startsWith("image/") || file.type === "application/pdf";
 }
 
-/** Void-sales attachments: PDF or images (stored as data URLs). */
-function readVoidAttachmentAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!isPdfOrImageFile(file)) {
-      reject(new Error("Only PDF or image files can be attached."));
-      return;
-    }
-    if (file.size > MAX_RECEIPT_BYTES) {
-      reject(
-        new Error(
-          `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
-        ),
-      );
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") resolve(reader.result);
-      else reject(new Error("Could not read the file."));
-    };
-    reader.onerror = () => reject(new Error("Could not read the file."));
-    reader.readAsDataURL(file);
-  });
-}
-
 function isPdfDataUrl(url: string): boolean {
   return url.startsWith("data:application/pdf");
+}
+
+function isPdfMediaRef(ref: string): boolean {
+  if (isPdfDataUrl(ref)) return true;
+  const key = fromStorageRef(ref);
+  return key != null && key.toLowerCase().endsWith(".pdf");
 }
 
 function clipboardImageFilesFromDataTransfer(data: DataTransfer | null): File[] {
@@ -169,7 +129,16 @@ async function mergeReceiptDataUrls(
   const slice = files.slice(0, room);
   try {
     for (const file of slice) {
-      next.push(await readFileAsDataUrl(file));
+      if (!file.type.startsWith("image/")) {
+        return { ok: false, message: "Only image files can be attached as receipts." };
+      }
+      if (file.size > MAX_RECEIPT_BYTES) {
+        return {
+          ok: false,
+          message: `Each receipt image must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
+        };
+      }
+      next.push(await uploadFileToStorage(file, "receipts", file.name));
     }
   } catch (e) {
     return {
@@ -195,7 +164,16 @@ async function mergeVoidAttachmentDataUrls(
   const slice = files.slice(0, room);
   try {
     for (const file of slice) {
-      next.push(await readVoidAttachmentAsDataUrl(file));
+      if (!isPdfOrImageFile(file)) {
+        return { ok: false, message: "Only PDF or image files can be attached." };
+      }
+      if (file.size > MAX_RECEIPT_BYTES) {
+        return {
+          ok: false,
+          message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
+        };
+      }
+      next.push(await uploadFileToStorage(file, "void-attachments", file.name));
     }
   } catch (e) {
     return {
@@ -1049,9 +1027,12 @@ function amountFieldProps(
 }
 
 export function DailyEntryFormView() {
-  const { userName } = useDevAuth();
+  const { userName } = useSession();
+  const { map: entryMap, loading: entriesLoading, error: entriesLoadError, refresh: refreshEntries } =
+    useDailyEntryMap();
   const [activeView, setActiveView] = useState<"entry" | "history">("history");
   const [savedListVersion, setSavedListVersion] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
   const [dateKey, setDateKey] = useState(todayKey);
   const [dateFieldText, setDateFieldText] = useState(() => formatDateKeyAsDisplay(todayKey()));
   const [openingBalance, setOpeningBalance] = useState("0");
@@ -1083,10 +1064,10 @@ export function DailyEntryFormView() {
   const voidSaleAttachmentUrlsRef = useRef<string[]>(voidSaleAttachmentUrls);
   voidSaleAttachmentUrlsRef.current = voidSaleAttachmentUrls;
 
-  const historyRows = useMemo(() => listDailyEntriesDescending(), [
-    savedListVersion,
-    activeView,
-  ]);
+  const historyRows = useMemo(
+    () => listDailyEntriesDescendingFromMap(entryMap),
+    [entryMap, savedListVersion, activeView],
+  );
 
   const [entryListSearchQuery, setEntryListSearchQuery] = useState("");
 
@@ -1105,13 +1086,9 @@ export function DailyEntryFormView() {
     if (historyRows.length === 0) setEntryListSearchQuery("");
   }, [historyRows.length]);
 
-  useEffect(() => {
-    if (seedDummyDailyEntriesIfEmpty()) setSavedListVersion((v) => v + 1);
-  }, []);
-
   const savedRowForDate = useMemo(
-    () => readDailyEntryMap()[dateKey],
-    [dateKey, savedListVersion],
+    () => entryMap[dateKey],
+    [dateKey, entryMap, savedListVersion],
   );
 
   const ledgerBookNames = useSyncExternalStore(
@@ -1186,8 +1163,7 @@ export function DailyEntryFormView() {
 
   useEffect(() => {
     setOpeningEdit(false);
-    const rows = readDailyEntryMap();
-    const existing = rows[dateKey];
+    const existing = entryMap[dateKey];
     if (existing) {
       setOpeningBalance(String(existing.openingBalance));
       setCashSale(String(existing.cashSale));
@@ -1208,7 +1184,7 @@ export function DailyEntryFormView() {
     }
 
     const prevDayKey = dateAddDays(dateKey, -1);
-    const prevClosing = rows[prevDayKey]?.remainingBalance ?? 0;
+    const prevClosing = entryMap[prevDayKey]?.remainingBalance ?? 0;
     setOpeningBalance(String(prevClosing));
     setCashSale("0");
     setBankSale("0");
@@ -1222,7 +1198,7 @@ export function DailyEntryFormView() {
     setVoidSaleAttachmentUrls([]);
     setExpenseLines([]);
     setFormNotice({ kind: "none" });
-  }, [dateKey, savedListVersion]);
+  }, [dateKey, entryMap, savedListVersion]);
 
   useEffect(() => {
     if (openingEdit) openingInputRef.current?.focus();
@@ -1489,18 +1465,12 @@ export function DailyEntryFormView() {
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1">
         {urls.map((url, idx) => (
           <div key={`${line.id}-r-${idx}`} className="relative inline-flex">
-            <button
-              type="button"
-              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
+            <MediaThumb
+              mediaRef={url}
+              alt={`Receipt ${idx + 1}`}
+              className="size-11 rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-cover"
               onClick={() => setReceiptPreviewUrl(url)}
-              aria-label={`View receipt ${idx + 1}`}
-            >
-              <img
-                src={url}
-                alt={`Receipt ${idx + 1}`}
-                className="size-11 object-cover"
-              />
-            </button>
+            />
             <button
               type="button"
               className="absolute -right-0.5 -top-0.5 z-[1] flex size-4 items-center justify-center rounded-full border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[10px] leading-none text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]"
@@ -1589,16 +1559,16 @@ export function DailyEntryFormView() {
               type="button"
               className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
               onClick={() => setReceiptPreviewUrl(url)}
-              aria-label={isPdfDataUrl(url) ? `View PDF ${idx + 1}` : `View attachment ${idx + 1}`}
+              aria-label={isPdfMediaRef(url) ? `View PDF ${idx + 1}` : `View attachment ${idx + 1}`}
             >
-              {isPdfDataUrl(url) ? (
+              {isPdfMediaRef(url) ? (
                 <span className="flex size-11 flex-col items-center justify-center gap-0.5 bg-[var(--pos-page)] text-[var(--pos-text-2)]">
                   <FileText className="size-5 shrink-0" strokeWidth={2} aria-hidden />
                   <span className="text-[8px] font-semibold uppercase">PDF</span>
                 </span>
               ) : (
-                <img
-                  src={url}
+                <MediaThumb
+                  mediaRef={url}
                   alt={`Void attachment ${idx + 1}`}
                   className="size-11 object-cover"
                 />
@@ -1622,7 +1592,9 @@ export function DailyEntryFormView() {
     );
   }
 
-  function handleSave() {
+  async function handleSave() {
+    if (isSaving) return;
+
     const validation = findFirstExpenseValidationError(expenseLines);
     if (validation) {
       setFormNotice({
@@ -1711,8 +1683,7 @@ export function DailyEntryFormView() {
 
     const expenseTotal = linesToSave.reduce((s, line) => s + line.amount, 0);
 
-    const rows = readDailyEntryMap();
-    const prior = rows[dateKey];
+    const prior = entryMap[dateKey];
     const enteredBy = userName.trim() || "Unknown";
     const nextCandidate: DailyEntryRow = {
       date: dateKey,
@@ -1757,25 +1728,30 @@ export function DailyEntryFormView() {
       expenses: syncedExpenseLines.reduce((s, line) => s + line.amount, 0),
     };
 
-    rows[dateKey] = next;
-    const result = writeDailyEntryMap(rows);
-    if (!result.ok) {
-      setFormNotice({ kind: "global", message: result.message });
-      return;
-    }
+    setIsSaving(true);
+    try {
+      const result = await saveDailyEntry(next);
+      if (!result.ok) {
+        setFormNotice({ kind: "global", message: result.message });
+        return;
+      }
 
-    setSavedListVersion((v) => v + 1);
-    setOpeningEdit(false);
-    const baseMsg = prior
-      ? `Updated ${formatDateKeyAsDisplay(dateKey)}. One entry per day — use Edit on a row or Add Entry for another date.`
-      : `Saved ${formatDateKeyAsDisplay(dateKey)}. One entry per day — Add Entry for another date or review the list below.`;
-    setFormNotice({
-      kind: "global",
-      message: ledgerPostFailed
-        ? `${baseMsg} Bills & payments: one or more ledger lines could not be saved — check amounts and types.`
-        : baseMsg,
-    });
-    setActiveView("history");
+      await refreshEntries();
+      setSavedListVersion((v) => v + 1);
+      setOpeningEdit(false);
+      const baseMsg = prior
+        ? `Updated ${formatDateKeyAsDisplay(dateKey)}. One entry per day — use Edit on a row or Add Entry for another date.`
+        : `Saved ${formatDateKeyAsDisplay(dateKey)}. One entry per day — Add Entry for another date or review the list below.`;
+      setFormNotice({
+        kind: "global",
+        message: ledgerPostFailed
+          ? `${baseMsg} Bills & payments: one or more ledger lines could not be saved — check amounts and types.`
+          : baseMsg,
+      });
+      setActiveView("history");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function commitDateFieldText() {
@@ -1812,18 +1788,17 @@ export function DailyEntryFormView() {
     setDeleteConfirmText("");
   }
 
-  function executeDeleteHistoryEntry(dateIso: string) {
-    const rows = readDailyEntryMap();
-    if (!rows[dateIso]) return;
-    delete rows[dateIso];
-    const result = writeDailyEntryMap(rows);
+  async function executeDeleteHistoryEntry(dateIso: string) {
+    if (!entryMap[dateIso]) return;
+    const result = await deleteDailyEntry(dateIso);
     if (!result.ok) {
       setFormNotice({ kind: "global", message: result.message });
       return;
     }
     closeDeleteEntryModal();
+    await refreshEntries();
     setSavedListVersion((v) => v + 1);
-    setFormNotice({ kind: "global", message: "Entry deleted from this device." });
+    setFormNotice({ kind: "global", message: "Entry deleted." });
     setHistoryDetailRow((open) => (open?.date === dateIso ? null : open));
   }
 
@@ -1955,9 +1930,17 @@ export function DailyEntryFormView() {
           {dailyEntryHeader}
           {editingExistingBanner}
           {globalNoticeEl}
+          {entriesLoading ? (
+            <p className="px-3 py-2 text-[12px] text-[var(--pos-text-2)]">Loading saved entries…</p>
+          ) : null}
+          {entriesLoadError ? (
+            <p className="px-3 py-2 text-[12px] text-red-600" role="alert">
+              {entriesLoadError}
+            </p>
+          ) : null}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col overflow-auto px-3 py-2">
-            {historyRows.length > 0 ? (
+            {!entriesLoading && historyRows.length > 0 ? (
               <div className="shrink-0" role="search">
                 <label className="relative block">
                   <span className="sr-only">Search saved entries</span>
@@ -1988,7 +1971,7 @@ export function DailyEntryFormView() {
                 </label>
               </div>
             ) : null}
-            {historyRows.length === 0 ? (
+            {!entriesLoading && historyRows.length === 0 ? (
               <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-dashed border-[var(--pos-border-medium)]">
                 <div className="flex shrink-0 items-center justify-between gap-2 border-b border-dashed border-[var(--pos-border-medium)] bg-[var(--pos-page)] px-3 py-2">
                   <h2 className={`m-0 min-w-0 leading-tight ${sectionTitleClass}`}>
@@ -2719,10 +2702,11 @@ export function DailyEntryFormView() {
           </p>
           <button
             type="submit"
-            className="inline-flex h-9 w-fit min-w-[7.5rem] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 active:opacity-95"
+            disabled={isSaving}
+            className="inline-flex h-9 w-fit min-w-[7.5rem] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 active:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
             style={{ backgroundColor: "var(--pos-sb-base)" }}
           >
-            Save
+            {isSaving ? "Saving…" : "Save"}
           </button>
         </div>
             </form>
@@ -3195,21 +3179,7 @@ export function DailyEntryFormView() {
           >
             Close
           </button>
-          {isPdfDataUrl(receiptPreviewUrl) ? (
-            <iframe
-              title="Attachment preview"
-              src={receiptPreviewUrl}
-              className="h-[min(90dvh,900px)] w-full max-w-3xl rounded-md bg-white shadow-lg"
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <img
-              src={receiptPreviewUrl}
-              alt="Receipt"
-              className="max-h-[min(90dvh,900px)] max-w-full object-contain shadow-lg"
-              onClick={(e) => e.stopPropagation()}
-            />
-          )}
+          <ReceiptPreviewBody mediaRef={receiptPreviewUrl} />
           <p className="mt-3 max-w-lg text-center text-[11px] text-white/60">
             Tap outside or press Escape to close
           </p>

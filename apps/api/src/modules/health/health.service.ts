@@ -1,11 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { StorageService } from '../storage/storage.service';
 
 export interface HealthStatus {
   status: 'ok' | 'degraded';
   database: 'up' | 'down';
   redis: 'up' | 'down';
+  storage: 'up' | 'down' | 'disabled';
   timestamp: string;
 }
 
@@ -14,6 +16,7 @@ export class HealthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    @Optional() private readonly storage?: StorageService,
   ) {}
 
   async getLiveness(): Promise<{ status: 'ok'; timestamp: string }> {
@@ -40,9 +43,15 @@ export class HealthService {
       redis = 'down';
     }
 
-    const status =
-      database === 'up' && redis === 'up' ? 'ok' : 'degraded';
+    let storage: HealthStatus['storage'] = 'disabled';
+    if (this.storage?.isConfigured()) {
+      storage = (await this.storage.checkBucket()) === 'up' ? 'up' : 'down';
+    }
 
-    return { status, database, redis, timestamp };
+    const coreUp = database === 'up' && redis === 'up';
+    const storageOk = storage === 'up' || storage === 'disabled';
+    const status = coreUp && storageOk ? 'ok' : 'degraded';
+
+    return { status, database, redis, storage, timestamp };
   }
 }
