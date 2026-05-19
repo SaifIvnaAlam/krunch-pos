@@ -25,7 +25,12 @@ function cacheSet(key: string, url: string, expiresInSeconds: number): void {
 /** Resolve `data:…`, `storage:…`, or plain https URLs for display / download. */
 export async function resolveMediaUrl(ref: string): Promise<string> {
   if (!ref) return "";
-  if (isInlineDataRef(ref) || ref.startsWith("http://") || ref.startsWith("https://")) {
+  if (
+    isInlineDataRef(ref) ||
+    ref.startsWith("blob:") ||
+    ref.startsWith("http://") ||
+    ref.startsWith("https://")
+  ) {
     return ref;
   }
   const key = fromStorageRef(ref);

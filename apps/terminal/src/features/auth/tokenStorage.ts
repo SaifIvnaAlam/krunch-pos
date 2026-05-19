@@ -3,28 +3,38 @@ const REFRESH = "universal_pos_terminal_refresh";
 const DEMO_FLAG = "remi_pos_demo_auth";
 const DEMO_NAME = "remi_pos_user_name";
 
+/** In-memory copy so API calls work when sessionStorage is blocked but sign-in succeeded. */
+let memoryAccessToken: string | null = null;
+let memoryRefreshToken: string | null = null;
+
 export function readAccessToken(): string | null {
   try {
-    return sessionStorage.getItem(ACCESS);
+    const stored = sessionStorage.getItem(ACCESS);
+    if (stored) return stored;
   } catch {
-    return null;
+    /* private mode / blocked storage */
   }
+  return memoryAccessToken;
 }
 
 export function readRefreshToken(): string | null {
   try {
-    return sessionStorage.getItem(REFRESH);
+    const stored = sessionStorage.getItem(REFRESH);
+    if (stored) return stored;
   } catch {
-    return null;
+    /* ignore */
   }
+  return memoryRefreshToken;
 }
 
 export function writeTokens(access: string, refresh: string): void {
+  memoryAccessToken = access;
+  memoryRefreshToken = refresh;
   try {
     sessionStorage.setItem(ACCESS, access);
     sessionStorage.setItem(REFRESH, refresh);
   } catch {
-    /* ignore */
+    /* sessionStorage blocked — memory tokens still used for this tab */
   }
 }
 
@@ -55,6 +65,8 @@ export function clearApiProfileName(): void {
 }
 
 export function clearApiTokens(): void {
+  memoryAccessToken = null;
+  memoryRefreshToken = null;
   try {
     sessionStorage.removeItem(ACCESS);
     sessionStorage.removeItem(REFRESH);

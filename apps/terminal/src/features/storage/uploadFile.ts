@@ -18,6 +18,23 @@ function slugFileName(name: string): string {
     .slice(0, 48);
 }
 
+function isHeicFile(file: File): boolean {
+  return (
+    /\.(heic|heif)$/i.test(file.name) ||
+    file.type === "image/heic" ||
+    file.type === "image/heif"
+  );
+}
+
+function mimeForUpload(file: File): string {
+  if (file.type) return file.type;
+  if (/\.pdf$/i.test(file.name)) return "application/pdf";
+  if (isHeicFile(file)) return "image/heic";
+  if (/\.(jpe?g)$/i.test(file.name)) return "image/jpeg";
+  if (/\.png$/i.test(file.name)) return "image/png";
+  return "application/octet-stream";
+}
+
 function extensionFor(file: File, compressed: boolean): string {
   if (compressed) {
     return file.type === "image/webp" ? "webp" : "jpg";
@@ -39,9 +56,19 @@ export async function uploadFileToStorage(
 ): Promise<string> {
   let body: File = file;
   let compressed = false;
-  if (file.type.startsWith("image/") && file.type !== "image/gif") {
-    body = await compressImageFile(file);
-    compressed = true;
+  if (
+    file.type.startsWith("image/") &&
+    file.type !== "image/gif" &&
+    !isHeicFile(file)
+  ) {
+    try {
+      body = await compressImageFile(file);
+      compressed = true;
+    } catch {
+      // HEIC / exotic formats may fail canvas decode — upload original bytes.
+      body = file;
+      compressed = false;
+    }
   }
 
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -49,15 +76,20 @@ export async function uploadFileToStorage(
   const ext = extensionFor(body, compressed);
   const path = `${scope}/${base}-${stamp}.${ext}`;
 
-  const { uploadUrl, key } = await presignUpload(path, body.type || "application/octet-stream");
+  const contentType = mimeForUpload(body);
+  const { uploadUrl, key } = await presignUpload(path, contentType);
 
   const put = await fetch(uploadUrl, {
     method: "PUT",
-    headers: { "Content-Type": body.type || "application/octet-stream" },
+    headers: { "Content-Type": contentType },
     body,
   });
   if (!put.ok) {
-    throw new Error(`Upload failed (${put.status}). Check storage connectivity.`);
+    const hint =
+      put.status === 403
+        ? "Storage denied (check sign-in and permissions)."
+        : "Check that MinIO is reachable and CORS is enabled.";
+    throw new Error(`Upload failed (HTTP ${put.status}). ${hint}`);
   }
 
   return toStorageRef(key);

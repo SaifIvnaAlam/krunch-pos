@@ -19,6 +19,7 @@ import {
   type ChangeEvent,
   type InputHTMLAttributes,
 } from "react";
+import { readValidAccessToken } from "@/features/auth";
 import { uploadFileToStorage, fromStorageRef } from "@/features/storage";
 import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
@@ -73,6 +74,20 @@ function isPdfOrImageFile(file: File): boolean {
   return file.type.startsWith("image/") || file.type === "application/pdf";
 }
 
+/** Receipts on expense lines: images, PDF, HEIC (macOS often omits MIME type). */
+function isReceiptAttachmentFile(file: File): boolean {
+  if (isPdfOrImageFile(file)) return true;
+  if (/\.(heic|heif|jpe?g|png|gif|webp|bmp|tiff?|pdf)$/i.test(file.name)) return true;
+  // Camera roll / Photos on macOS and iOS often yield an empty type.
+  if (!file.type && file.size > 0 && /\.(jpe?g|png|heic|heif)$/i.test(file.name)) {
+    return true;
+  }
+  return false;
+}
+
+const RECEIPT_FILE_ACCEPT =
+  "image/*,application/pdf,.heic,.heif,image/heic,image/heif";
+
 function isPdfDataUrl(url: string): boolean {
   return url.startsWith("data:application/pdf");
 }
@@ -118,24 +133,33 @@ async function mergeReceiptDataUrls(
   existing: readonly string[],
   files: readonly File[],
 ): Promise<{ ok: true; urls: string[] } | { ok: false; message: string }> {
+  if (!readValidAccessToken()) {
+    return {
+      ok: false,
+      message: "Sign in to attach files (storage requires an active session).",
+    };
+  }
   const room = MAX_RECEIPTS_PER_LINE - existing.length;
   if (room <= 0) {
     return {
       ok: false,
-      message: `At most ${MAX_RECEIPTS_PER_LINE} receipt images per expense line.`,
+      message: `At most ${MAX_RECEIPTS_PER_LINE} attachments per expense line.`,
     };
   }
   const next = [...existing];
   const slice = files.slice(0, room);
   try {
     for (const file of slice) {
-      if (!file.type.startsWith("image/")) {
-        return { ok: false, message: "Only image files can be attached as receipts." };
+      if (!isReceiptAttachmentFile(file)) {
+        return {
+          ok: false,
+          message: "Only images or PDF files can be attached.",
+        };
       }
       if (file.size > MAX_RECEIPT_BYTES) {
         return {
           ok: false,
-          message: `Each receipt image must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
+          message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
         };
       }
       next.push(await uploadFileToStorage(file, "receipts", file.name));
@@ -143,7 +167,7 @@ async function mergeReceiptDataUrls(
   } catch (e) {
     return {
       ok: false,
-      message: e instanceof Error ? e.message : "Could not add receipt image.",
+      message: e instanceof Error ? e.message : "Could not upload attachment.",
     };
   }
   return { ok: true, urls: next };
@@ -153,6 +177,12 @@ async function mergeVoidAttachmentDataUrls(
   existing: readonly string[],
   files: readonly File[],
 ): Promise<{ ok: true; urls: string[] } | { ok: false; message: string }> {
+  if (!readValidAccessToken()) {
+    return {
+      ok: false,
+      message: "Sign in to attach files (storage requires an active session).",
+    };
+  }
   const room = MAX_VOID_ATTACHMENTS - existing.length;
   if (room <= 0) {
     return {
@@ -164,8 +194,8 @@ async function mergeVoidAttachmentDataUrls(
   const slice = files.slice(0, room);
   try {
     for (const file of slice) {
-      if (!isPdfOrImageFile(file)) {
-        return { ok: false, message: "Only PDF or image files can be attached." };
+      if (!isReceiptAttachmentFile(file)) {
+        return { ok: false, message: "Only images or PDF files can be attached." };
       }
       if (file.size > MAX_RECEIPT_BYTES) {
         return {
@@ -332,6 +362,7 @@ type SalesFieldPart = "voidRemarks" | "voidAttach";
 type FormNotice =
   | { kind: "none" }
   | { kind: "global"; message: string }
+  | { kind: "globalError"; message: string }
   | { kind: "field"; message: string; lineId: string; part: ExpenseFieldPart }
   | { kind: "salesField"; message: string; part: SalesFieldPart };
 
@@ -1048,6 +1079,7 @@ export function DailyEntryFormView() {
   const [voidSaleAttachmentUrls, setVoidSaleAttachmentUrls] = useState<string[]>([]);
   const [expenseLines, setExpenseLines] = useState<ExpenseLineDraft[]>(() => []);
   const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
+  const [attachBusyLineId, setAttachBusyLineId] = useState<string | null>(null);
   const [openingEdit, setOpeningEdit] = useState(false);
   const [historyDetailRow, setHistoryDetailRow] = useState<DailyEntryRow | null>(null);
   const [historyReceiptsOpen, setHistoryReceiptsOpen] = useState(false);
@@ -1207,7 +1239,11 @@ export function DailyEntryFormView() {
   useEffect(() => {
     if (formNotice.kind === "none") return;
     const ms =
-      formNotice.kind === "field" || formNotice.kind === "salesField" ? 5200 : 2800;
+      formNotice.kind === "field" || formNotice.kind === "salesField"
+        ? 5200
+        : formNotice.kind === "globalError"
+          ? 8000
+          : 2800;
     const timer = window.setTimeout(() => setFormNotice({ kind: "none" }), ms);
     return () => window.clearTimeout(timer);
   }, [formNotice]);
@@ -1301,12 +1337,7 @@ export function DailyEntryFormView() {
             ),
           );
         } else {
-          setFormNotice({
-            kind: "field",
-            message: result.message,
-            lineId,
-            part: "attach",
-          });
+          setFormNotice({ kind: "globalError", message: result.message });
         }
       })();
     };
@@ -1408,52 +1439,136 @@ export function DailyEntryFormView() {
     const canAddMore = urls.length < MAX_RECEIPTS_PER_LINE;
     const inputId = `daily-expense-receipt-${line.id}`;
     const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+    const busy = attachBusyLineId === line.id;
     if (!canAddMore) {
       return (
         <div
           className={`relative flex min-h-8 items-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
         >
           <span className="text-[8px] leading-tight text-[var(--pos-text-2)]">
-            Max {MAX_RECEIPTS_PER_LINE} imgs
+            Max {MAX_RECEIPTS_PER_LINE} files
           </span>
         </div>
       );
     }
     return (
+      <div className="flex min-w-0 flex-col items-center gap-0.5">
       <div
         className={`relative flex h-8 w-full min-w-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
       >
         <input
           id={inputId}
           type="file"
-          accept="image/*"
+          accept={RECEIPT_FILE_ACCEPT}
           multiple
+          disabled={busy}
           className="sr-only"
+          tabIndex={-1}
+          aria-hidden
           onChange={(e) => {
-            const list = e.target.files;
+            // Copy files before clearing the input — FileList is live and empties when value is reset.
+            const picked = e.target.files ? Array.from(e.target.files) : [];
             e.target.value = "";
-            if (!list?.length) return;
+            if (picked.length === 0) return;
             void (async () => {
-              const result = await mergeReceiptDataUrls(urls, Array.from(list));
-              if (result.ok) patchLine(line.id, { receiptDataUrls: result.urls });
-              else
+              if (!readValidAccessToken()) {
                 setFormNotice({
-                  kind: "field",
-                  message: result.message,
-                  lineId: line.id,
-                  part: "attach",
+                  kind: "globalError",
+                  message:
+                    "Sign in to attach files (storage requires an active session).",
                 });
+                return;
+              }
+              const room = MAX_RECEIPTS_PER_LINE - urls.length;
+              if (room <= 0) {
+                setFormNotice({
+                  kind: "globalError",
+                  message: `At most ${MAX_RECEIPTS_PER_LINE} attachments per expense line.`,
+                });
+                return;
+              }
+              const slice = picked.slice(0, room);
+              for (const file of slice) {
+                if (!isReceiptAttachmentFile(file)) {
+                  setFormNotice({
+                    kind: "globalError",
+                    message: "Only images or PDF files can be attached.",
+                  });
+                  return;
+                }
+                if (file.size > MAX_RECEIPT_BYTES) {
+                  setFormNotice({
+                    kind: "globalError",
+                    message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
+                  });
+                  return;
+                }
+              }
+
+              const previewUrls = slice.map((f) => URL.createObjectURL(f));
+              let current = [...urls, ...previewUrls];
+              patchLine(line.id, { receiptDataUrls: current });
+              setAttachBusyLineId(line.id);
+              try {
+                for (let i = 0; i < slice.length; i++) {
+                  const file = slice[i];
+                  const preview = previewUrls[i];
+                  try {
+                    const ref = await uploadFileToStorage(file, "receipts", file.name);
+                    current = current.map((u) => (u === preview ? ref : u));
+                    patchLine(line.id, { receiptDataUrls: current });
+                  } catch (err) {
+                    URL.revokeObjectURL(preview);
+                    current = current.filter((u) => u !== preview);
+                    patchLine(line.id, { receiptDataUrls: current });
+                    setFormNotice({
+                      kind: "globalError",
+                      message:
+                        err instanceof Error
+                          ? err.message
+                          : "Could not upload attachment.",
+                    });
+                    return;
+                  }
+                  requestAnimationFrame(() => URL.revokeObjectURL(preview));
+                }
+                setFormNotice((n) =>
+                  n.kind === "globalError" ? { kind: "none" } : n,
+                );
+              } finally {
+                setAttachBusyLineId(null);
+              }
             })();
           }}
         />
         <label
           htmlFor={inputId}
-          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
-          aria-label="Attach receipt image from files or paste from clipboard"
-          title="Attach file, or paste an image (Ctrl+V / ⌘V) while this row is focused"
+          className={`inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[6px] border border-solid transition-colors hover:bg-[var(--pos-nav-hover)]/30 ${
+            busy ? "pointer-events-none opacity-50" : ""
+          } ${
+            attachErr
+              ? "border-red-500/70 text-red-700"
+              : "border-[var(--pos-divider)] text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
+          }`}
+          aria-label="Attach receipt image or PDF"
+          title={
+            attachErr ??
+            "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused"
+          }
         >
-          <Paperclip className="size-4 shrink-0" strokeWidth={2.25} />
+          <Paperclip className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
         </label>
+      </div>
+      {busy ? (
+        <span className="text-[9px] leading-tight text-[var(--pos-text-2)]">Uploading…</span>
+      ) : attachErr ? (
+        <span
+          role="alert"
+          className="max-w-[5.5rem] text-center text-[9px] leading-tight text-red-700"
+        >
+          {attachErr}
+        </span>
+      ) : null}
       </div>
     );
   }
@@ -1465,16 +1580,31 @@ export function DailyEntryFormView() {
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1">
         {urls.map((url, idx) => (
           <div key={`${line.id}-r-${idx}`} className="relative inline-flex">
-            <MediaThumb
-              mediaRef={url}
-              alt={`Receipt ${idx + 1}`}
-              className="size-11 rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-cover"
+            <button
+              type="button"
+              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50"
               onClick={() => setReceiptPreviewUrl(url)}
-            />
+              aria-label={
+                isPdfMediaRef(url) ? `View PDF ${idx + 1}` : `View receipt ${idx + 1}`
+              }
+            >
+              {isPdfMediaRef(url) ? (
+                <span className="flex size-11 flex-col items-center justify-center gap-0.5 bg-[var(--pos-page)] text-[var(--pos-text-2)]">
+                  <FileText className="size-5 shrink-0" strokeWidth={2} aria-hidden />
+                  <span className="text-[8px] font-semibold uppercase">PDF</span>
+                </span>
+              ) : (
+                <MediaThumb
+                  mediaRef={url}
+                  alt={`Receipt ${idx + 1}`}
+                  className="size-11 object-cover"
+                />
+              )}
+            </button>
             <button
               type="button"
               className="absolute -right-0.5 -top-0.5 z-[1] flex size-4 items-center justify-center rounded-full border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[10px] leading-none text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]"
-              aria-label="Remove receipt image"
+              aria-label="Remove attachment"
               onClick={(e) => {
                 e.stopPropagation();
                 patchLine(line.id, {
@@ -1514,15 +1644,15 @@ export function DailyEntryFormView() {
         <input
           id={inputId}
           type="file"
-          accept="image/*,application/pdf"
+          accept={RECEIPT_FILE_ACCEPT}
           multiple
           className="sr-only"
           onChange={(e) => {
-            const list = e.target.files;
+            const picked = e.target.files ? Array.from(e.target.files) : [];
             e.target.value = "";
-            if (!list?.length) return;
+            if (picked.length === 0) return;
             void (async () => {
-              const result = await mergeVoidAttachmentDataUrls(urls, Array.from(list));
+              const result = await mergeVoidAttachmentDataUrls(urls, picked);
               if (result.ok) {
                 clearSalesFieldNotice();
                 setVoidSaleAttachmentUrls(result.urls);
@@ -1918,6 +2048,14 @@ export function DailyEntryFormView() {
         className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2 text-[11px] leading-snug text-[var(--pos-text-1)]"
         role="status"
         aria-live="polite"
+      >
+        {formNotice.message}
+      </div>
+    ) : formNotice.kind === "globalError" ? (
+      <div
+        className="shrink-0 border-b border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[11px] font-medium leading-snug text-red-800"
+        role="alert"
+        aria-live="assertive"
       >
         {formNotice.message}
       </div>
@@ -2345,7 +2483,7 @@ export function DailyEntryFormView() {
               <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
                 Ledger rows: pick a book, type, amount, and optional note to post to Bills &amp;
                 payments. Regular rows use title + amount (type stays Regular; not posted to the
-                ledger). Max {MAX_RECEIPTS_PER_LINE} receipts per line.
+                ledger). Max {MAX_RECEIPTS_PER_LINE} images or PDFs per line (sign in required).
               </p>
               {expenseLines.length > 0 ? (
                 <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(4.75rem,0.55fr)_minmax(0,0.45fr)_minmax(0,1fr)_2.25rem_2.25rem] items-center gap-x-1.5 border-b border-solid [border-color:var(--pos-divider)] pb-1.5 text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-[var(--pos-text-2)]">
