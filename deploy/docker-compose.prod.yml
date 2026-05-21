@@ -1,0 +1,124 @@
+# Production stack: Postgres + API + POS (static) + MinIO + Caddy (HTTPS).
+# Run from deploy/ with: docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+name: krunch-pos
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [krunch]
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: always
+    env_file: .env
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      NODE_ENV: production
+      REDIS_DISABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [krunch]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      POS_DOMAIN: ${POS_DOMAIN}
+      S3_DOMAIN: ${S3_DOMAIN}
+      S3_CONSOLE_DOMAIN: ${S3_CONSOLE_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./pos-static:/srv/pos:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - minio
+    networks: [krunch]
+
+  minio:
+    image: minio/minio:latest
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SERVER_URL: https://${S3_DOMAIN}
+      MINIO_BROWSER_REDIRECT_URL: https://${S3_CONSOLE_DOMAIN}
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${POS_DOMAIN}
+    volumes:
+      - minio_data:/data
+    expose:
+      - "9000"
+      - "9001"
+    networks: [krunch]
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    entrypoint: >
+      /bin/sh -c "
+      sleep 8;
+      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD;
+      mc mb --ignore-existing local/${S3_BUCKET};
+      mc anonymous set none local/${S3_BUCKET};
+      echo MinIO bucket ready;
+      "
+    networks: [krunch]
+
+  # Existing automation — unchanged; not exposed on 80/443 by Caddy.
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    profiles: ["n8n"]
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_RUNNERS_ENABLED=true
+      - NODE_ENV=production
+      - N8N_SECURE_COOKIE=false
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-UTC}
+      - TZ=${GENERIC_TIMEZONE:-UTC}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n-local-files:/files
+    networks: [krunch]
+
+volumes:
+  pg_data:
+  minio_data:
+  caddy_data:
+  caddy_config:
+  n8n_data:
+
+networks:
+  krunch:
+    driver: bridge

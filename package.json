@@ -19,7 +19,8 @@
     "db:push": "sh -c 'set -a && . ./apps/api/.env && set +a && turbo run db:push --filter=@universal-pos/database-schema'",
     "db:migrate": "sh -c 'set -a && . ./apps/api/.env && set +a && turbo run db:migrate --filter=@universal-pos/database-schema'",
     "db:seed": "sh -c 'set -a && . ./apps/api/.env && set +a && turbo run db:seed --filter=@universal-pos/database-schema'",
-    "db:generate": "turbo run db:generate --filter=@universal-pos/database-schema"
+    "db:generate": "turbo run db:generate --filter=@universal-pos/database-schema",
+    "deploy:vps": "bash scripts/deploy-to-vps.sh"
   },
   "devDependencies": {
     "prettier": "^3.x",

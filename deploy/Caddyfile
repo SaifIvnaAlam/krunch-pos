@@ -1,0 +1,26 @@
+# Domains from deploy/.env (Caddy expands {$VAR} from environment).
+{
+	email {$ACME_EMAIL}
+}
+
+{$POS_DOMAIN} {
+	encode gzip zstd
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	root * /srv/pos
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+{$S3_DOMAIN} {
+	reverse_proxy minio:9000
+}
+
+{$S3_CONSOLE_DOMAIN} {
+	reverse_proxy minio:9001
+}

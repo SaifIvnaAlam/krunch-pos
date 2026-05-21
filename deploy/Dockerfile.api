@@ -1,0 +1,24 @@
+# Nest API + Prisma (monorepo workspaces)
+FROM node:20-bookworm-slim AS builder
+WORKDIR /app
+RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json turbo.json tsconfig.base.json ./
+COPY apps/api ./apps/api
+COPY packages/database-schema ./packages/database-schema
+RUN npm ci \
+  && npm run db:generate -w @universal-pos/database-schema \
+  && npm run build -w @universal-pos/api
+
+FROM node:20-bookworm-slim AS runner
+WORKDIR /app
+RUN apt-get update && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
+COPY --from=builder /app/packages/database-schema ./packages/database-schema
+COPY deploy/docker-api-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+EXPOSE 3000
+ENTRYPOINT ["/entrypoint.sh"]
