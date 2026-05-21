@@ -97,6 +97,16 @@ done
 docker compose -f docker-compose.prod.yml --env-file .env exec -T api sh -c \
   'cd /app/packages/database-schema && npx prisma db seed' || true
 
+SERVER_IP="$(curl -4 -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
+if ! getent ahostsv4 "${POS_DOMAIN}" 2>/dev/null | grep -q .; then
+  echo ""
+  echo "WARNING: DNS for ${POS_DOMAIN} is not pointing here yet."
+  echo "Add A records → ${SERVER_IP} for:"
+  echo "  ${POS_DOMAIN}"
+  echo "  ${S3_DOMAIN}"
+  echo "  ${S3_CONSOLE_DOMAIN}"
+  echo "HTTPS (Let's Encrypt) will fail until DNS propagates."
+fi
+
 echo ""
 echo "Deployed. POS: https://${POS_DOMAIN}"
-echo "Ensure DNS A records point to this server for HTTPS."
