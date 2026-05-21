@@ -23,7 +23,14 @@ export function isKnownLeafId(id: string): boolean {
 }
 
 const LEGACY_LEAF_ID_MAP: Record<string, string> = {
-  "pu-list": "pu-ledger",
+  dashboard: POS_DEFAULT_LEAF_ID,
+  reservations: POS_DEFAULT_LEAF_ID,
+  "inv-overview": POS_DEFAULT_LEAF_ID,
+  "inv-adjust": POS_DEFAULT_LEAF_ID,
+  "pu-list": POS_DEFAULT_LEAF_ID,
+  "pu-ledger": POS_DEFAULT_LEAF_ID,
+  "pu-suppliers": POS_DEFAULT_LEAF_ID,
+  "pu-return": POS_DEFAULT_LEAF_ID,
   /** Old single Reports leaf → expense reports under Reports branch. */
   reports: "rep-expenses",
   "menu-mgmt": "fd-menu",

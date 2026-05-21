@@ -33,7 +33,6 @@ import { createOrderOnApi, holdOrderOnApi } from "@/features/orders";
 import { processPaymentOnApi } from "@/features/payments/paymentsApi";
 import { StorageImage } from "@/features/storage";
 import { PosSidebar } from "../components/pos/PosSidebar";
-import { DashboardView } from "../components/pos/DashboardView";
 import { OrdersManageView } from "../components/pos/OrdersManageView";
 import { GenericModuleView } from "../components/pos/GenericModuleView";
 import {
@@ -41,18 +40,9 @@ import {
   EmployeeModuleView,
 } from "../components/pos/EmployeeModuleView";
 import {
-  INVENTORY_LEAF_IDS,
-  InventoryModuleView,
-} from "../components/pos/InventoryModuleView";
-import {
   LEDGER_LEAF_IDS,
   LedgerModuleView,
 } from "../components/pos/LedgerModuleView";
-import {
-  PURCHASE_LEAF_IDS,
-  PurchaseModuleView,
-} from "../components/pos/PurchaseModuleView";
-import { ReservationView } from "../components/pos/ReservationView";
 import { ItemOptionsBody } from "../components/pos/ItemOptionsModal";
 import { ExpenseRecordsView } from "../components/pos/ExpenseRecordsView";
 import { DailyEntryFormView } from "../components/pos/DailyEntryFormView";
@@ -616,7 +606,6 @@ export function PosTerminalPage() {
   const showOrderPanel = showMenuSurface;
 
   const mainContent = () => {
-    if (activeLeafId === "dashboard") return <DashboardView />;
     if (activeLeafId === "mo-list") {
       return <OrdersManageView defaultFilter="all" />;
     }
@@ -773,16 +762,6 @@ export function PosTerminalPage() {
       );
     }
 
-    if (activeLeafId === "reservations") {
-      return <ReservationView />;
-    }
-
-    if (INVENTORY_LEAF_IDS.has(activeLeafId)) {
-      return <InventoryModuleView leafId={activeLeafId} />;
-    }
-    if (PURCHASE_LEAF_IDS.has(activeLeafId)) {
-      return <PurchaseModuleView leafId={activeLeafId} />;
-    }
     if (LEDGER_LEAF_IDS.has(activeLeafId)) {
       return <LedgerModuleView leafId={activeLeafId} />;
     }
@@ -833,7 +812,7 @@ export function PosTerminalPage() {
       );
     }
 
-    return <DashboardView />;
+    return <DailyEntryFormView />;
   };
 
   const orderRef = 1000 + tableNumber;

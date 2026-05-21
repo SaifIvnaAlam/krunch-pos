@@ -53,6 +53,8 @@ body {
   font-family: var(--font-inter);
   font-size: 15px;
   line-height: 1.7;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 @keyframes krunch-ticker {

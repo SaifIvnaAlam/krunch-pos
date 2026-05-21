@@ -134,15 +134,6 @@ html.dark ::selection {
   color: #f5f4f2;
 }
 
-* {
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-input, textarea {
-  user-select: text;
-}
-
 /* Hide number input steppers (Chrome / Safari / Edge); Firefox uses appearance. */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
