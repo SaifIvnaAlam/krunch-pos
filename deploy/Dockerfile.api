@@ -16,9 +16,10 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/database-schema/package.json ./packages/database-schema/
-RUN npm ci --omit=dev --workspace=@universal-pos/api --workspace=@universal-pos/database-schema --include-workspace-root
+COPY packages/database-schema/prisma ./packages/database-schema/prisma
+RUN npm ci --omit=dev --workspace=@universal-pos/api --workspace=@universal-pos/database-schema --include-workspace-root \
+  && npm run db:generate -w @universal-pos/database-schema
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/packages/database-schema/prisma ./packages/database-schema/prisma
 COPY deploy/docker-api-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 EXPOSE 3000

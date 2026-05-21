@@ -17,11 +17,11 @@
   },
   "dependencies": {
     "@prisma/client": "^5.x",
-    "bcrypt": "^5.x"
+    "bcrypt": "^5.x",
+    "prisma": "^5.x"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.x",
-    "prisma": "^5.x",
     "ts-node": "^10.x",
     "typescript": "^5.x"
   }

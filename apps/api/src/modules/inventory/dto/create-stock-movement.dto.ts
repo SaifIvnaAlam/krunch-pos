@@ -1,9 +1,11 @@
 import { StockDirection } from '@prisma/client';
-import { IsEnum, IsNumber, IsOptional, IsString, Min, MinLength, MaxLength, IsDateString } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, Min, MinLength, MaxLength, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 
+const STOCK_DIRECTIONS = ['IN', 'OUT'] as const satisfies readonly StockDirection[];
+
 export class CreateStockMovementDto {
-  @IsEnum(StockDirection)
+  @IsIn(STOCK_DIRECTIONS)
   direction!: StockDirection;
 
   @IsNumber()
