@@ -51,7 +51,16 @@ export S3_ENDPOINT="${S3_ENDPOINT:-https://${S3_DOMAIN}}"
 export CORS_ORIGIN="${CORS_ORIGIN:-https://${POS_DOMAIN}}"
 
 echo "==> Checking SSH to ${VPS_USER}@${VPS_HOST}"
-"${SSH[@]}" 'echo ok' >/dev/null
+if ! "${SSH[@]}" 'echo ok' >/dev/null 2>&1; then
+  echo ""
+  echo "SSH failed (no key on this machine for the VPS)."
+  echo "Option A — IONOS web console as root, run:"
+  echo "  curl -fsSL https://raw.githubusercontent.com/SaifIvnaAlam/krunch-pos/main/scripts/install-on-vps.sh | bash"
+  echo ""
+  echo "Option B — Add your Mac SSH key to the server, then re-run this script:"
+  echo "  cat ~/.ssh/id_ed25519.pub   # paste into /root/.ssh/authorized_keys on the VPS"
+  exit 1
+fi
 
 echo "==> Building POS for https://${POS_DOMAIN}"
 export VITE_API_URL="https://${POS_DOMAIN}/api/v1"
