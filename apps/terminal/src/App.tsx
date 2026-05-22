@@ -8,17 +8,14 @@ import { PosTerminalPage } from "./pages/PosTerminalPage";
 
 function SplashGate() {
   const navigate = useNavigate();
-  const { signOut } = useSession();
+  const { isSignedIn } = useSession();
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void (async () => {
-        await signOut();
-        navigate("/signin", { replace: true });
-      })();
+      navigate(isSignedIn ? "/pos" : "/signin", { replace: true });
     }, 2800);
     return () => clearTimeout(timer);
-  }, [navigate, signOut]);
+  }, [navigate, isSignedIn]);
 
   return <SplashScreen />;
 }

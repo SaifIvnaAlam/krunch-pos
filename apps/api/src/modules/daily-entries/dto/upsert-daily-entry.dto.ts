@@ -79,6 +79,14 @@ export class UpsertDailyEntryDto {
   @Min(0)
   expenses!: number;
 
+  @ApiPropertyOptional({
+    description: 'Expenses paid by withdrawing from the bank account',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bankWithdrawn?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   expenseLines?: unknown[];

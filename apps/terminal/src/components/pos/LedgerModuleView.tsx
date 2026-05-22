@@ -793,6 +793,58 @@ function GhostButton({
   );
 }
 
+const BOOK_TYPE_FILTER_OPTIONS: {
+  value: "all" | LedgerBookPurpose;
+  label: string;
+}[] = [{ value: "all", label: "All types" }, ...LEDGER_BOOK_PURPOSE_OPTIONS];
+
+function ChoiceChips<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  className = "",
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <div className={`block min-w-0 ${className}`.trim()}>
+      <span className={purchaseLabel}>{label}</span>
+      <div
+        role="group"
+        aria-label={ariaLabel ?? label}
+        className="mt-1 flex flex-wrap gap-1.5"
+      >
+        {options.map((opt) => {
+          const active = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange(opt.value)}
+              className={[
+                "h-8 cursor-pointer rounded-full border border-solid px-3 text-[11px] font-medium transition-colors",
+                active
+                  ? "border-[var(--pos-sb-base)] bg-[var(--pos-sb-base)]/12 font-semibold text-[var(--pos-text-1)]"
+                  : "border-[color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)]/45 hover:text-[var(--pos-text-1)]",
+              ].join(" ")}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function DangerGhostButton({
   children,
   onClick,
@@ -924,44 +976,35 @@ function SupplierListView() {
         </PrimaryButton>
       </div>
 
-      <div className={purchaseFilters}>
-        <label className="relative min-w-[220px] flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--pos-text-2)]"
-            strokeWidth={2}
-            aria-hidden
-          />
-          <input
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, contact, email, phone…"
-            className={purchaseSearchInput}
-            aria-label="Filter ledger books"
-          />
-        </label>
-        <label className="block min-w-[140px] max-w-[200px]">
-          <span className={purchaseLabel}>Book type</span>
-          <select
-            value={purposeFilter}
-            onChange={(e) =>
-              setPurposeFilter(e.target.value as "all" | LedgerBookPurpose)
-            }
-            className={purchaseField}
-            aria-label="Filter by book type"
-          >
-            <option value="all">All types</option>
-            {LEDGER_BOOK_PURPOSE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="ml-auto text-[11px] text-[var(--pos-text-2)]">
-          Showing{" "}
-          <span className="font-semibold text-[var(--pos-text-1)]">{rows.length}</span> ledger books
+      <div className={`${purchaseFilters} flex-col items-stretch gap-3`}>
+        <div className="flex w-full flex-wrap items-center gap-2">
+          <label className="relative min-w-[220px] flex-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--pos-text-2)]"
+              strokeWidth={2}
+              aria-hidden
+            />
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search name, contact, email, phone…"
+              className={purchaseSearchInput}
+              aria-label="Filter ledger books"
+            />
+          </label>
+          <p className="text-[11px] text-[var(--pos-text-2)] sm:ml-auto">
+            Showing{" "}
+            <span className="font-semibold text-[var(--pos-text-1)]">{rows.length}</span> ledger books
+          </p>
         </div>
+        <ChoiceChips
+          label="Book type"
+          value={purposeFilter}
+          options={BOOK_TYPE_FILTER_OPTIONS}
+          onChange={setPurposeFilter}
+          ariaLabel="Filter by book type"
+        />
       </div>
 
       <div className={`${purchaseStats} sm:grid-cols-2`}>
@@ -1121,25 +1164,14 @@ function SupplierListView() {
                 </p>
               ) : null}
             </label>
-            <label className="block sm:col-span-2">
-              <span className={purchaseLabel}>Book type</span>
-              <select
+            <div className="sm:col-span-2">
+              <ChoiceChips
+                label="Book type"
                 value={draft.bookPurpose ?? "vendor"}
-                onChange={(e) =>
-                  setDraft((d) => ({
-                    ...d,
-                    bookPurpose: e.target.value as LedgerBookPurpose,
-                  }))
-                }
-                className={purchaseField}
-                aria-label="Ledger book type"
-              >
-                {LEDGER_BOOK_PURPOSE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                options={LEDGER_BOOK_PURPOSE_OPTIONS}
+                onChange={(bookPurpose) => setDraft((d) => ({ ...d, bookPurpose }))}
+                ariaLabel="Ledger book type"
+              />
               <p className="mt-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
                 {(draft.bookPurpose ?? "vendor") === "vendor"
                   ? "Vendor · supplier bills and trade payables."
@@ -1147,7 +1179,7 @@ function SupplierListView() {
                     ? "Owners · partner draws, capital, and equity-style movements."
                     : `Employees · salary, service charge, bonus, and overtime (name the book “${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX.trimEnd()} …”).`}
               </p>
-            </label>
+            </div>
             <label className="block sm:col-span-2">
               <span className={purchaseLabel}>Contact person</span>
               <input

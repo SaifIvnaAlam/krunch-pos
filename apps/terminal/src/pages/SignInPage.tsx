@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useSession } from "@/features/auth";
-import { getSeededAdminEmail } from "@/shared/config/env";
+import {
+  getSeededAdminEmail,
+  getSeededAdminPassword,
+} from "@/shared/config/env";
 import { fetchHealth } from "@/features/health";
 import {
   UtensilsCrossed,
@@ -24,8 +27,8 @@ const borderFocus =
 export function SignInPage() {
   const navigate = useNavigate();
   const { signInWithCredentials } = useSession();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState(getSeededAdminEmail);
+  const [password, setPassword] = useState(getSeededAdminPassword);
   const [showPassword, setShowPassword] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
@@ -183,7 +186,9 @@ export function SignInPage() {
                 {getSeededAdminEmail()}
               </span>{" "}
               and password{" "}
-              <span className="font-mono text-[var(--pos-text-1)]">Owner123!</span>{" "}
+              <span className="font-mono text-[var(--pos-text-1)]">
+                {getSeededAdminPassword()}
+              </span>{" "}
               (run <span className="font-mono">npm run db:seed</span> once).
             </p>
 

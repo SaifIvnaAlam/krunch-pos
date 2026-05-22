@@ -7,6 +7,8 @@ function coerceDailyEntryRow(row: DailyEntryRow): DailyEntryRow {
   return {
     ...row,
     nagadSale: row.nagadSale ?? 0,
+    bankWithdrawn: row.bankWithdrawn ?? 0,
+    isLocked: row.isLocked ?? false,
   };
 }
 

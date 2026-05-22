@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Receipt, TrendingUp, type LucideIcon } from "lucide-react";
+import { LineChart, Receipt, TrendingUp, type LucideIcon } from "lucide-react";
+import { AnalyticsReportView } from "./AnalyticsReportView";
 import { ExpenseReportsView } from "./ExpenseReportsView";
 import { SalesReportView } from "./SalesReportView";
 
@@ -7,12 +8,15 @@ export const REPORT_LEAF_IDS = new Set([
   "rep-management",
   "rep-expenses",
   "rep-sales",
+  "rep-analytics",
 ]);
 
-export type ReportsPanelTab = "expenses" | "sales";
+export type ReportsPanelTab = "expenses" | "sales" | "analytics";
 
 function reportsTabFromLeafId(leafId: string): ReportsPanelTab {
-  return leafId === "rep-sales" ? "sales" : "expenses";
+  if (leafId === "rep-sales") return "sales";
+  if (leafId === "rep-analytics") return "analytics";
+  return "expenses";
 }
 
 const REPORT_VIEW_TABS: {
@@ -22,6 +26,7 @@ const REPORT_VIEW_TABS: {
 }[] = [
   { id: "expenses", label: "Expense reports", icon: Receipt },
   { id: "sales", label: "Sales report", icon: TrendingUp },
+  { id: "analytics", label: "Analytics", icon: LineChart },
 ];
 
 function ReportsViewSwitcher({
@@ -88,7 +93,13 @@ export function ReportsModuleView({ leafId }: { leafId: string }) {
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
       <ReportsViewSwitcher tab={tab} onTabChange={setTab} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {tab === "expenses" ? <ExpenseReportsView /> : <SalesReportView />}
+        {tab === "expenses" ? (
+          <ExpenseReportsView />
+        ) : tab === "sales" ? (
+          <SalesReportView />
+        ) : (
+          <AnalyticsReportView />
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { DailyEntry, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
 
@@ -17,10 +21,14 @@ export type DailyEntryDto = {
   voidSaleRemarks?: string;
   voidSaleAttachmentDataUrls?: string[];
   expenses: number;
+  bankWithdrawn: number;
   expenseLines?: unknown[];
   remainingBalance: number;
   updatedAt: string;
   enteredBy?: string;
+  isLocked: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
 };
 
 function decimalToNumber(value: Prisma.Decimal | null | undefined): number {
@@ -28,25 +36,7 @@ function decimalToNumber(value: Prisma.Decimal | null | undefined): number {
   return Number(value);
 }
 
-function mapRow(row: {
-  date: string;
-  openingBalance: Prisma.Decimal;
-  cashSale: Prisma.Decimal;
-  bankSale: Prisma.Decimal;
-  bkashSale: Prisma.Decimal;
-  nagadSale: Prisma.Decimal;
-  pathaoSale: Prisma.Decimal;
-  foodiSale: Prisma.Decimal;
-  foodpandaSale: Prisma.Decimal;
-  voidSale: Prisma.Decimal | null;
-  voidSaleRemarks: string | null;
-  voidSaleAttachmentDataUrls: Prisma.JsonValue;
-  expenses: Prisma.Decimal;
-  expenseLines: Prisma.JsonValue;
-  remainingBalance: Prisma.Decimal;
-  updatedAt: Date;
-  enteredByName: string | null;
-}): DailyEntryDto {
+function mapRow(row: DailyEntry): DailyEntryDto {
   const voidSaleNum = decimalToNumber(row.voidSale);
   const attachments = row.voidSaleAttachmentDataUrls;
   return {
@@ -65,10 +55,14 @@ function mapRow(row: {
       ? { voidSaleAttachmentDataUrls: attachments as string[] }
       : {}),
     expenses: decimalToNumber(row.expenses),
+    bankWithdrawn: decimalToNumber(row.bankWithdrawn),
     ...(row.expenseLines != null ? { expenseLines: row.expenseLines as unknown[] } : {}),
     remainingBalance: decimalToNumber(row.remainingBalance),
     updatedAt: row.updatedAt.toISOString(),
     ...(row.enteredByName ? { enteredBy: row.enteredByName } : {}),
+    isLocked: row.isLocked,
+    ...(row.lockedAt ? { lockedAt: row.lockedAt.toISOString() } : {}),
+    ...(row.lockedByName ? { lockedBy: row.lockedByName } : {}),
   };
 }
 
@@ -96,6 +90,15 @@ export class DailyEntriesService {
     staffId: string,
     dto: UpsertDailyEntryDto,
   ): Promise<DailyEntryDto> {
+    const existing = await this.prisma.dailyEntry.findUnique({
+      where: { branchId_date: { branchId, date: dto.date } },
+    });
+    if (existing?.isLocked) {
+      throw new ConflictException(
+        'This daily entry is locked and cannot be edited.',
+      );
+    }
+
     const voidSale =
       dto.voidSale != null && dto.voidSale > 0 ? new Prisma.Decimal(dto.voidSale) : null;
 
@@ -116,6 +119,7 @@ export class DailyEntriesService {
       voidSaleAttachmentDataUrls: (dto.voidSaleAttachmentDataUrls ??
         []) as Prisma.InputJsonValue,
       expenses: new Prisma.Decimal(dto.expenses),
+      bankWithdrawn: new Prisma.Decimal(dto.bankWithdrawn ?? 0),
       expenseLines: (dto.expenseLines ?? []) as Prisma.InputJsonValue,
       remainingBalance: new Prisma.Decimal(dto.remainingBalance),
       enteredByStaffId: staffId,
@@ -131,19 +135,74 @@ export class DailyEntriesService {
     return mapRow(row);
   }
 
-  async remove(branchId: string, date: string): Promise<void> {
-    try {
-      await this.prisma.dailyEntry.delete({
-        where: { branchId_date: { branchId, date } },
-      });
-    } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2025'
-      ) {
-        throw new NotFoundException(`No daily entry for ${date}`);
-      }
-      throw e;
+  async lock(
+    branchId: string,
+    staffId: string,
+    date: string,
+    lockedBy?: string,
+  ): Promise<DailyEntryDto> {
+    const existing = await this.prisma.dailyEntry.findUnique({
+      where: { branchId_date: { branchId, date } },
+    });
+    if (!existing) {
+      throw new NotFoundException(`No daily entry for ${date}`);
     }
+    if (existing.isLocked) {
+      return mapRow(existing);
+    }
+
+    const row = await this.prisma.dailyEntry.update({
+      where: { branchId_date: { branchId, date } },
+      data: {
+        isLocked: true,
+        lockedAt: new Date(),
+        lockedByStaffId: staffId,
+        lockedByName: lockedBy?.trim() || null,
+      },
+    });
+
+    return mapRow(row);
+  }
+
+  async unlock(branchId: string, date: string): Promise<DailyEntryDto> {
+    const existing = await this.prisma.dailyEntry.findUnique({
+      where: { branchId_date: { branchId, date } },
+    });
+    if (!existing) {
+      throw new NotFoundException(`No daily entry for ${date}`);
+    }
+    if (!existing.isLocked) {
+      return mapRow(existing);
+    }
+
+    const row = await this.prisma.dailyEntry.update({
+      where: { branchId_date: { branchId, date } },
+      data: {
+        isLocked: false,
+        lockedAt: null,
+        lockedByStaffId: null,
+        lockedByName: null,
+      },
+    });
+
+    return mapRow(row);
+  }
+
+  async remove(branchId: string, date: string): Promise<void> {
+    const existing = await this.prisma.dailyEntry.findUnique({
+      where: { branchId_date: { branchId, date } },
+    });
+    if (!existing) {
+      throw new NotFoundException(`No daily entry for ${date}`);
+    }
+    if (existing.isLocked) {
+      throw new ConflictException(
+        'This daily entry is locked and cannot be deleted.',
+      );
+    }
+
+    await this.prisma.dailyEntry.delete({
+      where: { branchId_date: { branchId, date } },
+    });
   }
 }

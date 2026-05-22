@@ -15,6 +15,17 @@ export function bankSaleServiceChargeAmount(gross: number): number {
   return g * BANK_SALE_SERVICE_CHARGE_RATE;
 }
 
+/** Net bank sales (after service charge) minus expenses withdrawn from the bank. */
+export function bankNetAfterWithdrawals(
+  bankSaleGross: number,
+  bankWithdrawn: number,
+): number {
+  return (
+    bankSaleNetAfterServiceCharge(bankSaleGross) -
+    Math.max(0, Number(bankWithdrawn) || 0)
+  );
+}
+
 export function savedLineKind(line: { kind?: string }): "vendor" | "regular" {
   return line.kind === "regular" ? "regular" : "vendor";
 }

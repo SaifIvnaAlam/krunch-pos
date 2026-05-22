@@ -36,10 +36,15 @@ export type DailyEntryRow = {
   voidSaleRemarks?: string;
   voidSaleAttachmentDataUrls?: string[];
   expenses: number;
+  /** Expenses paid by withdrawing from the bank (≤ `expenses`). Bank deposits use `bankSale`. */
+  bankWithdrawn: number;
   expenseLines?: ExpenseLineSaved[];
   remainingBalance: number;
   updatedAt: string;
   enteredBy?: string;
+  isLocked?: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
 };
 
 export type DailyEntryMap = Record<string, DailyEntryRow>;

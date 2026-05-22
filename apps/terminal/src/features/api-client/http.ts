@@ -123,12 +123,14 @@ export async function apiFetch<T>(
   }
 
   if (!response.ok) {
-    const msg =
-      typeof data === "object" &&
-      data !== null &&
-      "message" in data &&
-      typeof (data as { message: unknown }).message === "string"
-        ? (data as { message: string }).message
+    const rawMessage =
+      typeof data === "object" && data !== null && "message" in data
+        ? (data as { message: unknown }).message
+        : undefined;
+    const msg = Array.isArray(rawMessage)
+      ? rawMessage.join(", ")
+      : typeof rawMessage === "string"
+        ? rawMessage
         : `HTTP ${response.status}`;
     if (response.status === 401 && token) {
       clearApiTokens();

@@ -7,10 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  AUTH_EXPIRED_EVENT,
-  isAccessTokenExpired,
-} from "./authSession";
+import { AUTH_EXPIRED_EVENT } from "./authSession";
 import { loginWithEmail, logout } from "./authApi";
 import {
   clearApiTokens,
@@ -35,12 +32,7 @@ export type SessionContextValue = {
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 function initialAccessToken(): string | null {
-  const t = readAccessToken();
-  if (!t || isAccessTokenExpired(t)) {
-    clearApiTokens();
-    return null;
-  }
-  return t;
+  return readAccessToken();
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {

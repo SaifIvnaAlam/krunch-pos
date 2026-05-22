@@ -25,6 +25,11 @@ export function getSeededAdminEmail(): string {
   return "owner@universalpos.local";
 }
 
+/** Password for the seeded owner (must match `packages/database-schema/prisma/seed.ts`). */
+export function getSeededAdminPassword(): string {
+  return "Owner123!";
+}
+
 export function getDefaultBranchId(): string {
   const v = raw.VITE_DEFAULT_BRANCH_ID;
   if (typeof v === "string" && v.length > 0) return v;

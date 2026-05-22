@@ -2,6 +2,8 @@ import {
   CalendarDays,
   Eye,
   FileText,
+  Lock,
+  LockOpen,
   Paperclip,
   Pencil,
   Plus,
@@ -36,12 +38,15 @@ import {
   type EmployeeLedgerLineKind,
 } from "./LedgerModuleView";
 import {
+  bankNetAfterWithdrawals,
   bankSaleNetAfterServiceCharge,
   bankSaleServiceChargeAmount,
   deleteDailyEntry,
   listDailyEntriesDescendingFromMap,
+  lockDailyEntry,
   saveDailyEntry,
   savedLineKind,
+  unlockDailyEntry,
   useDailyEntryMap,
   type DailyEntryRow,
   type ExpenseLineSaved,
@@ -272,8 +277,13 @@ function newRegularExpenseLine(): ExpenseLineDraft {
   };
 }
 
+/** Calendar date in the device timezone (YYYY-MM-DD), not UTC. */
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function dateAddDays(dateKey: string, days: number) {
@@ -357,7 +367,7 @@ type ExpenseFieldPart =
   | "ledgerNote"
   | "note";
 
-type SalesFieldPart = "voidRemarks" | "voidAttach";
+type SalesFieldPart = "voidRemarks" | "voidAttach" | "bankWithdrawn";
 
 type FormNotice =
   | { kind: "none" }
@@ -692,6 +702,7 @@ function savedEntryBodyEquals(prior: DailyEntryRow, next: DailyEntryRow): boolea
     normalizeVoidSaleAttachments(prior.voidSaleAttachmentDataUrls) ===
       normalizeVoidSaleAttachments(next.voidSaleAttachmentDataUrls) &&
     prior.remainingBalance === next.remainingBalance &&
+    (prior.bankWithdrawn ?? 0) === (next.bankWithdrawn ?? 0) &&
     normalizeExpenseLinesForCompare(prior.expenseLines) ===
       normalizeExpenseLinesForCompare(next.expenseLines) &&
     (prior.enteredBy ?? "") === (next.enteredBy ?? "")
@@ -812,6 +823,7 @@ type DailyEntrySearchSegments = {
   opening: string;
   sales: string;
   expenses: string;
+  bankWithdrawn: string;
   remaining: string;
   cash: string;
   bank: string;
@@ -846,6 +858,11 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
   const voidAmt = r.voidSale ?? 0;
   const voidRemarks = (r.voidSaleRemarks ?? "").trim().toLowerCase();
   const ex = expenseTotalFromRow(r);
+  const bankWithdrawnAmt = r.bankWithdrawn ?? 0;
+  const bankWithdrawnS =
+    bankWithdrawnAmt > 0
+      ? `bank withdrawn ${amountSearchText(bankWithdrawnAmt)}`
+      : "";
   let legacyStr = "";
   if (!(r.expenseLines && r.expenseLines.length > 0) && (r.expenses ?? 0) > 0) {
     legacyStr = `legacy total ${amountSearchText(r.expenses ?? 0)}`;
@@ -881,6 +898,7 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
     amountSearchText(r.openingBalance),
     amountSearchText(st),
     amountSearchText(ex),
+    bankWithdrawnS,
     amountSearchText(r.remainingBalance),
     cashS,
     bankS,
@@ -905,6 +923,7 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
     opening: amountSearchText(r.openingBalance),
     sales: `${amountSearchText(st)} sales total`,
     expenses: `${amountSearchText(ex)} expenses`,
+    bankWithdrawn: bankWithdrawnS.toLowerCase(),
     remaining: amountSearchText(r.remainingBalance),
     cash: cashS.toLowerCase(),
     bank: bankS.toLowerCase(),
@@ -933,6 +952,8 @@ const DAILY_ENTRY_SEARCH_FIELD_ALIASES: Record<string, keyof DailyEntrySearchSeg
   regular: "title",
   expense: "expenses",
   expenses: "expenses",
+  withdrawn: "bankWithdrawn",
+  "bank-withdrawn": "bankWithdrawn",
   opening: "opening",
   sales: "sales",
   remaining: "remaining",
@@ -1078,9 +1099,11 @@ export function DailyEntryFormView() {
   const [voidSaleRemarks, setVoidSaleRemarks] = useState("");
   const [voidSaleAttachmentUrls, setVoidSaleAttachmentUrls] = useState<string[]>([]);
   const [expenseLines, setExpenseLines] = useState<ExpenseLineDraft[]>(() => []);
+  const [bankWithdrawn, setBankWithdrawn] = useState("0");
   const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
   const [attachBusyLineId, setAttachBusyLineId] = useState<string | null>(null);
   const [openingEdit, setOpeningEdit] = useState(false);
+  const [openingEditWarningOpen, setOpeningEditWarningOpen] = useState(false);
   const [historyDetailRow, setHistoryDetailRow] = useState<DailyEntryRow | null>(null);
   const [historyReceiptsOpen, setHistoryReceiptsOpen] = useState(false);
   /** When set, receipts gallery shows only this expense line index; `null` = all lines with receipts. */
@@ -1088,6 +1111,12 @@ export function DailyEntryFormView() {
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [pendingDeleteDateIso, setPendingDeleteDateIso] = useState<string | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [pendingLockDateIso, setPendingLockDateIso] = useState<string | null>(null);
+  const [lockError, setLockError] = useState<string | null>(null);
+  const [isLocking, setIsLocking] = useState(false);
+  const [pendingUnlockDateIso, setPendingUnlockDateIso] = useState<string | null>(null);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [isUnlocking, setIsUnlocking] = useState(false);
   const openingInputRef = useRef<HTMLInputElement>(null);
   const datePickerRef = useRef<HTMLInputElement>(null);
   const deleteConfirmInputRef = useRef<HTMLInputElement>(null);
@@ -1123,6 +1152,13 @@ export function DailyEntryFormView() {
     [dateKey, entryMap, savedListVersion],
   );
 
+  const isFormLocked = Boolean(savedRowForDate?.isLocked);
+
+  const carriedOpeningFromPrevDay = useMemo(() => {
+    const prevDayKey = dateAddDays(dateKey, -1);
+    return entryMap[prevDayKey]?.remainingBalance ?? 0;
+  }, [dateKey, entryMap, savedListVersion]);
+
   const ledgerBookNames = useSyncExternalStore(
     subscribeLedgerWorkspace,
     () => getLedgerBookNamesSnapshot("all"),
@@ -1137,6 +1173,13 @@ export function DailyEntryFormView() {
   const expenseSum = useMemo(
     () => expenseLines.reduce((s, line) => s + parseAmount(line.amount), 0),
     [expenseLines],
+  );
+
+  const bankWithdrawnAmt = useMemo(() => parseAmount(bankWithdrawn), [bankWithdrawn]);
+
+  const bankNetBalance = useMemo(
+    () => bankNetAfterWithdrawals(parseAmount(bankSale), bankWithdrawnAmt),
+    [bankSale, bankWithdrawnAmt],
   );
 
   const channelSalesGross = useMemo(
@@ -1188,6 +1231,7 @@ export function DailyEntryFormView() {
 
   const voidRemarksErr = salesFieldErrorMessage(formNotice, "voidRemarks");
   const voidAttachErr = salesFieldErrorMessage(formNotice, "voidAttach");
+  const bankWithdrawnErr = salesFieldErrorMessage(formNotice, "bankWithdrawn");
 
   useEffect(() => {
     setDateFieldText(formatDateKeyAsDisplay(dateKey));
@@ -1211,6 +1255,9 @@ export function DailyEntryFormView() {
       setVoidSaleRemarks(existing.voidSaleRemarks ?? "");
       setVoidSaleAttachmentUrls([...(existing.voidSaleAttachmentDataUrls ?? [])]);
       setExpenseLines(draftsFromRow(existing));
+      setBankWithdrawn(
+        (existing.bankWithdrawn ?? 0) === 0 ? "0" : String(existing.bankWithdrawn ?? 0),
+      );
       setFormNotice({ kind: "none" });
       return;
     }
@@ -1229,6 +1276,7 @@ export function DailyEntryFormView() {
     setVoidSaleRemarks("");
     setVoidSaleAttachmentUrls([]);
     setExpenseLines([]);
+    setBankWithdrawn("0");
     setFormNotice({ kind: "none" });
   }, [dateKey, entryMap, savedListVersion]);
 
@@ -1258,7 +1306,15 @@ export function DailyEntryFormView() {
   }, [formNotice]);
 
   useEffect(() => {
-    if (!pendingDeleteDateIso && !historyDetailRow && !receiptPreviewUrl && !historyReceiptsOpen) {
+    if (
+      !pendingDeleteDateIso &&
+      !pendingLockDateIso &&
+      !pendingUnlockDateIso &&
+      !openingEditWarningOpen &&
+      !historyDetailRow &&
+      !receiptPreviewUrl &&
+      !historyReceiptsOpen
+    ) {
       return;
     }
     const onKey = (e: KeyboardEvent) => {
@@ -1272,6 +1328,20 @@ export function DailyEntryFormView() {
         setHistoryReceiptsLineIndex(null);
         return;
       }
+      if (openingEditWarningOpen) {
+        setOpeningEditWarningOpen(false);
+        return;
+      }
+      if (pendingUnlockDateIso) {
+        setPendingUnlockDateIso(null);
+        setUnlockError(null);
+        return;
+      }
+      if (pendingLockDateIso) {
+        setPendingLockDateIso(null);
+        setLockError(null);
+        return;
+      }
       if (pendingDeleteDateIso) {
         setPendingDeleteDateIso(null);
         setDeleteConfirmText("");
@@ -1281,7 +1351,21 @@ export function DailyEntryFormView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [historyDetailRow, receiptPreviewUrl, historyReceiptsOpen, pendingDeleteDateIso]);
+  }, [historyDetailRow, receiptPreviewUrl, historyReceiptsOpen, pendingDeleteDateIso, pendingLockDateIso, pendingUnlockDateIso, openingEditWarningOpen]);
+
+  function requestOpeningBalanceEdit() {
+    if (isFormLocked || openingEdit) return;
+    setOpeningEditWarningOpen(true);
+  }
+
+  function confirmOpeningBalanceEdit() {
+    setOpeningEditWarningOpen(false);
+    setOpeningEdit(true);
+  }
+
+  function cancelOpeningBalanceEditWarning() {
+    setOpeningEditWarningOpen(false);
+  }
 
   useEffect(() => {
     if (!pendingDeleteDateIso) return;
@@ -1723,7 +1807,7 @@ export function DailyEntryFormView() {
   }
 
   async function handleSave() {
-    if (isSaving) return;
+    if (isSaving || isFormLocked) return;
 
     const validation = findFirstExpenseValidationError(expenseLines);
     if (validation) {
@@ -1813,6 +1897,16 @@ export function DailyEntryFormView() {
 
     const expenseTotal = linesToSave.reduce((s, line) => s + line.amount, 0);
 
+    const bankWithdrawnToSave = Math.max(0, parseAmount(bankWithdrawn));
+    if (bankWithdrawnToSave > expenseTotal) {
+      setFormNotice({
+        kind: "salesField",
+        message: "Withdrawn from bank cannot exceed total expenses for this day.",
+        part: "bankWithdrawn",
+      });
+      return;
+    }
+
     const prior = entryMap[dateKey];
     const enteredBy = userName.trim() || "Unknown";
     const nextCandidate: DailyEntryRow = {
@@ -1830,6 +1924,7 @@ export function DailyEntryFormView() {
         voidSaleToSave > 0 && voidRemarksToSave ? voidRemarksToSave : undefined,
       voidSaleAttachmentDataUrls: voidAttachmentsToSave,
       expenses: expenseTotal,
+      bankWithdrawn: bankWithdrawnToSave,
       expenseLines: linesToSave,
       remainingBalance: remaining,
       updatedAt: new Date().toISOString(),
@@ -1884,6 +1979,13 @@ export function DailyEntryFormView() {
     }
   }
 
+  function openAddEntryForm() {
+    const key = todayKey();
+    setDateKey(key);
+    setDateFieldText(formatDateKeyAsDisplay(key));
+    setActiveView("entry");
+  }
+
   function commitDateFieldText() {
     const parsed = parseDisplayDateToKey(dateFieldText);
     if (parsed) {
@@ -1909,6 +2011,7 @@ export function DailyEntryFormView() {
   }
 
   function openDeleteEntryModal(dateIso: string) {
+    if (entryMap[dateIso]?.isLocked) return;
     setPendingDeleteDateIso(dateIso);
     setDeleteConfirmText("");
   }
@@ -1916,6 +2019,82 @@ export function DailyEntryFormView() {
   function closeDeleteEntryModal() {
     setPendingDeleteDateIso(null);
     setDeleteConfirmText("");
+  }
+
+  function openLockEntryModal(dateIso: string) {
+    if (entryMap[dateIso]?.isLocked) return;
+    setLockError(null);
+    setPendingLockDateIso(dateIso);
+  }
+
+  function closeLockEntryModal() {
+    setPendingLockDateIso(null);
+    setLockError(null);
+  }
+
+  async function executeLockHistoryEntry(dateIso: string) {
+    if (!entryMap[dateIso] || entryMap[dateIso]?.isLocked) return;
+    setIsLocking(true);
+    setLockError(null);
+    try {
+      const result = await lockDailyEntry(dateIso, userName.trim() || "Unknown");
+      if (!result.ok) {
+        setLockError(result.message);
+        setFormNotice({ kind: "globalError", message: result.message });
+        return;
+      }
+      closeLockEntryModal();
+      await refreshEntries();
+      setSavedListVersion((v) => v + 1);
+      setFormNotice({
+        kind: "global",
+        message: `Entry for ${formatDateKeyAsDisplay(dateIso)} is locked — it can no longer be edited or deleted.`,
+      });
+      setHistoryDetailRow((open) =>
+        open?.date === dateIso ? { ...open, isLocked: true } : open,
+      );
+    } finally {
+      setIsLocking(false);
+    }
+  }
+
+  function openUnlockEntryModal(dateIso: string) {
+    if (!entryMap[dateIso]?.isLocked) return;
+    setUnlockError(null);
+    setPendingUnlockDateIso(dateIso);
+  }
+
+  function closeUnlockEntryModal() {
+    setPendingUnlockDateIso(null);
+    setUnlockError(null);
+  }
+
+  async function executeUnlockHistoryEntry(dateIso: string) {
+    if (!entryMap[dateIso]?.isLocked) return;
+    setIsUnlocking(true);
+    setUnlockError(null);
+    try {
+      const result = await unlockDailyEntry(dateIso, userName.trim() || "Unknown");
+      if (!result.ok) {
+        setUnlockError(result.message);
+        setFormNotice({ kind: "globalError", message: result.message });
+        return;
+      }
+      closeUnlockEntryModal();
+      await refreshEntries();
+      setSavedListVersion((v) => v + 1);
+      setFormNotice({
+        kind: "global",
+        message: `Entry for ${formatDateKeyAsDisplay(dateIso)} is unlocked — it can be edited or deleted again.`,
+      });
+      setHistoryDetailRow((open) =>
+        open?.date === dateIso
+          ? { ...open, isLocked: false, lockedAt: undefined, lockedBy: undefined }
+          : open,
+      );
+    } finally {
+      setIsUnlocking(false);
+    }
   }
 
   async function executeDeleteHistoryEntry(dateIso: string) {
@@ -1947,6 +2126,7 @@ export function DailyEntryFormView() {
               id="daily-entry-date"
               type="text"
               value={dateFieldText}
+              disabled={isFormLocked}
               onChange={(e) => setDateFieldText(e.target.value)}
               onBlur={commitDateFieldText}
               onKeyDown={(e) => {
@@ -1965,7 +2145,8 @@ export function DailyEntryFormView() {
             <button
               type="button"
               onClick={openNativeDatePicker}
-              className="inline-flex shrink-0 items-center justify-center rounded-md border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] p-1.5 text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)]"
+              disabled={isFormLocked}
+              className="inline-flex shrink-0 items-center justify-center rounded-md border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] p-1.5 text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
               title="Open calendar"
               aria-label="Open calendar to pick date"
             >
@@ -2020,12 +2201,23 @@ export function DailyEntryFormView() {
   const editingExistingBanner =
     activeView === "entry" && savedRowForDate ? (
       <div
-        className="shrink-0 border-b border-solid [border-color:var(--pos-sb-base)] bg-[var(--pos-sb-base)]/15 px-3 py-1.5"
+        className={`shrink-0 border-b border-solid px-3 py-1.5 ${
+          isFormLocked
+            ? "border-amber-500/50 bg-amber-500/10"
+            : "[border-color:var(--pos-sb-base)] bg-[var(--pos-sb-base)]/15"
+        }`}
         role="status"
         aria-live="polite"
       >
         <p className="text-[12px] font-bold leading-tight text-[var(--pos-text-1)]">
-          Editing an existing entry for {formatDateKeyAsDisplay(dateKey)}
+          {isFormLocked ? (
+            <>
+              <Lock className="mr-1 inline size-3.5 align-text-bottom" strokeWidth={2.25} />
+              Locked entry for {formatDateKeyAsDisplay(dateKey)}
+            </>
+          ) : (
+            <>Editing an existing entry for {formatDateKeyAsDisplay(dateKey)}</>
+          )}
           {savedRowForDate.updatedAt ? (
             <span className="ml-1.5 font-normal tabular-nums text-[9px] text-[var(--pos-text-2)]">
               · Last saved{" "}
@@ -2035,9 +2227,21 @@ export function DailyEntryFormView() {
               })}
             </span>
           ) : null}
+          {isFormLocked && savedRowForDate.lockedAt ? (
+            <span className="ml-1.5 font-normal tabular-nums text-[9px] text-[var(--pos-text-2)]">
+              · Locked{" "}
+              {new Date(savedRowForDate.lockedAt).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+              {savedRowForDate.lockedBy ? ` by ${savedRowForDate.lockedBy}` : ""}
+            </span>
+          ) : null}
         </p>
         <p className="mt-0.5 text-[10px] leading-tight text-[var(--pos-text-2)]">
-          Saved data exists for this day — saving replaces that record (one entry per day).
+          {isFormLocked
+            ? "This entry is read-only — it cannot be edited or deleted."
+            : "Saved data exists for this day — saving replaces that record (one entry per day)."}
         </p>
       </div>
     ) : null;
@@ -2117,7 +2321,7 @@ export function DailyEntryFormView() {
                   </h2>
                   <button
                     type="button"
-                    onClick={() => setActiveView("entry")}
+                    onClick={openAddEntryForm}
                     className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
                     style={{ backgroundColor: "var(--pos-sb-base)" }}
                   >
@@ -2138,7 +2342,7 @@ export function DailyEntryFormView() {
                   </h2>
                   <button
                     type="button"
-                    onClick={() => setActiveView("entry")}
+                    onClick={openAddEntryForm}
                     className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
                     style={{ backgroundColor: "var(--pos-sb-base)" }}
                   >
@@ -2147,7 +2351,7 @@ export function DailyEntryFormView() {
                   </button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
-                  <table className="w-full min-w-[720px] border-collapse text-left text-[12px]">
+                  <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]">
                       <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Date</th>
@@ -2155,6 +2359,7 @@ export function DailyEntryFormView() {
                       <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Net sales</th>
                       <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Expenses Σ</th>
                       <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Remaining</th>
+                      <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Entered by</th>
                       <th className="px-3 py-2 text-right font-semibold text-[var(--pos-text-2)]">
                         Actions
                       </th>
@@ -2164,7 +2369,7 @@ export function DailyEntryFormView() {
                     {filteredHistoryRows.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={7}
                           className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]"
                         >
                           <p className="m-0 font-medium text-[var(--pos-text-1)]">
@@ -2190,7 +2395,18 @@ export function DailyEntryFormView() {
                         className="border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/15"
                       >
                         <td className="whitespace-nowrap px-3 py-2 font-mono text-[var(--pos-text-1)]">
-                          {formatDateKeyAsDisplay(r.date)}
+                          <span className="inline-flex items-center gap-1.5">
+                            {formatDateKeyAsDisplay(r.date)}
+                            {r.isLocked ? (
+                              <span title="Locked — cannot edit or delete" aria-label="Locked">
+                                <Lock
+                                  className="size-3 shrink-0 text-amber-600"
+                                  strokeWidth={2.25}
+                                  aria-hidden
+                                />
+                              </span>
+                            ) : null}
+                          </span>
                         </td>
                         <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
                           {formatMoney(r.openingBalance)}
@@ -2204,6 +2420,12 @@ export function DailyEntryFormView() {
                         <td className="px-3 py-2 font-semibold tabular-nums text-[var(--pos-text-1)]">
                           {formatMoney(r.remainingBalance)}
                         </td>
+                        <td
+                          className="max-w-[140px] truncate px-3 py-2 text-[var(--pos-text-1)]"
+                          title={r.enteredBy?.trim() || undefined}
+                        >
+                          {r.enteredBy?.trim() || "—"}
+                        </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right">
                           <div className="inline-flex items-center justify-end gap-1">
                             <button
@@ -2215,27 +2437,53 @@ export function DailyEntryFormView() {
                             >
                               <Eye className="size-3.5" strokeWidth={2.25} />
                             </button>
-                            <button
-                              type="button"
-                              className={historyActionBtnClass}
-                              title="Edit in form"
-                              aria-label={`Edit entry ${formatDateKeyAsDisplay(r.date)}`}
-                              onClick={() => {
-                                setDateKey(r.date);
-                                setActiveView("entry");
-                              }}
-                            >
-                              <Pencil className="size-3.5" strokeWidth={2.25} />
-                            </button>
-                            <button
-                              type="button"
-                              className={`${historyActionBtnClass} hover:border-red-400/40 hover:text-red-600`}
-                              title="Delete entry"
-                              aria-label={`Delete entry ${formatDateKeyAsDisplay(r.date)}`}
-                              onClick={() => openDeleteEntryModal(r.date)}
-                            >
-                              <Trash2 className="size-3.5" strokeWidth={2.25} />
-                            </button>
+                            {!r.isLocked ? (
+                              <button
+                                type="button"
+                                className={historyActionBtnClass}
+                                title="Edit in form"
+                                aria-label={`Edit entry ${formatDateKeyAsDisplay(r.date)}`}
+                                onClick={() => {
+                                  setDateKey(r.date);
+                                  setActiveView("entry");
+                                }}
+                              >
+                                <Pencil className="size-3.5" strokeWidth={2.25} />
+                              </button>
+                            ) : null}
+                            {r.isLocked ? (
+                              <button
+                                type="button"
+                                className={historyActionBtnClass}
+                                title="Unlock entry"
+                                aria-label={`Unlock entry ${formatDateKeyAsDisplay(r.date)}`}
+                                onClick={() => openUnlockEntryModal(r.date)}
+                              >
+                                <LockOpen className="size-3.5" strokeWidth={2.25} />
+                              </button>
+                            ) : null}
+                            {!r.isLocked ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className={historyActionBtnClass}
+                                  title="Lock entry"
+                                  aria-label={`Lock entry ${formatDateKeyAsDisplay(r.date)}`}
+                                  onClick={() => openLockEntryModal(r.date)}
+                                >
+                                  <Lock className="size-3.5" strokeWidth={2.25} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`${historyActionBtnClass} hover:border-red-400/40 hover:text-red-600`}
+                                  title="Delete entry"
+                                  aria-label={`Delete entry ${formatDateKeyAsDisplay(r.date)}`}
+                                  onClick={() => openDeleteEntryModal(r.date)}
+                                >
+                                  <Trash2 className="size-3.5" strokeWidth={2.25} />
+                                </button>
+                              </>
+                            ) : null}
                           </div>
                         </td>
                       </tr>
@@ -2261,6 +2509,10 @@ export function DailyEntryFormView() {
                 handleSave();
               }}
             >
+        <fieldset
+          disabled={isFormLocked}
+          className="m-0 min-w-0 border-0 p-0 disabled:opacity-100"
+        >
         <div className="flex flex-col gap-2 px-3 py-2">
           <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
             <div className={statCardClass}>
@@ -2291,7 +2543,7 @@ export function DailyEntryFormView() {
                       type="button"
                       className={editOpeningBtnClass}
                       aria-label="Edit opening balance"
-                      onClick={() => setOpeningEdit(true)}
+                      onClick={requestOpeningBalanceEdit}
                     >
                       <Pencil className="size-3.5" strokeWidth={2.25} />
                     </button>
@@ -2478,6 +2730,44 @@ export function DailyEntryFormView() {
 
             <div className={`${columnShellClass} w-full min-w-0`}>
               <p className="border-b border-solid [border-color:var(--pos-divider)] pb-1 text-[11px] font-semibold text-[var(--pos-text-1)]">
+                Expenses
+              </p>
+              <div className="grid min-w-0 grid-cols-2 gap-x-2 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <label className={labelClass} htmlFor="daily-bank-withdrawn">
+                  Withdrawn from bank
+                  <input
+                    id="daily-bank-withdrawn"
+                    {...amountFieldProps("next")}
+                    value={bankWithdrawn}
+                    onChange={(e) => {
+                      clearSalesFieldNotice();
+                      setBankWithdrawn(sanitizeNonNegativeDecimalInput(e.target.value));
+                    }}
+                    className={`${inputClass} ${bankWithdrawnErr ? FIELD_ERR_INPUT : ""}`}
+                    data-field-error-anchor="void:bankWithdrawn"
+                    aria-invalid={bankWithdrawnErr ? true : undefined}
+                    aria-describedby="daily-bank-withdrawn-hint"
+                  />
+                  <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
+                </label>
+                <div className="flex min-w-0 flex-col justify-end gap-0.5">
+                  <p className={labelClass}>Bank balance (today)</p>
+                  <p className="text-[15px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                    {formatMoney(bankNetBalance)}
+                  </p>
+                  <p
+                    id="daily-bank-withdrawn-hint"
+                    className="text-[9px] normal-case font-normal leading-snug tracking-normal text-[var(--pos-text-2)]"
+                  >
+                    Bank sales (net after 1.75% charge) minus withdrawn amount
+                  </p>
+                </div>
+              </div>
+              <p className="mt-2 border-t border-solid [border-color:var(--pos-divider)] pt-2 text-[10px] leading-snug text-[var(--pos-text-2)]">
+                Expense lines below — use <span className="font-medium text-[var(--pos-text-1)]">Withdrawn from bank</span> when
+                part of today&apos;s expenses was paid from the bank account (deposits are in the Bank sales field).
+              </p>
+              <p className="border-b border-solid [border-color:var(--pos-divider)] pb-1 pt-2 text-[11px] font-semibold text-[var(--pos-text-1)]">
                 Ledger book entry
               </p>
               <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
@@ -2831,21 +3121,54 @@ export function DailyEntryFormView() {
               </div>
             </div>
           </div>
+        </fieldset>
 
         <div className="flex flex-col gap-1.5 border-t border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
-          <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-            {savedRowForDate
-              ? "Save updates the one record for this day (see banner above)."
-              : "No entry for this date yet. Save creates it (one record per calendar day)."}
-          </p>
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="inline-flex h-9 w-fit min-w-[7.5rem] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 active:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
-            style={{ backgroundColor: "var(--pos-sb-base)" }}
-          >
-            {isSaving ? "Saving…" : "Save"}
-          </button>
+          {isFormLocked ? (
+            <>
+              <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
+                This entry is locked and cannot be changed.
+              </p>
+              <button
+                type="button"
+                disabled={isUnlocking}
+                onClick={() => openUnlockEntryModal(dateKey)}
+                className="inline-flex h-9 w-fit min-w-[7.5rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-4 text-[12px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <LockOpen className="size-3.5" strokeWidth={2.25} />
+                {isUnlocking ? "Unlocking…" : "Unlock entry"}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
+                {savedRowForDate
+                  ? "Save updates the one record for this day (see banner above)."
+                  : "No entry for this date yet. Save creates it (one record per calendar day)."}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="inline-flex h-9 w-fit min-w-[7.5rem] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 active:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ backgroundColor: "var(--pos-sb-base)" }}
+                >
+                  {isSaving ? "Saving…" : "Save"}
+                </button>
+                {savedRowForDate ? (
+                  <button
+                    type="button"
+                    disabled={isLocking}
+                    onClick={() => openLockEntryModal(dateKey)}
+                    className="inline-flex h-9 w-fit min-w-[7.5rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-4 text-[12px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Lock className="size-3.5" strokeWidth={2.25} />
+                    {isLocking ? "Locking…" : "Lock entry"}
+                  </button>
+                ) : null}
+              </div>
+            </>
+          )}
         </div>
             </form>
           </div>
@@ -2889,9 +3212,23 @@ export function DailyEntryFormView() {
                 </button>
               </div>
               <p className="text-[10px] text-[var(--pos-text-2)]">
+                {historyDetailRow.isLocked ? (
+                  <>
+                    <Lock className="mr-1 inline size-3 align-text-bottom text-amber-600" strokeWidth={2.25} />
+                    Locked
+                    {historyDetailRow.lockedAt
+                      ? ` ${new Date(historyDetailRow.lockedAt).toLocaleString(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}`
+                      : ""}
+                    {historyDetailRow.lockedBy ? ` by ${historyDetailRow.lockedBy}` : ""}
+                    {historyDetailRow.updatedAt ? " · " : ""}
+                  </>
+                ) : null}
                 {historyDetailRow.updatedAt ? (
                   <>
-                    Saved{" "}
+                    {historyDetailRow.isLocked ? null : "Saved "}
                     {new Date(historyDetailRow.updatedAt).toLocaleString(undefined, {
                       dateStyle: "medium",
                       timeStyle: "short",
@@ -2907,6 +3244,17 @@ export function DailyEntryFormView() {
                     ["Opening", historyDetailRow.openingBalance],
                     ["Net sales", netSalesTotal(historyDetailRow)],
                     ["Expenses total", expenseTotalFromRow(historyDetailRow)],
+                    [
+                      "Withdrawn from bank",
+                      historyDetailRow.bankWithdrawn ?? 0,
+                    ],
+                    [
+                      "Bank balance (net − withdrawn)",
+                      bankNetAfterWithdrawals(
+                        historyDetailRow.bankSale,
+                        historyDetailRow.bankWithdrawn ?? 0,
+                      ),
+                    ],
                     ["Remaining (closing)", historyDetailRow.remainingBalance],
                   ] as const
                 ).map(([label, amt]) => (
@@ -3066,11 +3414,15 @@ export function DailyEntryFormView() {
                       {(() => {
                         const bankGross = historyDetailRow.bankSale;
                         const bankFee = bankSaleServiceChargeAmount(bankGross);
+                        const bankWithdrawnHist = historyDetailRow.bankWithdrawn ?? 0;
                         const rows: readonly (readonly [string, number])[] = [
                           ["Cash", historyDetailRow.cashSale],
                           ["Bank (gross)", bankGross],
                           ...(bankGross > 0
                             ? ([["Bank service charge (1.75%)", -bankFee]] as const)
+                            : ([] as const)),
+                          ...(bankWithdrawnHist > 0
+                            ? ([["Withdrawn from bank (expenses)", -bankWithdrawnHist]] as const)
                             : ([] as const)),
                           ["bKash", historyDetailRow.bkashSale],
                           ["Nagad", historyDetailRow.nagadSale],
@@ -3188,8 +3540,29 @@ export function DailyEntryFormView() {
                   setHistoryDetailRow(null);
                 }}
               >
-                Edit in form
+                {historyDetailRow.isLocked ? "View in form" : "Edit in form"}
               </button>
+              {!historyDetailRow.isLocked ? (
+                <button
+                  type="button"
+                  disabled={isLocking}
+                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-3 text-[12px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => openLockEntryModal(historyDetailRow.date)}
+                >
+                  <Lock className="size-3.5" strokeWidth={2.25} />
+                  Lock entry
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isUnlocking}
+                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => openUnlockEntryModal(historyDetailRow.date)}
+                >
+                  <LockOpen className="size-3.5" strokeWidth={2.25} />
+                  Unlock entry
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -3321,6 +3694,167 @@ export function DailyEntryFormView() {
           <p className="mt-3 max-w-lg text-center text-[11px] text-white/60">
             Tap outside or press Escape to close
           </p>
+        </div>
+      ) : null}
+
+      {openingEditWarningOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="opening-edit-warning-title"
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={cancelOpeningBalanceEditWarning}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="opening-edit-warning-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Edit opening balance?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Opening is usually the previous day&apos;s closing balance (
+              <span className="font-semibold tabular-nums text-[var(--pos-text-1)]">
+                {formatMoney(carriedOpeningFromPrevDay)}
+              </span>
+              {entryMap[dateAddDays(dateKey, -1)] ? (
+                <> for {formatDateKeyAsDisplay(dateAddDays(dateKey, -1))}</>
+              ) : (
+                <> — no saved entry for the prior day</>
+              )}
+              ). Change it only to fix an error or a special case — it affects remaining
+              (closing) for {formatDateKeyAsDisplay(dateKey)}.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={cancelOpeningBalanceEditWarning}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid border-amber-500/55 bg-amber-500/90 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 sm:flex-none"
+                onClick={confirmOpeningBalanceEdit}
+              >
+                Edit opening
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingLockDateIso ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lock-entry-title"
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={closeLockEntryModal}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="lock-entry-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Lock daily entry?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Once locked, the entry for{" "}
+              <span className="font-semibold text-[var(--pos-text-1)]">
+                {formatDateKeyAsDisplay(pendingLockDateIso)}
+              </span>{" "}
+              cannot be edited or deleted.
+            </p>
+            {lockError ? (
+              <p
+                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800"
+                role="alert"
+              >
+                {lockError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={closeLockEntryModal}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isLocking}
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/55 bg-amber-500/90 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
+                onClick={() => executeLockHistoryEntry(pendingLockDateIso)}
+              >
+                <Lock className="size-3.5" strokeWidth={2.25} />
+                {isLocking ? "Locking…" : "Lock entry"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingUnlockDateIso ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="unlock-entry-title"
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={closeUnlockEntryModal}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="unlock-entry-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Unlock daily entry?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Unlocking allows editing and deleting the entry for{" "}
+              <span className="font-semibold text-[var(--pos-text-1)]">
+                {formatDateKeyAsDisplay(pendingUnlockDateIso)}
+              </span>{" "}
+              again.
+            </p>
+            {unlockError ? (
+              <p
+                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800"
+                role="alert"
+              >
+                {unlockError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={closeUnlockEntryModal}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isUnlocking}
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-600/55 bg-emerald-600/90 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
+                onClick={() => executeUnlockHistoryEntry(pendingUnlockDateIso)}
+              >
+                <LockOpen className="size-3.5" strokeWidth={2.25} />
+                {isUnlocking ? "Unlocking…" : "Unlock entry"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

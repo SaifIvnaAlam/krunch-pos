@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Post,
   Put,
   Req,
   UseGuards,
@@ -16,6 +17,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequirePermission } from '../rbac/decorators/require-permission.decorator';
 import { DailyEntriesService } from './daily-entries.service';
+import { LockDailyEntryDto } from './dto/lock-daily-entry.dto';
+import { UnlockDailyEntryDto } from './dto/unlock-daily-entry.dto';
 import { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
 
 interface JwtPayload {
@@ -62,6 +65,30 @@ export class DailyEntriesController {
       ...dto,
       date,
     });
+  }
+
+  @Post(':date/lock')
+  @RequirePermission('daily_entry:write')
+  @ApiOperation({ summary: 'Lock daily entry — prevents further edits or deletion' })
+  lock(
+    @Param('date') date: string,
+    @Body() dto: LockDailyEntryDto,
+    @Req() req: Request,
+  ) {
+    const user = req.user as JwtPayload;
+    return this.dailyEntries.lock(user.branchId, user.staffId, date, dto.lockedBy);
+  }
+
+  @Post(':date/unlock')
+  @RequirePermission('daily_entry:write')
+  @ApiOperation({ summary: 'Unlock daily entry — allows edits and deletion again' })
+  unlock(
+    @Param('date') date: string,
+    @Body() _dto: UnlockDailyEntryDto,
+    @Req() req: Request,
+  ) {
+    const user = req.user as JwtPayload;
+    return this.dailyEntries.unlock(user.branchId, date);
   }
 
   @Delete(':date')

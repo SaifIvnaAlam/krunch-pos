@@ -45,7 +45,8 @@ model Staff {
   auditLogs       AuditLog[]
   orders          Order[]
   stockMovements  StockMovement[]
-  dailyEntries    DailyEntry[]
+  dailyEntriesEntered DailyEntry[] @relation("DailyEntryEnteredBy")
+  dailyEntriesLocked  DailyEntry[] @relation("DailyEntryLockedBy")
 }
 
 model Role {
@@ -265,15 +266,22 @@ model DailyEntry {
   voidSaleRemarks            String?
   voidSaleAttachmentDataUrls Json?
   expenses                   Decimal  @db.Decimal(14, 2)
+  /// Portion of expenses paid by withdrawing from the bank account (subset of `expenses`).
+  bankWithdrawn              Decimal  @default(0) @db.Decimal(14, 2)
   expenseLines               Json?
   remainingBalance           Decimal  @db.Decimal(14, 2)
   enteredByStaffId           String?
   enteredByName              String?
+  isLocked                   Boolean  @default(false)
+  lockedAt                   DateTime?
+  lockedByStaffId            String?
+  lockedByName               String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
 
   branch    Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  enteredBy Staff? @relation(fields: [enteredByStaffId], references: [id])
+  enteredBy Staff? @relation("DailyEntryEnteredBy", fields: [enteredByStaffId], references: [id])
+  lockedBy  Staff? @relation("DailyEntryLockedBy", fields: [lockedByStaffId], references: [id])
 
   @@unique([branchId, date])
   @@index([branchId, date])

@@ -9,21 +9,7 @@ export function notifyAuthExpired(): void {
   }
 }
 
-/** Returns true if JWT is missing, malformed, or past expiry (30s skew). */
-export function isAccessTokenExpired(token: string): boolean {
-  try {
-    const part = token.split(".")[1];
-    if (!part) return true;
-    const payload = JSON.parse(atob(part)) as { exp?: number };
-    if (typeof payload.exp !== "number") return true;
-    return payload.exp * 1000 < Date.now() + 30_000;
-  } catch {
-    return true;
-  }
-}
-
+/** Returns stored access token when present (expiry is handled via API refresh). */
 export function readValidAccessToken(): string | null {
-  const token = readAccessToken();
-  if (!token || isAccessTokenExpired(token)) return null;
-  return token;
+  return readAccessToken();
 }

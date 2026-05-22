@@ -37,6 +37,7 @@ export async function upsertDailyEntryOnApi(
       voidSaleRemarks: row.voidSaleRemarks,
       voidSaleAttachmentDataUrls: row.voidSaleAttachmentDataUrls,
       expenses: row.expenses,
+      bankWithdrawn: row.bankWithdrawn,
       expenseLines: row.expenseLines,
       remainingBalance: row.remainingBalance,
       enteredBy: row.enteredBy,
@@ -49,5 +50,29 @@ export async function deleteDailyEntryOnApi(date: string): Promise<void> {
   await apiFetch<void>(`/daily-entries/${encodeURIComponent(date)}`, {
     method: "DELETE",
     token,
+  });
+}
+
+export async function lockDailyEntryOnApi(
+  date: string,
+  lockedBy?: string,
+): Promise<DailyEntryRow> {
+  const token = requireToken();
+  return apiFetch<DailyEntryRow>(`/daily-entries/${encodeURIComponent(date)}/lock`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ lockedBy }),
+  });
+}
+
+export async function unlockDailyEntryOnApi(
+  date: string,
+  unlockedBy?: string,
+): Promise<DailyEntryRow> {
+  const token = requireToken();
+  return apiFetch<DailyEntryRow>(`/daily-entries/${encodeURIComponent(date)}/unlock`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ unlockedBy }),
   });
 }

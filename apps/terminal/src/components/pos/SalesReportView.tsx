@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  bankNetAfterWithdrawals,
   bankSaleNetAfterServiceCharge,
   listDailyEntriesDescendingFromMap,
   useDailyEntryMap,
@@ -61,6 +62,8 @@ type SalesRow = {
   openingBalance: number;
   cash: number;
   bank: number;
+  bankWithdrawn: number;
+  bankBalance: number;
   bkash: number;
   nagad: number;
   pathao: number;
@@ -76,12 +79,15 @@ type SalesRow = {
 };
 
 function rowFromEntry(r: DailyEntryRow): SalesRow {
+  const bankWithdrawn = r.bankWithdrawn ?? 0;
   return {
     dateKey: r.date,
     displayDate: formatDateKeyAsDisplay(r.date),
     openingBalance: r.openingBalance,
     cash: r.cashSale,
     bank: bankSaleNetAfterServiceCharge(r.bankSale),
+    bankWithdrawn,
+    bankBalance: bankNetAfterWithdrawals(r.bankSale, bankWithdrawn),
     bkash: r.bkashSale,
     nagad: r.nagadSale,
     pathao: r.pathaoSale,
@@ -111,6 +117,8 @@ function rowMatchesQuery(row: SalesRow, q: string): boolean {
 type SalesFooterTotals = {
   cash: number;
   bank: number;
+  bankWithdrawn: number;
+  bankBalance: number;
   bkash: number;
   nagad: number;
   pathao: number;
@@ -127,6 +135,8 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
     (acc, row) => ({
       cash: acc.cash + row.cash,
       bank: acc.bank + row.bank,
+      bankWithdrawn: acc.bankWithdrawn + row.bankWithdrawn,
+      bankBalance: acc.bankBalance + row.bankBalance,
       bkash: acc.bkash + row.bkash,
       nagad: acc.nagad + row.nagad,
       pathao: acc.pathao + row.pathao,
@@ -140,6 +150,8 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
     {
       cash: 0,
       bank: 0,
+      bankWithdrawn: 0,
+      bankBalance: 0,
       bkash: 0,
       nagad: 0,
       pathao: 0,
@@ -178,6 +190,11 @@ export function SalesReportView() {
     [filteredRows],
   );
 
+  const grandTotalBankWithdrawn = useMemo(
+    () => filteredRows.reduce((s, row) => s + row.bankWithdrawn, 0),
+    [filteredRows],
+  );
+
   const footerTotals = useMemo(() => sumFooter(filteredRows), [filteredRows]);
 
   const thClass =
@@ -196,6 +213,8 @@ export function SalesReportView() {
           <p className="text-[12px] text-[var(--pos-text-2)]">
             Saved daily entries: channel sales, voids, net sales, expenses, and closing balance
             (same figures as Daily Entry Form). Bank column is net after a 1.75% bank service charge.
+            Bank withdrawn is expenses paid from the bank; bank balance is net bank sales minus
+            withdrawn.
           </p>
         </div>
       </div>
@@ -228,6 +247,11 @@ export function SalesReportView() {
             <span className="font-semibold text-[var(--pos-text-1)]">
               {formatMoney(grandTotalExpenses)}
             </span>
+            {" · "}
+            Bank withdrawn{" "}
+            <span className="font-semibold text-[var(--pos-text-1)]">
+              {formatMoney(grandTotalBankWithdrawn)}
+            </span>
           </div>
         </div>
       </div>
@@ -248,7 +272,7 @@ export function SalesReportView() {
               : "No rows match your search."}
           </div>
         ) : (
-          <table className="w-full min-w-[1400px] border-collapse text-center">
+          <table className="w-full min-w-[1560px] border-collapse text-center">
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)]">
                 <th className={thClass}>Date</th>
@@ -261,6 +285,18 @@ export function SalesReportView() {
                   title="Net after 1.75% bank service charge (daily entry stores gross bank sales)"
                 >
                   Bank
+                </th>
+                <th
+                  className={thClass}
+                  title="Portion of the day's expenses paid by withdrawing from the bank account"
+                >
+                  Bank withdrawn
+                </th>
+                <th
+                  className={thClass}
+                  title="Bank (net after 1.75% charge) minus bank withdrawn"
+                >
+                  Bank balance
                 </th>
                 <th className={thClass}>bKash</th>
                 <th className={thClass}>Nagad</th>
@@ -294,6 +330,8 @@ export function SalesReportView() {
                   <td className={tdNum}>{formatMoney(row.openingBalance)}</td>
                   <td className={tdNum}>{formatMoney(row.cash)}</td>
                   <td className={tdNum}>{formatMoney(row.bank)}</td>
+                  <td className={tdNum}>{formatMoney(row.bankWithdrawn)}</td>
+                  <td className={tdNum}>{formatMoney(row.bankBalance)}</td>
                   <td className={tdNum}>{formatMoney(row.bkash)}</td>
                   <td className={tdNum}>{formatMoney(row.nagad)}</td>
                   <td className={tdNum}>{formatMoney(row.pathao)}</td>
@@ -323,6 +361,8 @@ export function SalesReportView() {
                 </th>
                 <td className={footTd}>{formatMoney(footerTotals.cash)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bank)}</td>
+                <td className={footTd}>{formatMoney(footerTotals.bankWithdrawn)}</td>
+                <td className={footTd}>{formatMoney(footerTotals.bankBalance)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bkash)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.nagad)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.pathao)}</td>
