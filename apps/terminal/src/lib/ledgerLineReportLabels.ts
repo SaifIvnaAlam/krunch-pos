@@ -2,8 +2,8 @@
  * Human-readable labels for ledger-related fields on saved daily expense lines.
  * Wording matches Ledger Management / Daily Entry Form; keep in sync if those labels change.
  */
-import type { ExpenseLineSaved } from "./dailyEntryStorage";
-import { savedLineKind } from "./dailyEntryStorage";
+import type { ExpenseLineSaved } from "@/features/daily-entry";
+import { savedLineKind } from "@/features/daily-entry";
 
 const LEDGER_KIND_LABEL: Record<NonNullable<ExpenseLineSaved["ledgerKind"]>, string> = {
   invoice: "Bill",

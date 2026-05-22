@@ -1,5 +1,5 @@
 import { apiFetch } from "@/features/api-client";
-import type { AuthResultDto, RefreshTokensDto } from "./types";
+import type { AuthResultDto } from "./types";
 
 export async function loginWithEmail(body: {
   email: string;
@@ -10,15 +10,6 @@ export async function loginWithEmail(body: {
   return apiFetch<AuthResultDto>("/auth/login/email", {
     method: "POST",
     body: JSON.stringify(body),
-  });
-}
-
-export async function refreshTokens(
-  refreshToken: string,
-): Promise<RefreshTokensDto> {
-  return apiFetch<RefreshTokensDto>("/auth/refresh", {
-    method: "POST",
-    body: JSON.stringify({ refreshToken }),
   });
 }
 

@@ -18,9 +18,7 @@ export {
   defaultOrderLineConfig,
 } from "./catalogUtils";
 export {
-  catalogItemPayload,
   createMenuItemOnApi,
-  deleteMenuItemOnApi,
   fetchMenuFromApi,
   updateMenuItemOnApi,
 } from "./menuApi";

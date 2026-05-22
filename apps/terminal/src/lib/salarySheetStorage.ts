@@ -1,4 +1,4 @@
-/** Persisted salary register — one sheet per calendar month (Employee Management → Salaries). */
+/** Persisted salary register — one sheet per calendar month (Employee Salaries). */
 
 export type SalaryPayment = {
   id: string;

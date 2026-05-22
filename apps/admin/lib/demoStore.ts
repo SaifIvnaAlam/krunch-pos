@@ -89,11 +89,6 @@ export async function createRestaurant(input: {
   return restaurant;
 }
 
-export async function listTeam(restaurantId: string): Promise<TeamMember[]> {
-  const store = await readStore();
-  return store.team.filter((m) => m.restaurantId === restaurantId).slice().reverse();
-}
-
 export async function listInvites(restaurantId: string): Promise<Invite[]> {
   const store = await readStore();
   return store.invites

@@ -9,6 +9,16 @@ export const POS_DEFAULT_LEAF_ID = "exp-daily";
 /** Legacy / deep-link ids not in the sidebar tree (e.g. `pos-select-leaf`). */
 const EXTRA_RESTORE_LEAF_IDS = new Set([
   "menu-mgmt",
+  "fd-cat",
+  "fd-items",
+  "fd-addon",
+  "lm-suppliers",
+  "lm-ledger",
+  "rep-expenses",
+  "rep-sales",
+  "hr-directory",
+  "hr-roster",
+  "hr-leave",
   "hr-schedule",
   "hr-attendance",
 ]);
@@ -31,11 +41,22 @@ const LEGACY_LEAF_ID_MAP: Record<string, string> = {
   "pu-ledger": POS_DEFAULT_LEAF_ID,
   "pu-suppliers": POS_DEFAULT_LEAF_ID,
   "pu-return": POS_DEFAULT_LEAF_ID,
-  /** Old single Reports leaf → expense reports under Reports branch. */
-  reports: "rep-expenses",
+  /** Old single Reports leaf → unified reports page (expense tab). */
+  reports: "rep-management",
+  "exp-list": "rep-management",
+  "rep-expenses": "rep-management",
   "menu-mgmt": "fd-menu",
-  "hr-schedule": "hr-roster",
-  "hr-attendance": "hr-roster",
+  "fd-cat": "fd-menu",
+  "fd-items": "fd-menu",
+  "fd-addon": "fd-menu",
+  "lm-suppliers": "lm-management",
+  "lm-ledger": "lm-management",
+  "hr-directory": "hr-payroll",
+  "hr-roster": "hr-payroll",
+  "hr-leave": "hr-payroll",
+  "hr-schedule": "hr-payroll",
+  "hr-attendance": "hr-payroll",
+  "mo-online": "mo-list",
 };
 
 export function readStoredLastLeafId(): string | null {

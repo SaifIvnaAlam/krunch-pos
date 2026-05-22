@@ -1,30 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Check } from "lucide-react";
-import type { CatalogItem, MenuAddon } from "../../data/demoMenuCatalog";
-import {
-  computeLineUnitPrice,
-  defaultOrderLineConfig,
-  type OrderLineConfig,
-} from "../../data/demoMenuCatalog";
+import type { CatalogItem, MenuAddon, OrderLineConfig } from "@/features/menu";
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
 
-/** @deprecated Use OrderLineConfig from demoMenuCatalog */
+/** @deprecated Use OrderLineConfig from @/features/menu */
 export type LineConfig = OrderLineConfig;
 
 function formatMoney(cents: number) {
   return (cents / 100).toFixed(2);
-}
-
-function summarizeVariants(item: CatalogItem, cfg: OrderLineConfig): string {
-  const parts: string[] = [];
-  for (const g of item.variantGroups) {
-    const cid = cfg.variantChoiceIds[g.id];
-    const ch = g.choices.find((c) => c.id === cid);
-    if (ch) parts.push(ch.name);
-  }
-  return parts.join(" · ");
 }
 
 function SubOptionRow({
@@ -313,88 +298,6 @@ export function ItemOptionsBody({
           </div>
         </section>
       ) : null}
-    </div>
-  );
-}
-
-export function ItemOptionsModal({
-  item,
-  open,
-  onClose,
-  onConfirm,
-}: {
-  item: CatalogItem | null;
-  open: boolean;
-  onClose: () => void;
-  onConfirm: (cfg: OrderLineConfig, unitPriceCents: number, summary: string) => void;
-}) {
-  const [cfg, setCfg] = useState<OrderLineConfig | null>(null);
-
-  useEffect(() => {
-    if (item) setCfg(defaultOrderLineConfig(item));
-  }, [item]);
-
-  const unitPrice = useMemo(() => {
-    if (!item || !cfg) return 0;
-    return computeLineUnitPrice(item, cfg);
-  }, [item, cfg]);
-
-  if (!open || !item || !cfg) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 p-4 sm:items-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="item-options-title"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className={`max-h-[min(88vh,680px)] w-full max-w-[420px] overflow-y-auto rounded-[20px] bg-[var(--pos-card)] p-6 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
-      >
-        <h2
-          id="item-options-title"
-          className="text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]"
-        >
-          {item.name}
-        </h2>
-        <p className="mt-1 font-mono text-[13px] text-[var(--pos-text-2)]">
-          Base ৳{formatMoney(item.priceCents)}
-        </p>
-
-        <div className="mt-6">
-          <ItemOptionsBody item={item} value={cfg} onChange={setCfg} />
-        </div>
-
-        <div className="mt-8 flex flex-col gap-2 border-t border-solid [border-color:var(--pos-divider)] pt-6">
-          <div className="flex items-center justify-between text-[14px] font-medium text-[var(--pos-text-1)]">
-            <span>Line price</span>
-            <span className="font-mono">৳{formatMoney(unitPrice)}</span>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-10 flex-1 items-center justify-center rounded-[10px] border-[1.5px] border-solid [border-color:var(--pos-input-border)] bg-transparent text-[13px] font-medium text-[var(--pos-text-1)] transition-colors hover:[border-color:var(--pos-border-strong)]"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const summary = summarizeVariants(item, cfg);
-                onConfirm(cfg, unitPrice, summary);
-                onClose();
-              }}
-              className="flex h-10 flex-1 items-center justify-center rounded-[10px] bg-[var(--pos-primary-bg)] text-[13px] font-medium text-[var(--pos-primary-fg)] transition-colors hover:bg-[var(--pos-primary-hover)]"
-            >
-              Add to order
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

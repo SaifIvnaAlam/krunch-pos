@@ -44,26 +44,23 @@ import {
   LedgerModuleView,
 } from "../components/pos/LedgerModuleView";
 import { ItemOptionsBody } from "../components/pos/ItemOptionsModal";
-import { ExpenseRecordsView } from "../components/pos/ExpenseRecordsView";
 import { DailyEntryFormView } from "../components/pos/DailyEntryFormView";
-import { ExpenseReportsView } from "../components/pos/ExpenseReportsView";
-import { SalesReportView } from "../components/pos/SalesReportView";
 import {
-  FoodManagementPanel,
-  type AddonTemplate,
-} from "../components/pos/FoodManagementPanel";
+  REPORT_LEAF_IDS,
+  ReportsModuleView,
+} from "../components/pos/ReportsModuleView";
+import { FoodManagementPanel } from "../components/pos/FoodManagementPanel";
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
 
-function foodManagementInitialLeaf(
-  activeLeafId: string,
-): "fd-cat" | "fd-items" | "fd-addon" | "fd-menu" {
-  if (activeLeafId === "fd-cat") return "fd-cat";
-  if (activeLeafId === "fd-items") return "fd-items";
-  if (activeLeafId === "fd-addon") return "fd-addon";
-  return "fd-menu";
-}
+const FOOD_MANAGEMENT_LEAF_IDS = new Set([
+  "menu-mgmt",
+  "fd-menu",
+  "fd-cat",
+  "fd-items",
+  "fd-addon",
+]);
 
 const CATEGORY_STYLES = [
   { bg: "#ffd4c8", text: "#7a3520" },
@@ -193,7 +190,6 @@ export function PosTerminalPage() {
     error: menuError,
     refresh: refreshMenuCatalog,
   } = useMenuCatalog();
-  const [addonTemplates, setAddonTemplates] = useState<AddonTemplate[]>([]);
   const orderedMenuCategories = useMemo(
     () => [...menuCategories].sort((a, b) => a.name.localeCompare(b.name)),
     [menuCategories],
@@ -249,25 +245,6 @@ export function PosTerminalPage() {
   useEffect(() => {
     writeStoredLastLeafId(activeLeafId);
   }, [activeLeafId]);
-
-  useEffect(() => {
-    const map = new Map<string, AddonTemplate>();
-    for (const cat of menuCategories) {
-      for (const item of cat.items) {
-        for (const addon of item.addons) {
-          const key = `${addon.name.toLowerCase()}|${addon.priceCents}`;
-          if (!map.has(key)) {
-            map.set(key, {
-              id: `${key}-${Math.random().toString(36).slice(2, 6)}`,
-              name: addon.name,
-              priceCents: addon.priceCents,
-            });
-          }
-        }
-      }
-    }
-    setAddonTemplates(Array.from(map.values()));
-  }, [menuCategories]);
 
   const items = useMemo((): CatalogRow[] => {
     const q = menuSearch.trim().toLowerCase();
@@ -609,9 +586,6 @@ export function PosTerminalPage() {
     if (activeLeafId === "mo-list") {
       return <OrdersManageView defaultFilter="all" />;
     }
-    if (activeLeafId === "mo-online") {
-      return <OrdersManageView defaultFilter="online" />;
-    }
 
     if (showMenuSurface) {
       return (
@@ -766,36 +740,21 @@ export function PosTerminalPage() {
       return <LedgerModuleView leafId={activeLeafId} />;
     }
     if (HR_LEAF_IDS.has(activeLeafId)) {
-      return <EmployeeModuleView leafId={activeLeafId} />;
+      return <EmployeeModuleView />;
     }
 
-    if (activeLeafId === "exp-list") {
-      return <ExpenseRecordsView />;
-    }
     if (activeLeafId === "exp-daily") {
       return <DailyEntryFormView />;
     }
-    if (activeLeafId === "rep-expenses") {
-      return <ExpenseReportsView />;
-    }
-    if (activeLeafId === "rep-sales") {
-      return <SalesReportView />;
+    if (REPORT_LEAF_IDS.has(activeLeafId)) {
+      return <ReportsModuleView leafId={activeLeafId} />;
     }
 
-    if (
-      activeLeafId === "menu-mgmt" ||
-      activeLeafId === "fd-cat" ||
-      activeLeafId === "fd-items" ||
-      activeLeafId === "fd-addon" ||
-      activeLeafId === "fd-menu"
-    ) {
+    if (FOOD_MANAGEMENT_LEAF_IDS.has(activeLeafId)) {
       return (
         <FoodManagementPanel
           categories={menuCategories}
           setCategories={setMenuCategories}
-          addonTemplates={addonTemplates}
-          setAddonTemplates={setAddonTemplates}
-          initialLeaf={foodManagementInitialLeaf(activeLeafId)}
           onMenuRefresh={refreshMenuCatalog}
         />
       );

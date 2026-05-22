@@ -2,21 +2,10 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   BookMarked,
-  BookOpen,
-  Building2,
-  CalendarDays,
-  CalendarOff,
   ClipboardList,
-  Globe,
-  LayoutList,
-  ListOrdered,
   NotebookPen,
-  PlusCircle,
   Receipt,
   Salad,
-  Tags,
-  TrendingUp,
-  Users,
   UtensilsCrossed,
 } from "lucide-react";
 
@@ -26,6 +15,7 @@ export type NavLeaf = {
   label: string;
   icon: LucideIcon;
   addon?: boolean;
+  beta?: boolean;
 };
 
 export type NavBranch = {
@@ -34,6 +24,7 @@ export type NavBranch = {
   label: string;
   icon: LucideIcon;
   addon?: boolean;
+  beta?: boolean;
   children: NavNode[];
 };
 
@@ -45,68 +36,22 @@ export type NavSection = {
   nodes: NavNode[];
 };
 
-const SIDEBAR_NAV_NODES: NavNode[] = [
-  { kind: "leaf", id: "menu", label: "POS register", icon: UtensilsCrossed },
-  {
-    kind: "branch",
-    id: "orders",
-    label: "Orders",
-    icon: ClipboardList,
-    children: [
-      { kind: "leaf", id: "mo-list", label: "All orders", icon: ListOrdered },
-      { kind: "leaf", id: "mo-online", label: "Online orders", icon: Globe },
-    ],
-  },
+const PRIMARY_SIDEBAR_NAV_NODES: NavNode[] = [
   { kind: "leaf", id: "exp-daily", label: "Daily Entry Form", icon: NotebookPen },
-  { kind: "leaf", id: "exp-list", label: "Expense records", icon: Receipt },
-  {
-    kind: "branch",
-    id: "food-management",
-    label: "Food management",
-    icon: Salad,
-    children: [
-      { kind: "leaf", id: "fd-cat", label: "Categories", icon: Tags },
-      { kind: "leaf", id: "fd-items", label: "Menu items", icon: UtensilsCrossed },
-      { kind: "leaf", id: "fd-addon", label: "Add-ons", icon: PlusCircle },
-      { kind: "leaf", id: "fd-menu", label: "Menu builder", icon: LayoutList },
-    ],
-  },
-  {
-    kind: "branch",
-    id: "ledger-management",
-    label: "Ledger Management",
-    icon: BookMarked,
-    children: [
-      { kind: "leaf", id: "lm-suppliers", label: "Ledger books", icon: Building2 },
-      { kind: "leaf", id: "lm-ledger", label: "Bills & Payments", icon: BookOpen },
-    ],
-  },
-  {
-    kind: "branch",
-    id: "reports",
-    label: "Reports",
-    icon: BarChart3,
-    children: [
-      { kind: "leaf", id: "rep-expenses", label: "Expense reports", icon: Receipt },
-      { kind: "leaf", id: "rep-sales", label: "Sales report", icon: TrendingUp },
-    ],
-  },
-  {
-    kind: "branch",
-    id: "employee-management",
-    label: "Employee Management",
-    icon: Users,
-    children: [
-      { kind: "leaf", id: "hr-directory", label: "Employee List", icon: Users },
-      { kind: "leaf", id: "hr-roster", label: "Roster & Attendance", icon: CalendarDays },
-      { kind: "leaf", id: "hr-leave", label: "Leave", icon: CalendarOff },
-      { kind: "leaf", id: "hr-payroll", label: "Salaries", icon: Receipt },
-    ],
-  },
+  { kind: "leaf", id: "lm-management", label: "Ledger Management", icon: BookMarked },
+  { kind: "leaf", id: "rep-management", label: "Reports", icon: BarChart3 },
+  { kind: "leaf", id: "hr-payroll", label: "Employee Salaries", icon: Receipt },
+];
+
+const BETA_SIDEBAR_NAV_NODES: NavNode[] = [
+  { kind: "leaf", id: "menu", label: "POS", icon: UtensilsCrossed, beta: true },
+  { kind: "leaf", id: "mo-list", label: "Orders", icon: ClipboardList, beta: true },
+  { kind: "leaf", id: "fd-menu", label: "Menu", icon: Salad, beta: true },
 ];
 
 export const POS_NAV_SECTIONS: NavSection[] = [
-  { id: "sidebar", label: "", nodes: SIDEBAR_NAV_NODES },
+  { id: "main", label: "", nodes: PRIMARY_SIDEBAR_NAV_NODES },
+  { id: "upcoming", label: "Upcoming", nodes: BETA_SIDEBAR_NAV_NODES },
 ];
 
 /** IDs that open the POS menu + cart surface. */
@@ -152,11 +97,17 @@ export function findLeafMeta(id: string): {
   label: string;
   icon: LucideIcon;
   addon?: boolean;
+  beta?: boolean;
 } | null {
-  function walk(nodes: NavNode[]): { label: string; icon: LucideIcon; addon?: boolean } | null {
+  function walk(nodes: NavNode[]): {
+    label: string;
+    icon: LucideIcon;
+    addon?: boolean;
+    beta?: boolean;
+  } | null {
     for (const n of nodes) {
       if (n.kind === "leaf" && n.id === id) {
-        return { label: n.label, icon: n.icon, addon: n.addon };
+        return { label: n.label, icon: n.icon, addon: n.addon, beta: n.beta };
       }
       if (n.kind === "branch") {
         const hit = walk(n.children);

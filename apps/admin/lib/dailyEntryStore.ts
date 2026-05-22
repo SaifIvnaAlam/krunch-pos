@@ -52,7 +52,7 @@ export function addDaysToDateKey(dateKey: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
-export function computeRemainingBalance(entry: {
+function computeRemainingBalance(entry: {
   openingBalance: number;
   cashSale: number;
   bankSale: number;

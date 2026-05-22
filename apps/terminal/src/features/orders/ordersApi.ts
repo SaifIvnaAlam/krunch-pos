@@ -33,12 +33,3 @@ export async function holdOrderOnApi(orderId: string): Promise<void> {
     body: JSON.stringify({}),
   });
 }
-
-export async function fireOrderOnApi(orderId: string): Promise<void> {
-  const token = requireAccessToken();
-  await apiFetch(`/orders/${encodeURIComponent(orderId)}/fire`, {
-    method: "POST",
-    token,
-    body: JSON.stringify({}),
-  });
-}

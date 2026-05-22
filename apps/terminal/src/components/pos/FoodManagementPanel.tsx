@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ImageUploadField } from "./ImageUploadField";
 import {
   catalogItemToModifiers,
@@ -8,20 +8,11 @@ import {
 } from "@/features/menu";
 import { fromStorageRef, uploadFileToStorage } from "@/features/storage";
 import { isDemoDataMode } from "@/shared/config/env";
-import type { CatalogCategory, CatalogItem, MenuVariantGroup } from "../../data/demoMenuCatalog";
-
-export type AddonTemplate = {
-  id: string;
-  name: string;
-  priceCents: number;
-};
+import type { CatalogCategory, CatalogItem } from "@/features/menu";
 
 type Props = {
   categories: CatalogCategory[];
   setCategories: Dispatch<SetStateAction<CatalogCategory[]>>;
-  addonTemplates: AddonTemplate[];
-  setAddonTemplates: Dispatch<SetStateAction<AddonTemplate[]>>;
-  initialLeaf: "fd-cat" | "fd-items" | "fd-addon" | "fd-menu";
   onMenuRefresh?: () => Promise<void>;
 };
 
@@ -42,47 +33,47 @@ function formatMoney(cents: number) {
   return (cents / 100).toFixed(2);
 }
 
+const inputClass =
+  "h-9 min-w-0 flex-1 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
+const selectClass =
+  "h-9 min-w-0 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
+const btnClass =
+  "h-9 shrink-0 rounded-[8px] bg-[var(--pos-primary-bg)] px-3 text-[12px] font-medium text-[var(--pos-primary-fg)] disabled:opacity-50";
+
 export function FoodManagementPanel({
   categories,
   setCategories,
-  addonTemplates,
-  setAddonTemplates,
-  initialLeaf,
   onMenuRefresh,
 }: Props) {
   const [categoryName, setCategoryName] = useState("");
   const [itemName, setItemName] = useState("");
-  const [itemDescription, setItemDescription] = useState("");
-  const [itemPrice, setItemPrice] = useState("0");
-  const [newItemCategory, setNewItemCategory] = useState(categories[0]?.id ?? "");
-  const [selectedCategoryId, setSelectedCategoryId] = useState(categories[0]?.id ?? "");
+  const [itemPrice, setItemPrice] = useState("");
+  const [itemCategoryId, setItemCategoryId] = useState(categories[0]?.id ?? "");
+  const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [selectedItemId, setSelectedItemId] = useState("");
-  const [groupName, setGroupName] = useState("");
-  const [groupRequired, setGroupRequired] = useState(true);
-  const [choiceName, setChoiceName] = useState("");
-  const [choiceDelta, setChoiceDelta] = useState("0");
-  const [selectedGroupId, setSelectedGroupId] = useState("");
-  const [addonName, setAddonName] = useState("");
-  const [addonPrice, setAddonPrice] = useState("0");
-  const [addonParentGroupId, setAddonParentGroupId] = useState("");
-  const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
-  const [itemImageRef, setItemImageRef] = useState<string | null>(null);
+  const [extraName, setExtraName] = useState("");
+  const [extraPrice, setExtraPrice] = useState("");
   const [itemSaveError, setItemSaveError] = useState<string | null>(null);
   const [itemSaving, setItemSaving] = useState(false);
   const [photoSaveError, setPhotoSaveError] = useState<string | null>(null);
   const [photoSaving, setPhotoSaving] = useState(false);
 
+  useEffect(() => {
+    if (!itemCategoryId && categories[0]) setItemCategoryId(categories[0].id);
+  }, [categories, itemCategoryId]);
+
   const selectedCategory = useMemo(
     () => categories.find((c) => c.id === selectedCategoryId),
     [categories, selectedCategoryId],
   );
-  const selectedItem: CatalogItem | undefined = useMemo(
+  const selectedItem = useMemo(
     () => selectedCategory?.items.find((i) => i.id === selectedItemId),
     [selectedCategory, selectedItemId],
   );
-  const selectedGroup: MenuVariantGroup | undefined = useMemo(
-    () => selectedItem?.variantGroups.find((g) => g.id === selectedGroupId),
-    [selectedItem, selectedGroupId],
+
+  const totalItems = useMemo(
+    () => categories.reduce((n, c) => n + c.items.length, 0),
+    [categories],
   );
 
   const createCategory = () => {
@@ -90,47 +81,33 @@ export function FoodManagementPanel({
     const id = uniqueId(categoryName);
     setCategories((prev) => [...prev, { id, name: categoryName.trim(), items: [] }]);
     setCategoryName("");
-    setSelectedCategoryId(id);
-    setNewItemCategory(id);
+    setItemCategoryId(id);
   };
 
   const createItem = () => {
     void (async () => {
       const priceCents = Math.round(Number(itemPrice) * 100);
-      if (!itemName.trim() || !newItemCategory || Number.isNaN(priceCents)) return;
-      const categoryName =
-        categories.find((c) => c.id === newItemCategory)?.name ?? "Uncategorized";
+      if (!itemName.trim() || !itemCategoryId || Number.isNaN(priceCents)) return;
+      const catName =
+        categories.find((c) => c.id === itemCategoryId)?.name ?? "Uncategorized";
       const displayName = itemName.trim();
-      const templateAddons = addonTemplates
-        .filter((t) => selectedTemplateIds.includes(t.id))
-        .map((t) => ({
-          id: uniqueId(t.name),
-          name: t.name,
-          priceCents: t.priceCents,
-        }));
       const draftItem: CatalogItem = {
         id: uniqueId(itemName),
-        name: itemDescription.trim()
-          ? `${displayName} (${itemDescription.trim()})`
-          : displayName,
+        name: displayName,
         priceCents: Math.max(0, priceCents),
         soldToday: 0,
         variantGroups: [],
-        addons: templateAddons,
-        imageRef: itemImageRef,
+        addons: [],
       };
 
       if (!isDemoDataMode()) {
         setItemSaving(true);
         setItemSaveError(null);
         try {
-          const imageKey = itemImageRef ? fromStorageRef(itemImageRef) ?? undefined : undefined;
           await createMenuItemOnApi({
             name: displayName,
-            description: itemDescription.trim() || undefined,
             price: Math.max(0, priceCents) / 100,
-            category: categoryName,
-            imageKey,
+            category: catName,
             modifiers: catalogItemToModifiers(draftItem),
           });
           await onMenuRefresh?.();
@@ -143,19 +120,22 @@ export function FoodManagementPanel({
       } else {
         setCategories((prev) =>
           prev.map((c) =>
-            c.id === newItemCategory ? { ...c, items: [...c.items, draftItem] } : c,
+            c.id === itemCategoryId ? { ...c, items: [...c.items, draftItem] } : c,
           ),
         );
+        setSelectedCategoryId(itemCategoryId);
         setSelectedItemId(draftItem.id);
       }
 
       setItemName("");
-      setItemDescription("");
-      setItemPrice("0");
-      setItemImageRef(null);
-      setSelectedTemplateIds([]);
-      setSelectedCategoryId(newItemCategory);
+      setItemPrice("");
     })();
+  };
+
+  const selectItem = (categoryId: string, itemId: string) => {
+    setSelectedCategoryId(categoryId);
+    setSelectedItemId(itemId);
+    setPhotoSaveError(null);
   };
 
   const updateSelectedItemPhoto = (ref: string | null) => {
@@ -190,73 +170,9 @@ export function FoodManagementPanel({
     })();
   };
 
-  const createGroup = () => {
-    if (!selectedCategory || !selectedItem || !groupName.trim()) return;
-    const nextGroup: MenuVariantGroup = {
-      id: uniqueId(groupName),
-      name: groupName.trim(),
-      required: groupRequired,
-      choices: [],
-    };
-    setCategories((prev) =>
-      prev.map((c) =>
-        c.id !== selectedCategory.id
-          ? c
-          : {
-              ...c,
-              items: c.items.map((i) =>
-                i.id === selectedItem.id
-                  ? { ...i, variantGroups: [...i.variantGroups, nextGroup] }
-                  : i,
-              ),
-            },
-      ),
-    );
-    setGroupName("");
-    setSelectedGroupId(nextGroup.id);
-  };
-
-  const createChoice = () => {
-    const delta = Math.round(Number(choiceDelta) * 100);
-    if (!selectedCategory || !selectedItem || !selectedGroup || !choiceName.trim() || Number.isNaN(delta)) return;
-    setCategories((prev) =>
-      prev.map((c) =>
-        c.id !== selectedCategory.id
-          ? c
-          : {
-              ...c,
-              items: c.items.map((i) =>
-                i.id !== selectedItem.id
-                  ? i
-                  : {
-                      ...i,
-                      variantGroups: i.variantGroups.map((g) =>
-                        g.id !== selectedGroup.id
-                          ? g
-                          : {
-                              ...g,
-                              choices: [
-                                ...g.choices,
-                                {
-                                  id: uniqueId(choiceName),
-                                  name: choiceName.trim(),
-                                  priceDeltaCents: delta,
-                                },
-                              ],
-                            },
-                      ),
-                    },
-              ),
-            },
-      ),
-    );
-    setChoiceName("");
-    setChoiceDelta("0");
-  };
-
-  const createAddon = () => {
-    const price = Math.round(Number(addonPrice) * 100);
-    if (!selectedCategory || !selectedItem || !addonName.trim() || Number.isNaN(price)) return;
+  const addExtra = () => {
+    const price = Math.round(Number(extraPrice) * 100);
+    if (!selectedCategory || !selectedItem || !extraName.trim() || Number.isNaN(price)) return;
     setCategories((prev) =>
       prev.map((c) =>
         c.id !== selectedCategory.id
@@ -271,10 +187,9 @@ export function FoodManagementPanel({
                       addons: [
                         ...i.addons,
                         {
-                          id: uniqueId(addonName),
-                          name: addonName.trim(),
-                          priceCents: price,
-                          parentGroupId: addonParentGroupId || undefined,
+                          id: uniqueId(extraName),
+                          name: extraName.trim(),
+                          priceCents: Math.max(0, price),
                         },
                       ],
                     },
@@ -282,234 +197,161 @@ export function FoodManagementPanel({
             },
       ),
     );
-    setAddonName("");
-    setAddonPrice("0");
-    setAddonParentGroupId("");
-  };
-
-  const createAddonTemplate = () => {
-    const price = Math.round(Number(addonPrice) * 100);
-    if (!addonName.trim() || Number.isNaN(price)) return;
-    setAddonTemplates((prev) => [
-      ...prev,
-      { id: uniqueId(addonName), name: addonName.trim(), priceCents: Math.max(0, price) },
-    ]);
-    setAddonName("");
-    setAddonPrice("0");
-  };
-
-  const attachTemplateToItem = (templateId: string) => {
-    const template = addonTemplates.find((t) => t.id === templateId);
-    if (!template || !selectedCategory || !selectedItem) return;
-    setCategories((prev) =>
-      prev.map((c) =>
-        c.id !== selectedCategory.id
-          ? c
-          : {
-              ...c,
-              items: c.items.map((i) =>
-                i.id !== selectedItem.id
-                  ? i
-                  : {
-                      ...i,
-                      addons: [
-                        ...i.addons,
-                        {
-                          id: uniqueId(template.name),
-                          name: template.name,
-                          priceCents: template.priceCents,
-                        },
-                      ],
-                    },
-              ),
-            },
-      ),
-    );
+    setExtraName("");
+    setExtraPrice("");
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto pr-1">
-      <div>
-        <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">
-          {initialLeaf === "fd-menu"
-            ? "Menu management"
-            : initialLeaf === "fd-cat"
-              ? "Category setup"
-              : initialLeaf === "fd-items"
-                ? "Item editor"
-                : "Add-on library"}
-        </h1>
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-1">
+      <h1 className="text-[15px] font-semibold text-[var(--pos-text-1)]">Menu</h1>
+
+      <div className="flex flex-col gap-2 rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-3">
+        <div className="flex gap-2">
+          <input
+            value={categoryName}
+            onChange={(e) => setCategoryName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && createCategory()}
+            placeholder="New category"
+            className={inputClass}
+          />
+          <button type="button" onClick={createCategory} className={btnClass}>
+            Add
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={itemCategoryId}
+            onChange={(e) => setItemCategoryId(e.target.value)}
+            className={`${selectClass} max-w-[140px]`}
+            disabled={categories.length === 0}
+          >
+            {categories.length === 0 ? (
+              <option value="">No category</option>
+            ) : (
+              categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))
+            )}
+          </select>
+          <input
+            value={itemName}
+            onChange={(e) => setItemName(e.target.value)}
+            placeholder="Item name"
+            className={inputClass}
+          />
+          <input
+            value={itemPrice}
+            onChange={(e) => setItemPrice(e.target.value)}
+            placeholder="Price"
+            inputMode="decimal"
+            className={`${inputClass} max-w-[88px]`}
+          />
+          <button
+            type="button"
+            onClick={createItem}
+            disabled={itemSaving || categories.length === 0}
+            className={btnClass}
+          >
+            {itemSaving ? "…" : "Add item"}
+          </button>
+        </div>
+        {itemSaveError ? <p className="text-[12px] text-red-600">{itemSaveError}</p> : null}
       </div>
 
-      {initialLeaf === "fd-cat" || initialLeaf === "fd-menu" ? (
-        <section className="rounded-[12px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-4">
-          <p className="text-[13px] font-medium text-[var(--pos-text-1)]">New category</p>
-          <div className="mt-2 flex gap-2">
-            <input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="Category name" className="h-10 flex-1 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
-            <button type="button" onClick={createCategory} className="h-10 rounded-[10px] bg-[var(--pos-primary-bg)] px-4 text-[12px] font-medium text-[var(--pos-primary-fg)]">Create</button>
-          </div>
-          <div className="mt-4">
-            <p className="mb-2 text-[12px] text-[var(--pos-text-2)]">Existing categories</p>
-            <div className="flex flex-wrap gap-2">
-              {categories.map((c) => (
-                <span key={c.id} className="rounded-full border border-solid [border-color:var(--pos-border-medium)] px-3 py-1 text-[12px] text-[var(--pos-text-1)]">
-                  {c.name}
-                </span>
-              ))}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {initialLeaf === "fd-addon" ? (
-        <section className="rounded-[12px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-4">
-          <p className="text-[13px] font-medium text-[var(--pos-text-1)]">Add-on library</p>
-          <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
-            <input value={addonName} onChange={(e) => setAddonName(e.target.value)} placeholder="Add-on name" className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
-            <input value={addonPrice} onChange={(e) => setAddonPrice(e.target.value)} placeholder="Price (e.g. 1.25)" className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
-            <button type="button" onClick={createAddonTemplate} className="h-10 rounded-[10px] bg-[var(--pos-primary-bg)] px-4 text-[12px] font-medium text-[var(--pos-primary-fg)]">Save add-on</button>
-          </div>
-          <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
-            {addonTemplates.map((a) => (
-              <div key={a.id} className="rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] p-3 text-[12px]">
-                <p className="font-medium text-[var(--pos-text-1)]">{a.name}</p>
-                <p className="font-mono text-[var(--pos-text-2)]">৳{formatMoney(a.priceCents)}</p>
-              </div>
+      <div className="min-h-0 flex-1 rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)]">
+        {categories.length === 0 ? (
+          <p className="p-4 text-[13px] text-[var(--pos-text-2)]">Add a category, then items.</p>
+        ) : totalItems === 0 ? (
+          <p className="p-4 text-[13px] text-[var(--pos-text-2)]">No items yet.</p>
+        ) : (
+          <ul className="divide-y divide-[var(--pos-border-hairline)]">
+            {categories.map((cat) => (
+              <li key={cat.id}>
+                <p className="bg-[var(--pos-page)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]">
+                  {cat.name}
+                </p>
+                {cat.items.length === 0 ? (
+                  <p className="px-3 py-2 text-[12px] text-[var(--pos-text-2)]">No items</p>
+                ) : (
+                  <ul>
+                    {cat.items.map((item) => {
+                      const selected =
+                        selectedCategoryId === cat.id && selectedItemId === item.id;
+                      return (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            onClick={() => selectItem(cat.id, item.id)}
+                            className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-[var(--pos-nav-hover)]/40 ${
+                              selected ? "bg-[var(--pos-nav-hover)]/60" : ""
+                            }`}
+                          >
+                            <span className="min-w-0 truncate text-[var(--pos-text-1)]">
+                              {item.name}
+                            </span>
+                            <span className="shrink-0 font-mono tabular-nums text-[var(--pos-text-2)]">
+                              ৳{formatMoney(item.priceCents)}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
             ))}
-          </div>
-        </section>
-      ) : null}
+          </ul>
+        )}
+      </div>
 
-      {initialLeaf === "fd-items" || initialLeaf === "fd-menu" ? (
-        <>
-          <section className="rounded-[12px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-4">
-            <p className="text-[13px] font-medium text-[var(--pos-text-1)]">Step 1: Basic item info</p>
-            <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
-              <select value={newItemCategory} onChange={(e) => setNewItemCategory(e.target.value)} className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]">
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="Item name" className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
-              <input value={itemPrice} onChange={(e) => setItemPrice(e.target.value)} placeholder="Base price (e.g. 12.99)" className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
-              <input value={itemDescription} onChange={(e) => setItemDescription(e.target.value)} placeholder="Short note (optional)" className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]" />
-            </div>
-            <div className="mt-3">
-              <ImageUploadField
-                label="Item photo"
-                mediaRef={itemImageRef}
-                onMediaRefChange={setItemImageRef}
-                disabled={itemSaving}
-                onUpload={(file) => uploadFileToStorage(file, "menu", itemName || "menu-item")}
-              />
-            </div>
-            <p className="mt-3 text-[12px] text-[var(--pos-text-2)]">Pick from add-on library for this item</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {addonTemplates.map((a) => {
-                const selected = selectedTemplateIds.includes(a.id);
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() =>
-                      setSelectedTemplateIds((prev) =>
-                        selected ? prev.filter((id) => id !== a.id) : [...prev, a.id],
-                      )
-                    }
-                    className={`rounded-full border px-3 py-1 text-[12px] ${
-                      selected
-                        ? "border-[var(--pos-text-1)] bg-[var(--pos-nav-hover)] text-[var(--pos-text-1)]"
-                        : "border-[var(--pos-border-medium)] text-[var(--pos-text-2)]"
-                    }`}
-                  >
-                    {a.name} (৳{formatMoney(a.priceCents)})
-                  </button>
-                );
-              })}
-            </div>
-            {itemSaveError ? (
-              <p className="mt-2 text-[12px] text-red-600">{itemSaveError}</p>
+      {selectedItem ? (
+        <div className="rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-3">
+          <p className="truncate text-[13px] font-medium text-[var(--pos-text-1)]">
+            {selectedItem.name}
+          </p>
+          <div className="mt-2">
+            <ImageUploadField
+              label="Photo"
+              mediaRef={selectedItem.imageRef ?? null}
+              onMediaRefChange={updateSelectedItemPhoto}
+              disabled={photoSaving}
+              onUpload={(file) => uploadFileToStorage(file, "menu", selectedItem.name)}
+            />
+            {photoSaveError ? (
+              <p className="mt-1 text-[12px] text-red-600">{photoSaveError}</p>
             ) : null}
-            <button
-              type="button"
-              onClick={createItem}
-              disabled={itemSaving}
-              className="mt-3 h-10 rounded-[10px] bg-[var(--pos-primary-bg)] px-4 text-[12px] font-medium text-[var(--pos-primary-fg)] disabled:opacity-50"
-            >
-              {itemSaving ? "Saving…" : "Create item"}
+          </div>
+          {selectedItem.addons.length > 0 ? (
+            <ul className="mt-3 space-y-1 text-[12px] text-[var(--pos-text-2)]">
+              {selectedItem.addons.map((a) => (
+                <li key={a.id} className="flex justify-between gap-2">
+                  <span>{a.name}</span>
+                  <span className="font-mono tabular-nums">+৳{formatMoney(a.priceCents)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="mt-3 flex gap-2">
+            <input
+              value={extraName}
+              onChange={(e) => setExtraName(e.target.value)}
+              placeholder="Extra name"
+              className={inputClass}
+            />
+            <input
+              value={extraPrice}
+              onChange={(e) => setExtraPrice(e.target.value)}
+              placeholder="Price"
+              inputMode="decimal"
+              className={`${inputClass} max-w-[72px]`}
+            />
+            <button type="button" onClick={addExtra} className={btnClass}>
+              Add
             </button>
-          </section>
-
-          <section className="rounded-[12px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-4">
-            <p className="text-[13px] font-medium text-[var(--pos-text-1)]">Step 2: Configure item modifiers and item-specific add-ons</p>
-            <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
-              <select value={selectedCategoryId} onChange={(e) => { setSelectedCategoryId(e.target.value); setSelectedItemId(""); setSelectedGroupId(""); }} className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]">
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-              <select value={selectedItemId} onChange={(e) => { setSelectedItemId(e.target.value); setSelectedGroupId(""); }} className="h-10 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[13px]">
-                <option value="">Select item</option>
-                {selectedCategory?.items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-              </select>
-            </div>
-            {!selectedItem ? (
-              <p className="mt-3 text-[12px] text-[var(--pos-text-2)]">Select an item to continue.</p>
-            ) : (
-              <>
-              <div className="mt-3 max-w-sm">
-                <ImageUploadField
-                  label="Item photo"
-                  mediaRef={selectedItem.imageRef ?? null}
-                  onMediaRefChange={updateSelectedItemPhoto}
-                  disabled={photoSaving}
-                  onUpload={(file) => uploadFileToStorage(file, "menu", selectedItem.name)}
-                />
-                {photoSaveError ? (
-                  <p className="mt-1 text-[12px] text-red-600">{photoSaveError}</p>
-                ) : null}
-              </div>
-              <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                <div className="rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] p-3">
-                  <p className="text-[12px] font-medium">Modifier group</p>
-                  <div className="mt-2 flex gap-2">
-                    <input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="e.g. Size" className="h-9 flex-1 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px]" />
-                    <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={groupRequired} onChange={(e) => setGroupRequired(e.target.checked)} />Required</label>
-                    <button type="button" onClick={createGroup} className="h-9 rounded-[8px] bg-[var(--pos-primary-bg)] px-3 text-[11px] font-medium text-[var(--pos-primary-fg)]">Add</button>
-                  </div>
-                  <select value={selectedGroupId} onChange={(e) => setSelectedGroupId(e.target.value)} className="mt-2 h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px]">
-                    <option value="">Select group</option>
-                    {selectedItem.variantGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                  </select>
-                  {selectedGroup ? (
-                    <div className="mt-2 flex gap-2">
-                      <input value={choiceName} onChange={(e) => setChoiceName(e.target.value)} placeholder="Choice name" className="h-9 flex-1 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px]" />
-                      <input value={choiceDelta} onChange={(e) => setChoiceDelta(e.target.value)} placeholder="+/- price" className="h-9 w-24 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px]" />
-                      <button type="button" onClick={createChoice} className="h-9 rounded-[8px] bg-[var(--pos-primary-bg)] px-3 text-[11px] font-medium text-[var(--pos-primary-fg)]">Add choice</button>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] p-3">
-                  <p className="text-[12px] font-medium">Item add-ons</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {addonTemplates.map((a) => (
-                      <button key={a.id} type="button" onClick={() => attachTemplateToItem(a.id)} className="rounded-full border border-solid [border-color:var(--pos-border-medium)] px-2 py-1 text-[11px] text-[var(--pos-text-1)]">
-                        + {a.name}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mt-2 grid grid-cols-1 gap-2">
-                    <input value={addonName} onChange={(e) => setAddonName(e.target.value)} placeholder="Quick create add-on" className="h-9 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px]" />
-                    <input value={addonPrice} onChange={(e) => setAddonPrice(e.target.value)} placeholder="Price (e.g. 1.25)" className="h-9 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px]" />
-                    <select value={addonParentGroupId} onChange={(e) => setAddonParentGroupId(e.target.value)} className="h-9 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px]">
-                      <option value="">Whole item (not tied)</option>
-                      {selectedItem.variantGroups.map((g) => <option key={g.id} value={g.id}>With {g.name}</option>)}
-                    </select>
-                    <button type="button" onClick={createAddon} className="h-9 rounded-[8px] bg-[var(--pos-primary-bg)] px-3 text-[11px] font-medium text-[var(--pos-primary-fg)]">Create add-on for this item</button>
-                  </div>
-                </div>
-              </div>
-              </>
-            )}
-          </section>
-        </>
+          </div>
+        </div>
       ) : null}
     </div>
   );

@@ -8,8 +8,8 @@
   --color-surface-alt: #F1F5F9;
   --color-danger: #DC2626;
   --color-success: #16A34A;
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "DM Mono", ui-monospace, monospace;
+  --font-sans: "Roboto", system-ui, -apple-system, sans-serif;
+  --font-mono: "Roboto", system-ui, -apple-system, sans-serif;
 }
 
 /* Terminal POS semantic tokens (light / dark) */
@@ -65,9 +65,8 @@ html.dark {
   --pos-sb-card: color-mix(in srgb, var(--pos-sb-base), black 18%);
   --pos-sb-brand-bg: color-mix(in srgb, var(--pos-sb-base), black 16%);
   --pos-sb-branch-open: color-mix(in srgb, var(--pos-sb-base), black 10%);
-  --pos-sb-badge-bg: #ffffff;
-  --pos-sb-badge-fg: color-mix(in srgb, var(--pos-sb-base), black 72%);
-  --pos-sb-badge-border: color-mix(in srgb, var(--pos-sb-base), white 80%);
+  --pos-sb-badge-fg: color-mix(in srgb, var(--pos-sb-base), white 72%);
+  --pos-sb-badge-border: color-mix(in srgb, var(--pos-sb-base), white 42%);
 }
 
 html.dark {
@@ -113,6 +112,7 @@ html, body, #root {
 /* Hide scrollbars across the terminal UI; scrolling still works (wheel, touch, keys). */
 .pos-app,
 .pos-app * {
+  font-family: inherit;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

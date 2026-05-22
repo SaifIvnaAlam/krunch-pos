@@ -10,19 +10,21 @@ import {
 } from "react";
 import {
   Banknote,
+  BookOpen,
   Paperclip,
   Pencil,
   Plus,
   Receipt,
   Search,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
 import { uploadFileToStorage, resolveMediaUrl } from "@/features/storage";
 import { StorageImage } from "@/features/storage/StorageImage";
 import { isStorageRef } from "@/features/storage/storageRef";
 
-/** Match ExpenseRecordsView layout: bordered card, calm header, filter strip, stats on page bg, scrollable table. */
+/** Bordered card, calm header, filter strip, stats on page bg, scrollable table. */
 const purchaseShell =
   "flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]";
 const purchaseHead =
@@ -41,9 +43,24 @@ const purchaseLabel = "text-[11px] text-[var(--pos-text-2)]";
 const purchaseTh = "px-4 py-2 text-left text-[11px] font-semibold text-[var(--pos-text-2)]";
 
 export const LEDGER_LEAF_IDS = new Set([
-  "lm-ledger",
+  "lm-management",
   "lm-suppliers",
+  "lm-ledger",
 ]);
+
+export type LedgerPanelTab = "books" | "bills";
+
+const LEDGER_TAB_EVENT = "pos-ledger-tab";
+
+function selectLedgerTab(tab: LedgerPanelTab) {
+  window.dispatchEvent(
+    new CustomEvent(LEDGER_TAB_EVENT, { detail: { tab } }),
+  );
+}
+
+function ledgerTabFromLeafId(leafId: string): LedgerPanelTab {
+  return leafId === "lm-ledger" ? "bills" : "books";
+}
 
 /** Why this ledger book exists — vendor AP, owner equity/draws, or employee advances/payables. */
 export type LedgerBookPurpose = "vendor" | "owners" | "employees";
@@ -877,9 +894,7 @@ function SupplierListView() {
       ledgerInvoiceDrawerPrefillSupplierId: supplierId,
       ledgerPaymentDrawerPrefillSupplierId: null,
     }));
-    window.dispatchEvent(
-      new CustomEvent("pos-select-leaf", { detail: { leafId: "lm-ledger" } }),
-    );
+    selectLedgerTab("bills");
   }, []);
 
   const startPaymentFor = useCallback((supplierId: string) => {
@@ -889,9 +904,7 @@ function SupplierListView() {
       ledgerPaymentDrawerPrefillSupplierId: supplierId,
       ledgerInvoiceDrawerPrefillSupplierId: null,
     }));
-    window.dispatchEvent(
-      new CustomEvent("pos-select-leaf", { detail: { leafId: "lm-ledger" } }),
-    );
+    selectLedgerTab("bills");
   }, []);
 
   const isForm = editingId !== null;
@@ -903,8 +916,8 @@ function SupplierListView() {
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
-          title="Ledger books"
-          subtitle="Tag each book as vendor, owners, or employees. Balances come from Bills & payments."
+          title="Ledger Books"
+          subtitle="Tag each book as vendor, owners, or employees. Balances come from Bills & Payments."
         />
         <PrimaryButton type="button" onClick={startCreate}>
           Add ledger book
@@ -2094,7 +2107,7 @@ function SupplierLedgerView() {
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
-          title={viewingEmployeeBook ? "Staff ledger" : "Bills & payments"}
+          title={viewingEmployeeBook ? "Staff Ledger" : "Bills & Payments"}
           subtitle={
             viewingEmployeeBook
               ? "Record salary, service charge, bonus, and overtime — not vendor bills."
@@ -2398,13 +2411,90 @@ function SupplierLedgerView() {
   );
 }
 
+const LEDGER_VIEW_TABS: {
+  id: LedgerPanelTab;
+  label: string;
+  icon: LucideIcon;
+}[] = [
+  { id: "books", label: "Ledger Books", icon: BookOpen },
+  { id: "bills", label: "Bills & Payments", icon: Receipt },
+];
+
+function LedgerViewSwitcher({
+  tab,
+  onTabChange,
+}: {
+  tab: LedgerPanelTab;
+  onTabChange: (next: LedgerPanelTab) => void;
+}) {
+  return (
+    <header className="shrink-0">
+      <nav
+        role="tablist"
+        aria-label="Ledger management views"
+        className="flex gap-0 border-b border-solid [border-color:var(--pos-divider)]"
+      >
+        {LEDGER_VIEW_TABS.map(({ id, label, icon: Icon }) => {
+          const active = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onTabChange(id)}
+              className={[
+                "relative -mb-px flex items-center gap-2 px-4 py-3 text-[13px] transition-colors",
+                active
+                  ? "font-semibold text-[var(--pos-text-1)]"
+                  : "font-medium text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]",
+              ].join(" ")}
+            >
+              <Icon
+                className={`size-[15px] shrink-0 ${active ? "text-[var(--pos-sb-base)]" : "opacity-70"}`}
+                strokeWidth={2}
+                aria-hidden
+              />
+              {label}
+              <span
+                className={[
+                  "pointer-events-none absolute inset-x-3 bottom-0 h-[2px] rounded-full bg-[var(--pos-sb-base)] transition-opacity duration-200",
+                  active ? "opacity-100" : "opacity-0",
+                ].join(" ")}
+                aria-hidden
+              />
+            </button>
+          );
+        })}
+      </nav>
+    </header>
+  );
+}
+
 export function LedgerModuleView({ leafId }: { leafId: string }) {
-  switch (leafId) {
-    case "lm-suppliers":
-      return <SupplierListView />;
-    case "lm-ledger":
-      return <SupplierLedgerView />;
-    default:
-      return <SupplierLedgerView />;
-  }
+  const [tab, setTab] = useState<LedgerPanelTab>(() => ledgerTabFromLeafId(leafId));
+
+  useEffect(() => {
+    setTab(ledgerTabFromLeafId(leafId));
+  }, [leafId]);
+
+  useEffect(() => {
+    const onTab = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab?: LedgerPanelTab }>).detail;
+      if (detail?.tab === "books" || detail?.tab === "bills") {
+        setTab(detail.tab);
+      }
+    };
+    window.addEventListener(LEDGER_TAB_EVENT, onTab);
+    return () => window.removeEventListener(LEDGER_TAB_EVENT, onTab);
+  }, []);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      <LedgerViewSwitcher tab={tab} onTabChange={setTab} />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {tab === "books" ? <SupplierListView /> : <SupplierLedgerView />}
+      </div>
+    </div>
+  );
 }

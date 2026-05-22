@@ -18,7 +18,7 @@ import {
 
 const RESTAURANT = {
   name: "Steak & Marrow",
-  branch: "Downtown · Floor service",
+  branch: "Banani, Dhaka",
 } as const;
 
 /** One collapsed-rail button per top-level nav row (matches expanded sidebar, not every nested leaf). */
@@ -91,11 +91,32 @@ function writeSidebarCollapsed(collapsed: boolean) {
   }
 }
 
+function NavBadge({ children }: { children: string }) {
+  return (
+    <span className="shrink-0 rounded-[3px] border border-[var(--pos-sb-badge-border)] bg-transparent px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--pos-sb-badge-fg)]">
+      {children}
+    </span>
+  );
+}
+
+function NavSectionHeader({ children }: { children: string }) {
+  return (
+    <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-sb-section-label)]">
+      {children}
+    </p>
+  );
+}
+
+function filterUtilityNodes(nodes: NavNode[]): NavNode[] {
+  return nodes.filter((node) => !UTILITY_NODE_IDS.has(node.id));
+}
+
 function LeafRow({
   id,
   label,
   icon: Icon,
   addon,
+  beta,
   active,
   depth,
   onSelect,
@@ -104,6 +125,7 @@ function LeafRow({
   label: string;
   icon: LucideIcon;
   addon?: boolean;
+  beta?: boolean;
   active: boolean;
   depth: number;
   onSelect: (id: string) => void;
@@ -140,11 +162,8 @@ function LeafRow({
         {label}
       </span>
 
-      {addon ? (
-        <span className="shrink-0 rounded-[3px] border border-[var(--pos-sb-badge-border)] bg-[var(--pos-sb-badge-bg)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--pos-sb-badge-fg)]">
-          Add-on
-        </span>
-      ) : null}
+      {addon ? <NavBadge>Add-on</NavBadge> : null}
+      {beta ? <NavBadge>Beta</NavBadge> : null}
     </button>
   );
 }
@@ -195,10 +214,14 @@ export function PosSidebar({
   const [openBranches, setOpenBranches] = useState<Record<string, boolean>>({});
   const navRef = useRef<HTMLElement | null>(null);
   const [collapsedCanScrollDown, setCollapsedCanScrollDown] = useState(false);
-  const allSidebarNodes = POS_NAV_SECTIONS.flatMap((section) => section.nodes);
-  const primaryNodes = allSidebarNodes.filter((node) => !UTILITY_NODE_IDS.has(node.id));
-  const utilityNodes = allSidebarNodes.filter((node) => UTILITY_NODE_IDS.has(node.id));
-  const primaryCollapsedShortcuts = topLevelNodesToCollapsedShortcuts(primaryNodes);
+  const navSections = POS_NAV_SECTIONS.map((section) => ({
+    ...section,
+    nodes: filterUtilityNodes(section.nodes),
+  })).filter((section) => section.nodes.length > 0);
+
+  const utilityNodes = POS_NAV_SECTIONS.flatMap((section) => section.nodes).filter(
+    (node) => UTILITY_NODE_IDS.has(node.id),
+  );
   const utilityCollapsedShortcuts = topLevelNodesToCollapsedShortcuts(utilityNodes);
 
   const setCollapsed = (next: boolean) => {
@@ -257,6 +280,7 @@ export function PosSidebar({
               label={node.label}
               icon={node.icon}
               addon={node.addon}
+              beta={node.beta}
               active={activeLeafId === node.id}
               depth={depth}
               onSelect={onSelectLeaf}
@@ -324,9 +348,7 @@ export function PosSidebar({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <div className="scale-90 opacity-60 hover:opacity-100 transition-opacity">
-                <ThemeToggle />
-              </div>
+              <ThemeToggle variant="sidebar" />
               <button
                 type="button"
                 onClick={() => setCollapsed(!sidebarCollapsed)}
@@ -346,31 +368,55 @@ export function PosSidebar({
       <nav ref={navRef} className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         {sidebarCollapsed ? (
           <div className="flex flex-col gap-0.5 px-1 pt-3">
-            {primaryCollapsedShortcuts.map((s) =>
-              s.kind === "leaf" ? (
-                <CollapsedNavIconButton
-                  key={s.key}
-                  label={s.label}
-                  icon={s.icon}
-                  active={activeLeafId === s.leafId}
-                  onActivate={() => onSelectLeaf(s.leafId)}
-                />
-              ) : (
-                <CollapsedNavIconButton
-                  key={s.key}
-                  label={s.label}
-                  icon={s.icon}
-                  active={s.activeLeafIds.includes(activeLeafId)}
-                  onActivate={() => onSelectLeaf(s.defaultLeafId)}
-                />
-              ),
-            )}
+            {navSections.map((section, index) => {
+              const shortcuts = topLevelNodesToCollapsedShortcuts(section.nodes);
+              return (
+                <div
+                  key={section.id}
+                  className={index > 0 ? "mt-2 border-t border-[var(--pos-sb-divider)] pt-2" : ""}
+                >
+                  {section.label ? (
+                    <p
+                      className="mb-1.5 px-0.5 text-center text-[8px] font-semibold uppercase leading-tight tracking-wide text-[var(--pos-sb-section-label)]"
+                      title={section.label}
+                    >
+                      {section.label}
+                    </p>
+                  ) : null}
+                  {shortcuts.map((s) =>
+                    s.kind === "leaf" ? (
+                      <CollapsedNavIconButton
+                        key={s.key}
+                        label={s.label}
+                        icon={s.icon}
+                        active={activeLeafId === s.leafId}
+                        onActivate={() => onSelectLeaf(s.leafId)}
+                      />
+                    ) : (
+                      <CollapsedNavIconButton
+                        key={s.key}
+                        label={s.label}
+                        icon={s.icon}
+                        active={s.activeLeafIds.includes(activeLeafId)}
+                        onActivate={() => onSelectLeaf(s.defaultLeafId)}
+                      />
+                    ),
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="px-2 py-3">
-            <div className="flex flex-col gap-0.5">
-              {renderNodes(primaryNodes, 0)}
-            </div>
+            {navSections.map((section, index) => (
+              <div
+                key={section.id}
+                className={index > 0 ? "mt-4 border-t border-[var(--pos-sb-divider)] pt-3" : ""}
+              >
+                {section.label ? <NavSectionHeader>{section.label}</NavSectionHeader> : null}
+                <div className="flex flex-col gap-0.5">{renderNodes(section.nodes, 0)}</div>
+              </div>
+            ))}
             {utilityNodes.length > 0 ? (
               <div className="mt-4 border-t border-[var(--pos-sb-divider)] pt-3">
                 <div className="flex flex-col gap-0.5">{renderNodes(utilityNodes, 0)}</div>
@@ -429,7 +475,7 @@ export function PosSidebar({
             <button
               type="button"
               onClick={onSignOut}
-              className="flex size-8 items-center justify-center rounded-[5px] text-[var(--pos-sb-icon)] transition-colors hover:bg-[var(--pos-sb-hover)] hover:text-[var(--pos-sb-text-1)]"
+              className="flex size-8 items-center justify-center rounded-[5px] text-[var(--pos-sb-icon)] transition-colors hover:bg-red-500/15 hover:text-red-400"
               title="Sign out"
               aria-label="Sign out"
             >
@@ -452,7 +498,7 @@ export function PosSidebar({
             <button
               type="button"
               onClick={onSignOut}
-              className="flex size-7 shrink-0 items-center justify-center rounded-[5px] text-[var(--pos-sb-icon)] transition-colors hover:bg-[var(--pos-sb-hover)] hover:text-[var(--pos-sb-text-1)]"
+              className="flex size-7 shrink-0 items-center justify-center rounded-[5px] text-[var(--pos-sb-icon)] transition-colors hover:bg-red-500/15 hover:text-red-400"
               title="Sign out"
               aria-label="Sign out"
             >
@@ -497,11 +543,8 @@ function BranchBlock({
           strokeWidth={open ? 2.2 : 1.8}
         />
         <span className="min-w-0 flex-1 truncate leading-none">{branch.label}</span>
-        {branch.addon ? (
-          <span className="shrink-0 rounded-[3px] border border-[var(--pos-sb-badge-border)] bg-[var(--pos-sb-badge-bg)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--pos-sb-badge-fg)]">
-            Add-on
-          </span>
-        ) : null}
+        {branch.addon ? <NavBadge>Add-on</NavBadge> : null}
+        {branch.beta ? <NavBadge>Beta</NavBadge> : null}
         <ChevronRight
           className={`size-3.5 shrink-0 text-[var(--pos-sb-icon)] transition-transform duration-200 ${
             open ? "rotate-90" : ""

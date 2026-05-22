@@ -15,8 +15,6 @@
     "generate:openapi": "ts-node src/generate-openapi.ts"
   },
   "dependencies": {
-    "@casl/ability": "^6.x",
-    "@nestjs/bull": "^10.x",
     "@nestjs/common": "^10.x",
     "@nestjs/config": "^3.x",
     "@nestjs/core": "^10.x",
@@ -37,12 +35,10 @@
     "jose": "^5.10.0",
     "passport": "^0.7.x",
     "passport-jwt": "^4.x",
-    "passport-local": "^1.x",
     "reflect-metadata": "^0.2.x",
     "rxjs": "^7.x",
     "socket.io": "^4.x",
-    "uuid": "^9.x",
-    "zod": "^3.x"
+    "uuid": "^9.x"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.x",
@@ -53,7 +49,6 @@
     "@types/jest": "^29.x",
     "@types/node": "^20.x",
     "@types/passport-jwt": "^4.x",
-    "@types/passport-local": "^1.x",
     "@types/uuid": "^9.x",
     "jest": "^29.x",
     "prisma": "^5.x",
