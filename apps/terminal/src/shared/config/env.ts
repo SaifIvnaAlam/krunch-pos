@@ -18,18 +18,6 @@ export function isDemoDataMode(): boolean {
   return raw.VITE_USE_DEMO_DATA === "true";
 }
 
-/** Email allowed on the sign-in form in API mode (must match seeded staff). */
-export function getSeededAdminEmail(): string {
-  const v = raw.VITE_SEEDED_ADMIN_EMAIL;
-  if (typeof v === "string" && v.trim().length > 0) return v.trim();
-  return "owner@universalpos.local";
-}
-
-/** Password for the seeded owner (must match `packages/database-schema/prisma/seed.ts`). */
-export function getSeededAdminPassword(): string {
-  return "Owner123!";
-}
-
 export function getDefaultBranchId(): string {
   const v = raw.VITE_DEFAULT_BRANCH_ID;
   if (typeof v === "string" && v.length > 0) return v;

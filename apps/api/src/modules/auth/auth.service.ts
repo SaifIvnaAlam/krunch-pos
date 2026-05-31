@@ -12,7 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { TokenService } from './token.service';
-import { AuthResult, OverrideResult } from './auth.types';
+import { AuthBranchSummary, AuthResult, OverrideResult } from './auth.types';
 import { asJsonInput } from '../../common/prisma-json';
 import { parseEnvSeconds } from '../../common/parse-env-int';
 
@@ -91,37 +91,12 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const roles = staff.staffRoles.map((sr) => sr.role.name);
-    const rolePermissions = staff.staffRoles.flatMap((sr) => sr.role.permissions);
-    const tempPerms = staff.tempPermissions.flatMap((tp) => tp.permissions);
-    const permissions = [...new Set([...rolePermissions, ...tempPerms])];
-
-    const { accessToken, refreshToken } = await this.tokenService.generateTokenPair({
-      staffId: staff.id,
-      branchId: dto.branchId,
-      terminalId: dto.terminalId,
-      roles,
-      permissions,
-    });
-
+    const result = await this.buildAuthResult(staff, dto.branchId, dto.terminalId);
     await this.createAuditLog(
       staff.id, 'AUTH_LOGIN_PIN', null,
       dto.branchId, dto.terminalId, 'SUCCESS',
     );
-
-    return {
-      accessToken,
-      refreshToken,
-      staffProfile: {
-        id: staff.id,
-        name: staff.name,
-        email: staff.email,
-        isActive: staff.isActive,
-        primaryBranchId: staff.primaryBranchId,
-      },
-      roles,
-      permissions,
-    };
+    return result;
   }
 
   async loginWithNfc(dto: NfcLoginDto): Promise<AuthResult> {
@@ -151,37 +126,12 @@ export class AuthService {
       throw new UnauthorizedException('Invalid NFC card');
     }
 
-    const roles = staff.staffRoles.map((sr) => sr.role.name);
-    const rolePermissions = staff.staffRoles.flatMap((sr) => sr.role.permissions);
-    const tempPerms = staff.tempPermissions.flatMap((tp) => tp.permissions);
-    const permissions = [...new Set([...rolePermissions, ...tempPerms])];
-
-    const { accessToken, refreshToken } = await this.tokenService.generateTokenPair({
-      staffId: staff.id,
-      branchId: dto.branchId,
-      terminalId: dto.terminalId,
-      roles,
-      permissions,
-    });
-
+    const result = await this.buildAuthResult(staff, dto.branchId, dto.terminalId);
     await this.createAuditLog(
       staff.id, 'AUTH_LOGIN_NFC', null,
       dto.branchId, dto.terminalId, 'SUCCESS',
     );
-
-    return {
-      accessToken,
-      refreshToken,
-      staffProfile: {
-        id: staff.id,
-        name: staff.name,
-        email: staff.email,
-        isActive: staff.isActive,
-        primaryBranchId: staff.primaryBranchId,
-      },
-      roles,
-      permissions,
-    };
+    return result;
   }
 
   async refreshTokens(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
@@ -379,6 +329,70 @@ export class AuthService {
     }
   }
 
+  private static readonly GLOBAL_RESTAURANT_ROLE_NAMES = new Set([
+    'SUPER_ADMIN',
+    'OWNER',
+    'ADMIN',
+  ]);
+
+  private async resolveRestaurantsForStaff(staff: {
+    primaryBranchId: string | null;
+    primaryBranch: {
+      id: string;
+      name: string;
+      address: string | null;
+      isActive: boolean;
+    } | null;
+    staffRoles: Array<{
+      branchId: string | null;
+      role: { name: string };
+    }>;
+  }): Promise<AuthBranchSummary[]> {
+    const hasGlobalRole = staff.staffRoles.some(
+      (sr) =>
+        sr.branchId === null &&
+        AuthService.GLOBAL_RESTAURANT_ROLE_NAMES.has(sr.role.name),
+    );
+
+    if (hasGlobalRole) {
+      return this.prisma.branch.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true, address: true },
+        orderBy: { name: 'asc' },
+      });
+    }
+
+    const byId = new Map<string, AuthBranchSummary>();
+
+    if (staff.primaryBranch?.isActive) {
+      byId.set(staff.primaryBranch.id, {
+        id: staff.primaryBranch.id,
+        name: staff.primaryBranch.name,
+        address: staff.primaryBranch.address,
+      });
+    }
+
+    const branchIds = [
+      ...new Set(
+        staff.staffRoles
+          .map((sr) => sr.branchId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+
+    if (branchIds.length > 0) {
+      const roleBranches = await this.prisma.branch.findMany({
+        where: { id: { in: branchIds }, isActive: true },
+        select: { id: true, name: true, address: true },
+      });
+      for (const branch of roleBranches) {
+        byId.set(branch.id, branch);
+      }
+    }
+
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   private staffAuthInclude(branchId: string) {
     return {
       staffRoles: {
@@ -423,6 +437,11 @@ export class AuthService {
       permissions,
     });
 
+    const branch = await this.prisma.branch.findUnique({
+      where: { id: branchId },
+      select: { id: true, name: true, address: true },
+    });
+
     return {
       accessToken,
       refreshToken,
@@ -433,9 +452,38 @@ export class AuthService {
         isActive: staff.isActive,
         primaryBranchId: staff.primaryBranchId,
       },
+      activeBranch: branch
+        ? { id: branch.id, name: branch.name, address: branch.address }
+        : { id: branchId, name: 'Branch', address: null },
       roles,
       permissions,
     };
+  }
+
+  async lookupRestaurantsByEmail(email: string): Promise<AuthBranchSummary[]> {
+    const normalized = email.toLowerCase().trim();
+    if (!normalized) return [];
+
+    const staff = await this.prisma.staff.findFirst({
+      where: {
+        email: normalized,
+        isActive: true,
+        passwordHash: { not: null },
+      },
+      include: {
+        primaryBranch: { select: { id: true, name: true, address: true, isActive: true } },
+        staffRoles: {
+          include: { role: true },
+          where: {
+            OR: [{ validUntil: null }, { validUntil: { gt: new Date() } }],
+          },
+        },
+      },
+    });
+
+    if (!staff) return [];
+
+    return this.resolveRestaurantsForStaff(staff);
   }
 
   async loginWithEmail(dto: {
@@ -446,10 +494,18 @@ export class AuthService {
   }): Promise<AuthResult> {
     const staff = await this.prisma.staff.findFirst({
       where: { email: dto.email.toLowerCase().trim(), isActive: true },
-      include: this.staffAuthInclude(dto.branchId),
+      include: {
+        ...this.staffAuthInclude(dto.branchId),
+        primaryBranch: { select: { id: true, name: true, address: true, isActive: true } },
+      },
     });
 
     if (!staff?.passwordHash) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const allowedBranches = await this.resolveRestaurantsForStaff(staff);
+    if (!allowedBranches.some((b) => b.id === dto.branchId)) {
       throw new UnauthorizedException('Invalid email or password');
     }
 

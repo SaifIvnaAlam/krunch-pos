@@ -23,6 +23,8 @@ import { LoginGoogleDto } from './dto/login-google.dto';
 import { NfcLoginDto } from './dto/nfc-login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { OverrideDto } from './dto/override.dto';
+import { LookupRestaurantsDto } from './dto/lookup-restaurants.dto';
+import { AuthBranchSummary } from './auth.types';
 
 interface JwtPayload {
   staffId: string;
@@ -44,6 +46,19 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async login(@Body() dto: LoginPinDto): Promise<AuthResult> {
     return this.authService.loginWithPin(dto);
+  }
+
+  @Post('login/restaurants')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List restaurants linked to an email (before password step)',
+  })
+  @ApiResponse({ status: 200, description: 'Restaurants for this email, if any' })
+  async lookupRestaurants(
+    @Body() dto: LookupRestaurantsDto,
+  ): Promise<{ restaurants: AuthBranchSummary[] }> {
+    const restaurants = await this.authService.lookupRestaurantsByEmail(dto.email);
+    return { restaurants };
   }
 
   @Post('login/email')

@@ -1,3 +1,9 @@
+export interface AuthBranchSummary {
+  id: string;
+  name: string;
+  address: string | null;
+}
+
 export interface AuthResult {
   accessToken: string;
   refreshToken: string;
@@ -8,6 +14,7 @@ export interface AuthResult {
     isActive: boolean;
     primaryBranchId: string | null;
   };
+  activeBranch: AuthBranchSummary;
   roles: string[];
   permissions: string[];
 }

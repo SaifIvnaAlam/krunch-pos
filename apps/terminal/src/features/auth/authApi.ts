@@ -1,5 +1,18 @@
 import { apiFetch } from "@/features/api-client";
-import type { AuthResultDto } from "./types";
+import type { ActiveBranch, AuthResultDto } from "./types";
+
+export async function lookupRestaurantsForEmail(
+  email: string,
+): Promise<ActiveBranch[]> {
+  const data = await apiFetch<{ restaurants: ActiveBranch[] }>(
+    "/auth/login/restaurants",
+    {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    },
+  );
+  return data.restaurants ?? [];
+}
 
 export async function loginWithEmail(body: {
   email: string;

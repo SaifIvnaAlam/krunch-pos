@@ -39,6 +39,13 @@ export function writeTokens(access: string, refresh: string): void {
 }
 
 const API_PROFILE = "universal_pos_terminal_profile_name";
+const ACTIVE_BRANCH = "universal_pos_terminal_active_branch";
+
+export type StoredActiveBranch = {
+  id: string;
+  name: string;
+  address: string | null;
+};
 
 export function readApiProfileName(): string {
   try {
@@ -64,6 +71,34 @@ export function clearApiProfileName(): void {
   }
 }
 
+export function readActiveBranch(): StoredActiveBranch | null {
+  try {
+    const raw = sessionStorage.getItem(ACTIVE_BRANCH);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredActiveBranch;
+    if (typeof parsed?.name !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function writeActiveBranch(branch: StoredActiveBranch): void {
+  try {
+    sessionStorage.setItem(ACTIVE_BRANCH, JSON.stringify(branch));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearActiveBranch(): void {
+  try {
+    sessionStorage.removeItem(ACTIVE_BRANCH);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function clearApiTokens(): void {
   memoryAccessToken = null;
   memoryRefreshToken = null;
@@ -71,6 +106,7 @@ export function clearApiTokens(): void {
     sessionStorage.removeItem(ACCESS);
     sessionStorage.removeItem(REFRESH);
     sessionStorage.removeItem(API_PROFILE);
+    sessionStorage.removeItem(ACTIVE_BRANCH);
   } catch {
     /* ignore */
   }

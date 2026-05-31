@@ -1,6 +1,7 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { buildSeedSalaryExampleBundle } from './seed-salary-example';
 
 const prisma = new PrismaClient();
 
@@ -139,45 +140,96 @@ async function main(): Promise<void> {
 
   console.log(`Seeded ${roles.length} system roles.`);
 
-  const defaultPin = '1234';
-  const portalPassword = 'Owner123!';
-  const pinHash = await bcrypt.hash(defaultPin, BCRYPT_SALT_ROUNDS);
-  const passwordHash = await bcrypt.hash(portalPassword, BCRYPT_SALT_ROUNDS);
-  const pbkdf2Salt = crypto.randomBytes(32);
-  const pbkdf2Hash = derivePbkdf2(defaultPin, pbkdf2Salt);
-
   await prisma.branch.upsert({
     where: { id: DEFAULT_BRANCH_ID },
-    update: { name: 'Default Branch', isActive: true },
+    update: { name: 'Steak & Marrow', isActive: true },
     create: {
       id: DEFAULT_BRANCH_ID,
-      name: 'Default Branch',
+      name: 'Steak & Marrow',
       address: '1 Demo Street',
       timezone: 'UTC',
       isActive: true,
     },
   });
 
-  const owner = await prisma.staff.upsert({
-    where: { id: 'default-owner' },
-    update: {
-      passwordHash,
-      pinHash,
-      pbkdf2Hash,
-      pbkdf2Salt: pbkdf2Salt.toString('hex'),
-      primaryBranchId: DEFAULT_BRANCH_ID,
-    },
-    create: {
-      id: 'default-owner',
-      name: 'Default Owner',
-      email: 'owner@universalpos.local',
-      passwordHash,
-      pinHash,
-      pbkdf2Hash,
-      pbkdf2Salt: pbkdf2Salt.toString('hex'),
-      isActive: true,
-      primaryBranchId: DEFAULT_BRANCH_ID,
-    },
+  const defaultPin = '1234';
+  const portalPassword = 'Owner123!';
+  const basicPortalPassword = 'Welcome123!';
+  const pinHash = await bcrypt.hash(defaultPin, BCRYPT_SALT_ROUNDS);
+  const passwordHash = await bcrypt.hash(portalPassword, BCRYPT_SALT_ROUNDS);
+  const basicPasswordHash = await bcrypt.hash(basicPortalPassword, BCRYPT_SALT_ROUNDS);
+  const pbkdf2Salt = crypto.randomBytes(32);
+  const pbkdf2Hash = derivePbkdf2(defaultPin, pbkdf2Salt);
+
+  async function upsertPortalStaff(opts: {
+    id: string;
+    name: string;
+    email: string;
+    passwordHash: string;
+    roleAssignmentId: string;
+  }) {
+    const staffPinSalt = crypto.randomBytes(32);
+    const staff = await prisma.staff.upsert({
+      where: { id: opts.id },
+      update: {
+        name: opts.name,
+        email: opts.email,
+        passwordHash: opts.passwordHash,
+        pinHash,
+        pbkdf2Hash: derivePbkdf2(defaultPin, staffPinSalt),
+        pbkdf2Salt: staffPinSalt.toString('hex'),
+        primaryBranchId: DEFAULT_BRANCH_ID,
+        isActive: true,
+      },
+      create: {
+        id: opts.id,
+        name: opts.name,
+        email: opts.email,
+        passwordHash: opts.passwordHash,
+        pinHash,
+        pbkdf2Hash: derivePbkdf2(defaultPin, staffPinSalt),
+        pbkdf2Salt: staffPinSalt.toString('hex'),
+        isActive: true,
+        primaryBranchId: DEFAULT_BRANCH_ID,
+      },
+    });
+
+    await prisma.staffRole.upsert({
+      where: { id: opts.roleAssignmentId },
+      update: { staffId: staff.id, roleId: 'owner' },
+      create: {
+        id: opts.roleAssignmentId,
+        staffId: staff.id,
+        roleId: 'owner',
+        assignedBy: systemStaffId,
+      },
+    });
+
+    return staff;
+  }
+
+  const owner = await upsertPortalStaff({
+    id: 'default-owner',
+    name: 'Default Owner',
+    email: 'owner@universalpos.local',
+    passwordHash,
+    roleAssignmentId: 'default-owner-role',
+  });
+
+  const alam = await upsertPortalStaff({
+    id: 'staff-alam-saifivn',
+    name: 'Alam Saifivn',
+    email: 'alam.saifivn@gmail.com',
+    passwordHash: basicPasswordHash,
+    roleAssignmentId: 'staff-alam-saifivn-role',
+  });
+
+  const azmain = await upsertPortalStaff({
+    id: 'staff-azmain-fahim',
+    name: 'Azmain Fahim Anjum',
+    email: 'azmainfahimanjum@gmail.com',
+    passwordHash: basicPasswordHash,
+    roleAssignmentId: 'staff-azmain-fahim-role',
   });
 
   await prisma.menuItem.upsert({
@@ -195,19 +247,25 @@ async function main(): Promise<void> {
     },
   });
 
-  await prisma.staffRole.upsert({
-    where: { id: 'default-owner-role' },
-    update: {},
+  const salaryMonthKey = '2026-05';
+  const salaryBundle = buildSeedSalaryExampleBundle(salaryMonthKey);
+  await prisma.branchSalaryWorkspace.upsert({
+    where: { branchId: DEFAULT_BRANCH_ID },
+    update: {
+      bundle: salaryBundle as Prisma.InputJsonValue,
+    },
     create: {
-      id: 'default-owner-role',
-      staffId: owner.id,
-      roleId: 'owner',
-      assignedBy: systemStaffId,
+      branchId: DEFAULT_BRANCH_ID,
+      bundle: salaryBundle as Prisma.InputJsonValue,
     },
   });
+  console.log(`Seeded example salary register for ${salaryMonthKey}.`);
 
   console.log(
-    `Seeded default OWNER staff: ${owner.name} (PIN: ${defaultPin}, email login: ${owner.email} / ${portalPassword})`,
+    `Seeded default OWNER staff: ${owner.name} (PIN: ${defaultPin}, email: ${owner.email})`,
+  );
+  console.log(
+    `Seeded portal users: ${alam.email}, ${azmain.email} (password: ${basicPortalPassword})`,
   );
   console.log('Seed complete.');
 }

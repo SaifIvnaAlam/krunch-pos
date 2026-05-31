@@ -64,7 +64,6 @@ fi
 
 echo "==> Building POS for https://${POS_DOMAIN}"
 export VITE_API_URL="https://${POS_DOMAIN}/api/v1"
-export VITE_SEEDED_ADMIN_EMAIL="${VITE_SEEDED_ADMIN_EMAIL:-owner@universalpos.local}"
 export VITE_DEFAULT_BRANCH_ID="${VITE_DEFAULT_BRANCH_ID:-a0000000-0000-4000-8000-000000000001}"
 export VITE_DEFAULT_TERMINAL_ID="${VITE_DEFAULT_TERMINAL_ID:-terminal-prod-001}"
 npm run build -w terminal
@@ -110,5 +109,5 @@ echo "  API:        https://${POS_DOMAIN}/api/v1/health"
 echo "  S3:         https://${S3_DOMAIN}"
 echo "  S3 console: https://${S3_CONSOLE_DOMAIN}"
 echo ""
-echo "Sign in: owner@universalpos.local / Owner123! (from seed)"
+echo "Sign in with your restaurant email at https://${POS_DOMAIN}"
 echo "Optional n8n: ssh ${VPS_USER}@${VPS_HOST} 'cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env --profile n8n up -d'"

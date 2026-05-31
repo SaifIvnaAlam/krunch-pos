@@ -15,4 +15,4 @@ export {
   writeTokens,
   clearApiTokens,
 } from "./tokenStorage";
-export { loginWithEmail, logout } from "./authApi";
+export { loginWithEmail, logout, lookupRestaurantsForEmail } from "./authApi";
