@@ -1,5 +1,7 @@
 import { compressImageFile } from "./compressImage";
-import { presignUpload } from "./storageApi";
+import { requireAccessToken } from "@/features/api-client/auth";
+import { getApiBaseUrl } from "@/shared/config/env";
+import { ApiRequestError } from "@/features/api-client/errors";
 import { toStorageRef } from "./storageRef";
 
 export type UploadScope =
@@ -24,15 +26,6 @@ function isHeicFile(file: File): boolean {
     file.type === "image/heic" ||
     file.type === "image/heif"
   );
-}
-
-function mimeForUpload(file: File): string {
-  if (file.type) return file.type;
-  if (/\.pdf$/i.test(file.name)) return "application/pdf";
-  if (isHeicFile(file)) return "image/heic";
-  if (/\.(jpe?g)$/i.test(file.name)) return "image/jpeg";
-  if (/\.png$/i.test(file.name)) return "image/png";
-  return "application/octet-stream";
 }
 
 function extensionFor(file: File, compressed: boolean): string {
@@ -76,21 +69,44 @@ export async function uploadFileToStorage(
   const ext = extensionFor(body, compressed);
   const path = `${scope}/${base}-${stamp}.${ext}`;
 
-  const contentType = mimeForUpload(body);
-  const { uploadUrl, key } = await presignUpload(path, contentType);
+  const token = requireAccessToken();
+  const form = new FormData();
+  form.append("path", path);
+  form.append("file", body, `${base}.${ext}`);
 
-  const put = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": contentType },
-    body,
+  const response = await fetch(`${getApiBaseUrl()}/storage/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
   });
-  if (!put.ok) {
-    const hint =
-      put.status === 403
-        ? "Storage denied (check sign-in and permissions)."
-        : "Check that MinIO is reachable and CORS is enabled.";
-    throw new Error(`Upload failed (HTTP ${put.status}). ${hint}`);
+
+  const text = await response.text();
+  let data: unknown = undefined;
+  if (text) {
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      data = text;
+    }
   }
 
-  return toStorageRef(key);
+  if (!response.ok) {
+    const rawMessage =
+      typeof data === "object" && data !== null && "message" in data
+        ? (data as { message: unknown }).message
+        : undefined;
+    const msg = Array.isArray(rawMessage)
+      ? rawMessage.join(", ")
+      : typeof rawMessage === "string"
+        ? rawMessage
+        : `HTTP ${response.status}`;
+    throw new ApiRequestError(msg, response.status, data);
+  }
+
+  const payload = data as { key?: string };
+  if (!payload?.key) {
+    throw new Error("Upload succeeded but no storage key was returned.");
+  }
+
+  return toStorageRef(payload.key);
 }

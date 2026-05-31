@@ -10,19 +10,34 @@ import {
 } from "react";
 import {
   Banknote,
-  BookOpen,
   Paperclip,
   Pencil,
   Plus,
   Receipt,
   Search,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
 import { uploadFileToStorage, resolveMediaUrl } from "@/features/storage";
 import { StorageImage } from "@/features/storage/StorageImage";
 import { isStorageRef } from "@/features/storage/storageRef";
+import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import {
+  getLedgerWorkspaceLoadState,
+  getWorkspace,
+  loadLedgerWorkspace,
+  setWorkspace,
+  subscribeWorkspace,
+  type EmployeeLedgerLineKind,
+  type LedgerAttachment,
+  type LedgerBookPurpose,
+  type LedgerEntry,
+  type LedgerSupplier,
+  type LedgerWorkspace,
+  type PurchaseOrder,
+  type PurchaseReturn,
+  type StockMove,
+} from "@/features/ledger";
 
 /** Bordered card, calm header, filter strip, stats on page bg, scrollable table. */
 const purchaseShell =
@@ -56,6 +71,7 @@ function selectLedgerTab(tab: LedgerPanelTab) {
   window.dispatchEvent(
     new CustomEvent(LEDGER_TAB_EVENT, { detail: { tab } }),
   );
+  dispatchPosSelectLeaf(tab === "bills" ? "lm-ledger" : "lm-management");
 }
 
 function ledgerTabFromLeafId(leafId: string): LedgerPanelTab {
@@ -63,7 +79,7 @@ function ledgerTabFromLeafId(leafId: string): LedgerPanelTab {
 }
 
 /** Why this ledger book exists — vendor AP, owner equity/draws, or employee advances/payables. */
-export type LedgerBookPurpose = "vendor" | "owners" | "employees";
+export type { LedgerBookPurpose };
 
 export const LEDGER_BOOK_PURPOSE_OPTIONS: {
   value: LedgerBookPurpose;
@@ -77,12 +93,7 @@ export const LEDGER_BOOK_PURPOSE_OPTIONS: {
 /** Ledger book title prefix for employees (matches owner-style “Owner — …” naming). */
 export const EMPLOYEE_LEDGER_BOOK_NAME_PREFIX = "Staff — ";
 
-/** Line category for employee books (not vendor bill / payment / return). */
-export type EmployeeLedgerLineKind =
-  | "salary"
-  | "service_charge"
-  | "bonus"
-  | "overtime";
+export type { EmployeeLedgerLineKind };
 
 export const EMPLOYEE_LEDGER_LINE_OPTIONS: {
   value: EmployeeLedgerLineKind;
@@ -94,86 +105,11 @@ export const EMPLOYEE_LEDGER_LINE_OPTIONS: {
   { value: "overtime", label: "Overtime" },
 ];
 
-type Supplier = {
-  id: string;
-  name: string;
-  bookPurpose: LedgerBookPurpose;
-  /** Named individual at this book (full person name — not a role or department). */
-  contactPerson: string;
-  phone: string;
-  email: string;
-  address: string;
-  notes: string;
-};
-
-type PurchaseOrder = {
-  kind: "purchase";
-  id: string;
-  ref: string;
-  supplierId: string;
-  date: string;
-  status: "draft" | "sent" | "partial" | "received" | "cancelled";
-  /** Total bill amount in cents (no line-item breakdown). */
-  amountCents: number;
-  note: string;
-};
-
-type ReturnLine = {
-  id: string;
-  description: string;
-  qty: number;
-  unit: string;
-  creditCents: number;
-};
-
-type PurchaseReturn = {
-  kind: "return";
-  id: string;
-  ref: string;
-  supplierId: string;
-  linkedPurchaseId: string;
-  date: string;
-  reason: string;
-  status: "draft" | "credited" | "cancelled";
-  lines: ReturnLine[];
-};
-
-type StockMove = PurchaseOrder | PurchaseReturn;
-
-/** Receipt / invoice image or PDF stored in-browser (data URL). */
-type LedgerAttachment = {
-  fileName: string;
-  mimeType: string;
-  dataUrl: string;
-};
+type Supplier = LedgerSupplier;
+type Workspace = LedgerWorkspace;
 
 const LEDGER_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 const LEDGER_ATTACHMENT_ACCEPT = "image/*,.pdf,application/pdf,.heic,.heif";
-
-type LedgerEntry = {
-  id: string;
-  supplierId: string;
-  date: string;
-  type: "invoice" | "payment" | "return_credit" | "adjustment";
-  ref: string;
-  memo: string;
-  /** Positive: amount payable increases. Negative: payment or credit. */
-  amountCents: number;
-  attachment?: LedgerAttachment;
-  /** When set, this row belongs to an employee book (salary, service charge, bonus, overtime). */
-  employeeLineKind?: EmployeeLedgerLineKind;
-};
-
-type Workspace = {
-  suppliers: Supplier[];
-  moves: StockMove[];
-  ledger: LedgerEntry[];
-  ledgerSupplierFilter: string;
-  /** Ledger book list → open ledger drawer on New bill with lines for this book. */
-  ledgerInvoiceDrawerPrefillSupplierId: string | null;
-  /** Ledger book list → open ledger drawer with Payment selected for this book. */
-  ledgerPaymentDrawerPrefillSupplierId: string | null;
-};
 
 function formatMoney(cents: number): string {
   const n = cents / 100;
@@ -206,36 +142,6 @@ function nextId(prefix: string, existing: string[]): string {
   return `${prefix}-${String(next).padStart(4, "0")}`;
 }
 
-const initialWorkspace: Workspace = {
-  suppliers: [],
-  moves: [],
-  ledger: [],
-  ledgerSupplierFilter: "",
-  ledgerInvoiceDrawerPrefillSupplierId: null,
-  ledgerPaymentDrawerPrefillSupplierId: null,
-};
-
-let workspaceSnapshot: Workspace = structuredClone(initialWorkspace);
-const listeners = new Set<() => void>();
-
-function emit() {
-  for (const fn of listeners) fn();
-}
-
-function getWorkspace(): Workspace {
-  return workspaceSnapshot;
-}
-
-function setWorkspace(updater: (w: Workspace) => Workspace) {
-  workspaceSnapshot = updater(workspaceSnapshot);
-  emit();
-}
-
-function subscribeWorkspace(cb: () => void) {
-  listeners.add(cb);
-  return () => listeners.delete(cb);
-}
-
 function useWorkspace(): Workspace {
   return useSyncExternalStore(subscribeWorkspace, getWorkspace, getWorkspace);
 }
@@ -251,7 +157,7 @@ export function subscribeLedgerWorkspace(cb: () => void): () => void {
 export function getLedgerBookNamesSnapshot(
   purpose: LedgerBookPurpose | "all" = "all",
 ): string[] {
-  const names = workspaceSnapshot.suppliers
+  const names = getWorkspace().suppliers
     .filter((s) => purpose === "all" || (s.bookPurpose ?? "vendor") === purpose)
     .map((s) => s.name.trim())
     .filter(Boolean)
@@ -269,7 +175,7 @@ export function resolveLedgerSupplierIdByBookName(bookName: string): string | nu
   const t = bookName.trim();
   if (!t) return null;
   const lower = t.toLowerCase();
-  const hit = workspaceSnapshot.suppliers.find((s) => s.name.trim().toLowerCase() === lower);
+  const hit = getWorkspace().suppliers.find((s) => s.name.trim().toLowerCase() === lower);
   return hit?.id ?? null;
 }
 
@@ -501,7 +407,7 @@ function LedgerDetailSlideOver({
     <div className="pointer-events-none fixed inset-0 z-50 flex justify-end">
       <div className="min-w-0 flex-1" aria-hidden />
       <div
-        className="pointer-events-auto flex h-full w-full max-w-[min(100vw,520px)] shrink-0 flex-col border-l border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-[-12px_0_40px_rgba(0,0,0,0.12)]"
+        className="pointer-events-auto flex h-full w-full max-w-[520px] shrink-0 flex-col border-l border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-[-12px_0_40px_rgba(0,0,0,0.12)]"
         role="dialog"
         aria-modal="false"
         aria-labelledby="ledger-detail-slide-title"
@@ -1588,9 +1494,9 @@ export function removeDailyLedgerExpenseLink(link: {
 
 const LEDGER_DRAWER_WIDTH = {
   /** Add entry / compact forms */
-  narrow: "max-w-[min(100vw,380px)]",
+  narrow: "max-w-[380px]",
   /** Edit ledger book (wider fields) */
-  wide: "max-w-[min(100vw,520px)]",
+  wide: "max-w-[520px]",
 } as const;
 
 /** Same right drawer shell as Other expenses (`ExpenseModalFrame`). */
@@ -2443,68 +2349,17 @@ function SupplierLedgerView() {
   );
 }
 
-const LEDGER_VIEW_TABS: {
-  id: LedgerPanelTab;
-  label: string;
-  icon: LucideIcon;
-}[] = [
-  { id: "books", label: "Ledger Books", icon: BookOpen },
-  { id: "bills", label: "Bills & Payments", icon: Receipt },
-];
-
-function LedgerViewSwitcher({
-  tab,
-  onTabChange,
-}: {
-  tab: LedgerPanelTab;
-  onTabChange: (next: LedgerPanelTab) => void;
-}) {
-  return (
-    <header className="shrink-0">
-      <nav
-        role="tablist"
-        aria-label="Ledger management views"
-        className="flex gap-0 border-b border-solid [border-color:var(--pos-divider)]"
-      >
-        {LEDGER_VIEW_TABS.map(({ id, label, icon: Icon }) => {
-          const active = tab === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => onTabChange(id)}
-              className={[
-                "relative -mb-px flex items-center gap-2 px-4 py-3 text-[13px] transition-colors",
-                active
-                  ? "font-semibold text-[var(--pos-text-1)]"
-                  : "font-medium text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]",
-              ].join(" ")}
-            >
-              <Icon
-                className={`size-[15px] shrink-0 ${active ? "text-[var(--pos-sb-base)]" : "opacity-70"}`}
-                strokeWidth={2}
-                aria-hidden
-              />
-              {label}
-              <span
-                className={[
-                  "pointer-events-none absolute inset-x-3 bottom-0 h-[2px] rounded-full bg-[var(--pos-sb-base)] transition-opacity duration-200",
-                  active ? "opacity-100" : "opacity-0",
-                ].join(" ")}
-                aria-hidden
-              />
-            </button>
-          );
-        })}
-      </nav>
-    </header>
-  );
-}
-
 export function LedgerModuleView({ leafId }: { leafId: string }) {
   const [tab, setTab] = useState<LedgerPanelTab>(() => ledgerTabFromLeafId(leafId));
+  const ledgerLoad = useSyncExternalStore(
+    subscribeWorkspace,
+    getLedgerWorkspaceLoadState,
+    getLedgerWorkspaceLoadState,
+  );
+
+  useEffect(() => {
+    void loadLedgerWorkspace();
+  }, []);
 
   useEffect(() => {
     setTab(ledgerTabFromLeafId(leafId));
@@ -2523,7 +2378,14 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-      <LedgerViewSwitcher tab={tab} onTabChange={setTab} />
+      {ledgerLoad.loading ? (
+        <p className="shrink-0 px-1 text-[12px] text-[var(--pos-text-2)]">Loading ledger books…</p>
+      ) : null}
+      {ledgerLoad.error ? (
+        <p className="shrink-0 rounded-[8px] border border-solid border-[#c45a5a]/40 bg-[#f5e4e4]/50 px-3 py-2 text-[12px] text-[#8a3030]">
+          {ledgerLoad.error}
+        </p>
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {tab === "books" ? <SupplierListView /> : <SupplierLedgerView />}
       </div>
