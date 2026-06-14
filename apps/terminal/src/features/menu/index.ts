@@ -10,7 +10,9 @@ export type {
 export {
   apiMenuItemsToCategories,
   catalogItemToModifiers,
+  categoryIdFromName,
   findCatalogItemById,
+  mergeMenuCategories,
 } from "./mappers";
 export {
   buildOrderLineDisplay,

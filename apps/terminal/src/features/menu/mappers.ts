@@ -26,6 +26,28 @@ function categoryId(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") || "uncategorized";
 }
 
+/** Same slug used for API-derived and locally created categories. */
+export function categoryIdFromName(name: string): string {
+  return categoryId(name);
+}
+
+export function mergeMenuCategories(
+  fromApi: CatalogCategory[],
+  pendingCategoryNames: string[],
+): CatalogCategory[] {
+  const byName = new Map<string, CatalogCategory>();
+  for (const cat of fromApi) {
+    byName.set(cat.name.toLowerCase(), cat);
+  }
+  for (const name of pendingCategoryNames) {
+    const key = name.toLowerCase();
+    if (!byName.has(key)) {
+      byName.set(key, { id: categoryId(name), name, items: [] });
+    }
+  }
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function apiMenuItemsToCategories(items: ApiMenuItem[]): CatalogCategory[] {
   const byCategory = new Map<string, CatalogItem[]>();
 

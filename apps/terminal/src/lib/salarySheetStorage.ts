@@ -1,4 +1,4 @@
-/** Persisted salary register — one sheet per calendar month (Employee Salaries). */
+/** Salary register types and calculations (Employee Salaries). */
 
 export type SalaryPayment = {
   id: string;
@@ -35,8 +35,8 @@ export type SalarySheetBundle = {
   months: Record<string, SalarySheetDoc>;
 };
 
-const SALARY_SHEET_V1_KEY = "krunch.pos.salarySheet.v1";
-export const SALARY_SHEET_STORAGE_KEY = "krunch.pos.salarySheet.v2";
+const LEGACY_SALARY_SHEET_V1_KEY = "krunch.pos.salarySheet.v1";
+const LEGACY_SALARY_SHEET_V2_KEY = "krunch.pos.salarySheet.v2";
 
 function newRowId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -54,7 +54,9 @@ export function labelFromMonthKey(monthKey: string): string {
   const y = Number(ys);
   const mo = Number(ms);
   if (!Number.isFinite(y) || !Number.isFinite(mo) || mo < 1 || mo > 12) return monthKey;
-  return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(new Date(y, mo - 1, 1));
+  return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(
+    new Date(y, mo - 1, 1),
+  );
 }
 
 export function isMonthKey(s: string): boolean {
@@ -131,81 +133,6 @@ export function distributeServiceChargePool(
   return out;
 }
 
-function defaultRows(): SalarySheetRow[] {
-  return [
-    {
-      id: newRowId(),
-      name: "Jihad",
-      basic: 25_000,
-      pct: null,
-      serviceCharge: 0,
-      overtime: 2_420,
-      eidBonus: 806,
-      payments: [],
-    },
-    {
-      id: newRowId(),
-      name: "Ahad",
-      basic: 9_000,
-      pct: 9,
-      serviceCharge: 16_655,
-      overtime: 435,
-      eidBonus: 0,
-      payments: [],
-    },
-    {
-      id: newRowId(),
-      name: "Salim",
-      basic: 10_000,
-      pct: 9,
-      serviceCharge: 16_655,
-      overtime: 1_290,
-      eidBonus: 323,
-      payments: [],
-    },
-    {
-      id: newRowId(),
-      name: "Al-Amin",
-      basic: 20_000,
-      pct: null,
-      serviceCharge: 0,
-      overtime: 0,
-      eidBonus: 645,
-      payments: [],
-    },
-    {
-      id: newRowId(),
-      name: "Abdullah",
-      basic: 7_484,
-      pct: 7,
-      serviceCharge: 12_118,
-      overtime: 0,
-      eidBonus: 258,
-      payments: [],
-    },
-    {
-      id: newRowId(),
-      name: "Atick",
-      basic: 8_000,
-      pct: 5,
-      serviceCharge: 9_253,
-      overtime: 516,
-      eidBonus: 0,
-      payments: [],
-    },
-    {
-      id: newRowId(),
-      name: "Mojeeb",
-      basic: 16_000,
-      pct: null,
-      serviceCharge: 0,
-      overtime: 0,
-      eidBonus: 0,
-      payments: [],
-    },
-  ];
-}
-
 export function emptySalaryRow(): SalarySheetRow {
   return {
     id: newRowId(),
@@ -228,23 +155,10 @@ export function defaultDocForNewMonth(monthKey: string): SalarySheetDoc {
   };
 }
 
-/** Demo / template rows for the active month (period label follows the month). */
-export function exampleSalaryDocForMonth(monthKey: string): SalarySheetDoc {
-  const t = new Date().toISOString();
+export function emptySalarySheetBundle(monthKey = monthKeyFromDate()): SalarySheetBundle {
   return {
-    periodLabel: labelFromMonthKey(monthKey),
-    rows: defaultRows(),
-    updatedAt: t,
-  };
-}
-
-function defaultSalarySheetBundle(): SalarySheetBundle {
-  const key = monthKeyFromDate();
-  return {
-    selectedMonthKey: key,
-    months: {
-      [key]: exampleSalaryDocForMonth(key),
-    },
+    selectedMonthKey: monthKey,
+    months: { [monthKey]: defaultDocForNewMonth(monthKey) },
   };
 }
 
@@ -294,7 +208,9 @@ function coerceRow(raw: unknown, rowMonthKey?: string): SalarySheetRow | null {
 
   if (payments.length === 0 && legacyPaid != null && legacyPaid > 0) {
     const fallbackDate =
-      rowMonthKey && isMonthKey(rowMonthKey) ? `${rowMonthKey}-01` : new Date().toISOString().slice(0, 10);
+      rowMonthKey && isMonthKey(rowMonthKey)
+        ? `${rowMonthKey}-01`
+        : new Date().toISOString().slice(0, 10);
     payments = [
       {
         id: newRowId(),
@@ -342,17 +258,6 @@ function coerceSalarySheetDoc(
   };
 }
 
-function readV1SalaryDoc(): SalarySheetDoc | null {
-  try {
-    const raw = localStorage.getItem(SALARY_SHEET_V1_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return coerceSalarySheetDoc(parsed, monthKeyFromDate());
-  } catch {
-    return null;
-  }
-}
-
 function coerceMonthEntry(monthKey: string, raw: unknown): SalarySheetDoc | null {
   if (!raw || typeof raw !== "object") return null;
   const doc = coerceSalarySheetDoc(raw as Record<string, unknown>, monthKey);
@@ -363,62 +268,68 @@ function coerceMonthEntry(monthKey: string, raw: unknown): SalarySheetDoc | null
   return doc;
 }
 
-export function readSalarySheetBundle(): SalarySheetBundle {
-  try {
-    const v2raw = localStorage.getItem(SALARY_SHEET_STORAGE_KEY);
-    if (v2raw) {
-      const parsed = JSON.parse(v2raw) as Record<string, unknown>;
-      const selectedRaw = parsed.selectedMonthKey;
-      const selectedMonthKey =
-        typeof selectedRaw === "string" && isMonthKey(selectedRaw) ? selectedRaw : monthKeyFromDate();
+/** Normalize API or legacy JSON into a salary sheet bundle. */
+export function coerceSalarySheetBundle(raw: unknown): SalarySheetBundle | null {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw as Record<string, unknown>;
+  const selectedRaw = parsed.selectedMonthKey;
+  const selectedMonthKey =
+    typeof selectedRaw === "string" && isMonthKey(selectedRaw) ? selectedRaw : monthKeyFromDate();
 
-      const months: Record<string, SalarySheetDoc> = {};
-      const monthsRaw = parsed.months;
-      if (monthsRaw && typeof monthsRaw === "object" && !Array.isArray(monthsRaw)) {
-        for (const [k, v] of Object.entries(monthsRaw as Record<string, unknown>)) {
-          if (!isMonthKey(k)) continue;
-          const doc = coerceMonthEntry(k, v);
-          if (doc) months[k] = doc;
-        }
-      }
-
-      if (Object.keys(months).length === 0) return defaultSalarySheetBundle();
-
-      if (!months[selectedMonthKey]) {
-        months[selectedMonthKey] = defaultDocForNewMonth(selectedMonthKey);
-      }
-
-      return { selectedMonthKey, months };
+  const months: Record<string, SalarySheetDoc> = {};
+  const monthsRaw = parsed.months;
+  if (monthsRaw && typeof monthsRaw === "object" && !Array.isArray(monthsRaw)) {
+    for (const [k, v] of Object.entries(monthsRaw as Record<string, unknown>)) {
+      if (!isMonthKey(k)) continue;
+      const doc = coerceMonthEntry(k, v);
+      if (doc) months[k] = doc;
     }
+  }
 
+  if (Object.keys(months).length === 0) return null;
+
+  if (!months[selectedMonthKey]) {
+    months[selectedMonthKey] = defaultDocForNewMonth(selectedMonthKey);
+  }
+
+  return { selectedMonthKey, months };
+}
+
+function readV1SalaryDoc(): SalarySheetDoc | null {
+  try {
+    const raw = localStorage.getItem(LEGACY_SALARY_SHEET_V1_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return coerceSalarySheetDoc(parsed, monthKeyFromDate());
+  } catch {
+    return null;
+  }
+}
+
+/** One-time read of browser-local salary data (pre-API). */
+export function readLegacyLocalSalaryBundle(): SalarySheetBundle | null {
+  try {
+    const v2raw = localStorage.getItem(LEGACY_SALARY_SHEET_V2_KEY);
+    if (v2raw) {
+      const coerced = coerceSalarySheetBundle(JSON.parse(v2raw));
+      if (coerced) return coerced;
+    }
     const migrated = readV1SalaryDoc();
     if (migrated) {
       const key = monthKeyFromDate();
       return { selectedMonthKey: key, months: { [key]: migrated } };
     }
   } catch {
-    /* fall through */
+    /* ignore */
   }
-
-  return defaultSalarySheetBundle();
+  return null;
 }
 
-export function writeSalarySheetBundle(
-  bundle: SalarySheetBundle,
-): { ok: true } | { ok: false; message: string } {
+export function clearLegacyLocalSalaryStorage(): void {
   try {
-    localStorage.setItem(SALARY_SHEET_STORAGE_KEY, JSON.stringify(bundle));
-    try {
-      localStorage.removeItem(SALARY_SHEET_V1_KEY);
-    } catch {
-      /* ignore */
-    }
-    return { ok: true };
-  } catch (e) {
-    const message =
-      e instanceof DOMException && e.name === "QuotaExceededError"
-        ? "Storage full — export or clear other saved data."
-        : "Could not save salary sheet.";
-    return { ok: false, message };
+    localStorage.removeItem(LEGACY_SALARY_SHEET_V1_KEY);
+    localStorage.removeItem(LEGACY_SALARY_SHEET_V2_KEY);
+  } catch {
+    /* ignore */
   }
 }

@@ -15,6 +15,7 @@ out/
 .env.local
 .env.*.local
 deploy/.env
+deploy/CREDENTIALS.local.md
 deploy/pos-static
 deploy/n8n-local-files
 
@@ -54,6 +55,9 @@ apps/terminal-win/bin/
 apps/terminal-win/obj/
 apps/terminal-qt/build/
 apps/ios/DerivedData/
+
+# Local object storage (dev fallback when S3/MinIO is unreachable)
+apps/api/.local-storage/
 
 # Logs
 logs/

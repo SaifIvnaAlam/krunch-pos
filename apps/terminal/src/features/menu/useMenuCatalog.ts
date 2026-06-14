@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiMenuItemsToCategories } from "./mappers";
+import { useCallback, useEffect, useState, type SetStateAction } from "react";
+import { apiMenuItemsToCategories, mergeMenuCategories } from "./mappers";
 import { fetchMenuFromApi } from "./menuApi";
+import { readPendingMenuCategories } from "./menuCategoryStorage";
 import type { CatalogCategory } from "./types";
 
 export function useMenuCatalog() {
@@ -12,7 +13,8 @@ export function useMenuCatalog() {
     setLoading(true);
     try {
       const rows = await fetchMenuFromApi();
-      setCategories(apiMenuItemsToCategories(rows));
+      const fromApi = apiMenuItemsToCategories(rows);
+      setCategories(mergeMenuCategories(fromApi, readPendingMenuCategories()));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load menu.");
@@ -25,5 +27,15 @@ export function useMenuCatalog() {
     void refresh();
   }, [refresh]);
 
-  return { categories, setCategories, loading, error, refresh };
+  const setCategoriesMerged = useCallback(
+    (updater: SetStateAction<CatalogCategory[]>) => {
+      setCategories((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        return mergeMenuCategories(next, readPendingMenuCategories());
+      });
+    },
+    [],
+  );
+
+  return { categories, setCategories: setCategoriesMerged, loading, error, refresh };
 }

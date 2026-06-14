@@ -21,6 +21,8 @@ model Branch {
   menuItems    MenuItem[]
   stockItems   StockItem[]
   dailyEntries DailyEntry[]
+  ledgerWorkspace BranchLedgerWorkspace?
+  salaryWorkspace BranchSalaryWorkspace?
 }
 
 model Staff {
@@ -285,4 +287,24 @@ model DailyEntry {
 
   @@unique([branchId, date])
   @@index([branchId, date])
+}
+
+/// Branch-scoped ledger books, bills/payments, and purchase moves (terminal Ledger module).
+model BranchLedgerWorkspace {
+  branchId  String   @id
+  suppliers Json     @default("[]")
+  moves     Json     @default("[]")
+  ledger    Json     @default("[]")
+  updatedAt DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+}
+
+/// Branch-scoped monthly salary registers (terminal Employee Salaries).
+model BranchSalaryWorkspace {
+  branchId  String   @id
+  bundle    Json     @default("{}")
+  updatedAt DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
 }

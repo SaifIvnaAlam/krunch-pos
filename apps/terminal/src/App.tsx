@@ -5,6 +5,7 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { SplashScreen } from "./pages/SplashScreen";
 import { SignInPage } from "./pages/SignInPage";
 import { PosTerminalPage } from "./pages/PosTerminalPage";
+import { usePosViewportScale } from "./viewportScale";
 
 function SplashGate() {
   const navigate = useNavigate();
@@ -29,13 +30,17 @@ function ProtectedPos() {
 }
 
 function AppRoutes() {
+  usePosViewportScale();
+
   return (
-    <div className="pos-app h-full w-full">
-      <Routes>
-        <Route path="/" element={<SplashGate />} />
-        <Route path="/signin" element={<SignInPage />} />
-        <Route path="/pos" element={<ProtectedPos />} />
-      </Routes>
+    <div className="pos-viewport">
+      <div className="pos-app">
+        <Routes>
+          <Route path="/" element={<SplashGate />} />
+          <Route path="/signin" element={<SignInPage />} />
+          <Route path="/pos" element={<ProtectedPos />} />
+        </Routes>
+      </div>
     </div>
   );
 }

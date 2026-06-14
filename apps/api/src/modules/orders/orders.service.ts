@@ -121,13 +121,17 @@ export class OrdersService {
     branchId: string,
     terminalId: string,
   ) {
-    const menuItemIds = dto.items.map((i) => i.menuItemId);
+    const menuItemIds = [...new Set(dto.items.map((i) => i.menuItemId))];
     const menuItems = await this.prisma.menuItem.findMany({
       where: { id: { in: menuItemIds }, branchId },
     });
 
     if (menuItems.length !== menuItemIds.length) {
-      throw new BadRequestException('One or more menu items not found in this branch');
+      const found = new Set(menuItems.map((mi) => mi.id));
+      const missing = menuItemIds.filter((id) => !found.has(id));
+      throw new BadRequestException(
+        `Menu items not found in this branch: ${missing.join(', ')}`,
+      );
     }
 
     const unavailable = menuItems.filter((mi) => !mi.isAvailable || mi.is86d);

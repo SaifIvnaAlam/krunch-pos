@@ -35,7 +35,7 @@ export class StaffController {
   @ApiOperation({ summary: 'Get current staff profile + permissions' })
   async getMe(@Req() req: Request) {
     const user = req.user as JwtPayload;
-    return this.staffService.getMe(user.staffId);
+    return this.staffService.getMe(user.staffId, user.branchId);
   }
 
   @Get()

@@ -36,8 +36,11 @@ export interface PresignedDownload {
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
   private client: S3Client | null = null;
+  private presignClient: S3Client | null = null;
   private bucket = '';
   private defaultExpiresIn = 900;
+  private internalEndpoint = '';
+  private publicEndpoint = '';
 
   constructor(private readonly config: ConfigService) {}
 
@@ -50,6 +53,9 @@ export class StorageService implements OnModuleInit {
       'S3_PRESIGN_EXPIRY_SECONDS',
       900,
     );
+    this.internalEndpoint = endpoint;
+    this.publicEndpoint =
+      this.config.get<string>('S3_PUBLIC_ENDPOINT', '').trim() || endpoint;
 
     if (!endpoint || !accessKey || !secretKey) {
       this.logger.warn(
@@ -58,14 +64,22 @@ export class StorageService implements OnModuleInit {
       return;
     }
 
-    this.client = new S3Client({
-      endpoint,
+    const clientConfig = {
       region: this.config.get<string>('S3_REGION', 'us-east-1'),
       credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
-      forcePathStyle: this.config.get<string>('S3_FORCE_PATH_STYLE', 'true') === 'true',
-    });
+      forcePathStyle:
+        this.config.get<string>('S3_FORCE_PATH_STYLE', 'true') === 'true',
+    };
 
-    this.logger.log(`Object storage ready (bucket: ${this.bucket})`);
+    this.client = new S3Client({ ...clientConfig, endpoint });
+    this.presignClient =
+      this.publicEndpoint !== endpoint
+        ? new S3Client({ ...clientConfig, endpoint: this.publicEndpoint })
+        : this.client;
+
+    this.logger.log(
+      `Object storage ready (bucket: ${this.bucket}, internal: ${this.internalEndpoint}, public: ${this.publicEndpoint})`,
+    );
   }
 
   isConfigured(): boolean {
@@ -107,7 +121,7 @@ export class StorageService implements OnModuleInit {
     contentType: string,
     expiresIn = this.defaultExpiresIn,
   ): Promise<PresignedUpload> {
-    const client = this.requireClient();
+    const client = this.requirePresignClient();
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -126,7 +140,7 @@ export class StorageService implements OnModuleInit {
     key: string,
     expiresIn = this.defaultExpiresIn,
   ): Promise<PresignedDownload> {
-    const client = this.requireClient();
+    const client = this.requirePresignClient();
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
@@ -147,5 +161,14 @@ export class StorageService implements OnModuleInit {
       );
     }
     return this.client;
+  }
+
+  private requirePresignClient(): S3Client {
+    if (!this.presignClient) {
+      throw new ServiceUnavailableException(
+        'Object storage is not configured on this server',
+      );
+    }
+    return this.presignClient;
   }
 }

@@ -15,6 +15,8 @@ import { KitchenModule } from './modules/kitchen/kitchen.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { DailyEntriesModule } from './modules/daily-entries/daily-entries.module';
+import { LedgerModule } from './modules/ledger/ledger.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { HealthModule } from './modules/health/health.module';
 
@@ -37,6 +39,8 @@ import { HealthModule } from './modules/health/health.module';
     SyncModule,
     ReportsModule,
     DailyEntriesModule,
+    LedgerModule,
+    PayrollModule,
     StorageModule,
   ],
 })

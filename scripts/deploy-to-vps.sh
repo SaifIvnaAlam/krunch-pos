@@ -7,8 +7,8 @@
 #   - deploy/.env filled (copy from deploy/.env.example)
 #
 # Usage:
-#   ./scripts/deploy-to-vps.sh
-#   VPS_HOST=217.154.53.60 VPS_USER=root ./scripts/deploy-to-vps.sh
+#   ./scripts/deploy-to-vps.sh          # reads VPS_PASSWORD from deploy/.env
+#   VPS_HOST=217.154.53.60 ./scripts/deploy-to-vps.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,8 +17,7 @@ cd "$ROOT"
 VPS_HOST="${VPS_HOST:-217.154.53.60}"
 VPS_USER="${VPS_USER:-root}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/krunch-pos}"
-SSH=(ssh -o BatchMode=yes "${VPS_USER}@${VPS_HOST}")
-RSYNC=(rsync -az --delete)
+USE_PASSWORD_SSH=0
 
 ENV_FILE="${ROOT}/deploy/.env"
 ENV_EXAMPLE="${ROOT}/deploy/.env.example"
@@ -31,6 +30,11 @@ fi
 
 # shellcheck disable=SC1090
 set -a && source "$ENV_FILE" && set +a
+
+# deploy/.env may override VPS_* (see deploy/.env.example)
+VPS_HOST="${VPS_HOST:-217.154.53.60}"
+VPS_USER="${VPS_USER:-root}"
+REMOTE_DIR="${REMOTE_DIR:-/opt/krunch-pos}"
 
 for var in POS_DOMAIN S3_DOMAIN POSTGRES_PASSWORD MINIO_ROOT_PASSWORD JWT_ACCESS_SECRET JWT_REFRESH_SECRET; do
   if [[ -z "${!var:-}" ]] || [[ "${!var}" == change-me* ]]; then
@@ -50,20 +54,74 @@ export S3_ACCESS_KEY S3_SECRET_KEY
 export S3_ENDPOINT="${S3_ENDPOINT:-https://${S3_DOMAIN}}"
 export CORS_ORIGIN="${CORS_ORIGIN:-https://${POS_DOMAIN}}"
 
+vps_ssh() {
+  local cmd="$1"
+  local quoted_cmd
+  quoted_cmd="$(printf '%q' "$cmd")"
+  if [[ "${USE_PASSWORD_SSH}" == "1" ]]; then
+    export VPS_REMOTE_CMD="$quoted_cmd"
+    expect -f - <<'EXPECT_EOF'
+set timeout 3600
+log_user 1
+spawn ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o PreferredAuthentications=password -o PubkeyAuthentication=no $env(VPS_USER)@$env(VPS_HOST) bash -lc $env(VPS_REMOTE_CMD)
+expect {
+  -re "(?i)password:" { send "$env(VPS_PASSWORD)\r"; exp_continue }
+  eof
+}
+catch wait result
+exit [lindex $result 3]
+EXPECT_EOF
+  else
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=30 "${VPS_USER}@${VPS_HOST}" "bash -lc ${quoted_cmd}"
+  fi
+}
+
+vps_rsync() {
+  if [[ "${USE_PASSWORD_SSH}" == "1" ]]; then
+    local quoted
+    quoted="$(printf ' %q' "$@")"
+    expect -c "
+      set timeout 3600
+      log_user 1
+      spawn rsync -az --delete -e \"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o PreferredAuthentications=password -o PubkeyAuthentication=no\"${quoted}
+      expect {
+        -re \"(?i)password:\" { send \"${VPS_PASSWORD}\r\"; exp_continue }
+        eof
+      }
+      catch wait result
+      exit [lindex \$result 3]
+    "
+  else
+    rsync -az --delete -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=30" "$@"
+  fi
+}
+
 echo "==> Checking SSH to ${VPS_USER}@${VPS_HOST}"
-if ! "${SSH[@]}" 'echo ok' >/dev/null 2>&1; then
+if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=15 "${VPS_USER}@${VPS_HOST}" 'echo ok' >/dev/null 2>&1; then
+  echo "    Using SSH key auth"
+elif [[ -n "${VPS_PASSWORD:-}" ]]; then
+  USE_PASSWORD_SSH=1
+  export VPS_USER VPS_HOST VPS_PASSWORD
+  echo "    Using password auth (VPS_PASSWORD)"
+  if ! vps_ssh 'echo ok' >/dev/null 2>&1; then
+    echo "SSH password auth failed."
+    exit 1
+  fi
+else
   echo ""
   echo "SSH failed (no key on this machine for the VPS)."
-  echo "Option A — IONOS web console as root, run:"
+  echo "Set VPS_PASSWORD in deploy/.env, or run:"
+  echo "  VPS_PASSWORD='your-root-password' ./scripts/deploy-to-vps.sh"
+  echo ""
+  echo "Or install from IONOS web console:"
   echo "  curl -fsSL https://raw.githubusercontent.com/SaifIvnaAlam/krunch-pos/main/scripts/install-on-vps.sh | bash"
   echo ""
-  echo "Option B — Add your Mac SSH key to the server, then re-run this script:"
-  echo "  cat ~/.ssh/id_ed25519.pub   # paste into /root/.ssh/authorized_keys on the VPS"
+  echo "Or add your Mac SSH key to /root/.ssh/authorized_keys on the VPS."
   exit 1
 fi
 
-echo "==> Building POS for https://${POS_DOMAIN}"
-export VITE_API_URL="https://${POS_DOMAIN}/api/v1"
+echo "==> Building POS for ${VITE_API_URL:-https://${POS_DOMAIN}/api/v1}"
+export VITE_API_URL="${VITE_API_URL:-https://${POS_DOMAIN}/api/v1}"
 export VITE_DEFAULT_BRANCH_ID="${VITE_DEFAULT_BRANCH_ID:-a0000000-0000-4000-8000-000000000001}"
 export VITE_DEFAULT_TERMINAL_ID="${VITE_DEFAULT_TERMINAL_ID:-terminal-prod-001}"
 npm run build -w terminal
@@ -72,11 +130,14 @@ rm -rf "${ROOT}/deploy/pos-static"
 cp -R "${ROOT}/apps/terminal/dist" "${ROOT}/deploy/pos-static"
 
 echo "==> Stopping legacy /root compose (frees port 80 for Caddy)"
-"${SSH[@]}" 'if [ -f /root/docker-compose.yaml ]; then cd /root && docker compose down 2>/dev/null || true; fi'
+vps_ssh 'if [ -f /root/docker-compose.yaml ]; then cd /root && docker compose down 2>/dev/null || true; fi'
+
+echo "==> Stopping host Caddy if it holds ports 80/443"
+vps_ssh 'systemctl stop caddy 2>/dev/null || true; systemctl disable caddy 2>/dev/null || true'
 
 echo "==> Syncing to ${REMOTE_DIR}"
-"${SSH[@]}" "mkdir -p ${REMOTE_DIR}"
-"${RSYNC[@]}" \
+vps_ssh "mkdir -p ${REMOTE_DIR}"
+vps_rsync \
   --exclude node_modules \
   --exclude .git \
   --exclude apps/terminal \
@@ -84,21 +145,25 @@ echo "==> Syncing to ${REMOTE_DIR}"
   "${ROOT}/" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/"
 
 echo "==> Writing deploy/.env on server"
-"${RSYNC[@]}" "${ENV_FILE}" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/deploy/.env"
+vps_rsync "${ENV_FILE}" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/deploy/.env"
 
 echo "==> Starting stack"
-"${SSH[@]}" "cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env up -d --build"
+vps_ssh "cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env up -d --build"
+
+echo "==> Syncing Postgres password with deploy/.env (volume may keep an older password)"
+vps_ssh "cd ${REMOTE_DIR}/deploy && set -a && . ./.env && set +a && docker compose -f docker-compose.prod.yml exec -T postgres psql -U \${POSTGRES_USER} -d \${POSTGRES_DB} -c \"ALTER USER \${POSTGRES_USER} WITH PASSWORD '\${POSTGRES_PASSWORD}';\"" || true
+vps_ssh "cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env restart api" || true
 
 echo "==> Waiting for API health"
 for i in $(seq 1 40); do
-  if "${SSH[@]}" "docker compose -f ${REMOTE_DIR}/deploy/docker-compose.prod.yml --env-file ${REMOTE_DIR}/deploy/.env exec -T api node -e \"fetch('http://127.0.0.1:3000/api/v1/health').then(r=>r.text()).then(t=>process.exit(t.includes('ok')?0:1)).catch(()=>process.exit(1))\"" 2>/dev/null; then
+  if vps_ssh "docker compose -f ${REMOTE_DIR}/deploy/docker-compose.prod.yml --env-file ${REMOTE_DIR}/deploy/.env exec -T api node -e \"fetch('http://127.0.0.1:3000/api/v1/health').then(r=>r.text()).then(t=>process.exit(t.includes('ok')?0:1)).catch(()=>process.exit(1))\"" 2>/dev/null; then
     break
   fi
   sleep 3
 done
 
 echo "==> Seeding database (idempotent — safe to re-run)"
-"${SSH[@]}" "cd ${REMOTE_DIR} && set -a && . deploy/.env && set +a && docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec -T api sh -c 'cd /app/packages/database-schema && npx prisma db seed'" || {
+vps_ssh "cd ${REMOTE_DIR} && set -a && . deploy/.env && set +a && docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec -T api sh -c 'cd /app/packages/database-schema && npx prisma db seed'" || {
   echo "Seed failed or already applied — check logs if this is the first deploy."
 }
 

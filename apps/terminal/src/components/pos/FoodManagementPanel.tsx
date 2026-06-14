@@ -3,9 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { ImageUploadField } from "./ImageUploadField";
 import {
   catalogItemToModifiers,
+  categoryIdFromName,
   createMenuItemOnApi,
   updateMenuItemOnApi,
 } from "@/features/menu";
+import {
+  addPendingMenuCategory,
+  removePendingMenuCategory,
+} from "@/features/menu/menuCategoryStorage";
 import { fromStorageRef, uploadFileToStorage } from "@/features/storage";
 import { isDemoDataMode } from "@/shared/config/env";
 import type { CatalogCategory, CatalogItem } from "@/features/menu";
@@ -54,9 +59,12 @@ export function FoodManagementPanel({
   const [extraName, setExtraName] = useState("");
   const [extraPrice, setExtraPrice] = useState("");
   const [itemSaveError, setItemSaveError] = useState<string | null>(null);
+  const [categorySaveError, setCategorySaveError] = useState<string | null>(null);
   const [itemSaving, setItemSaving] = useState(false);
   const [photoSaveError, setPhotoSaveError] = useState<string | null>(null);
   const [photoSaving, setPhotoSaving] = useState(false);
+  const [editItemName, setEditItemName] = useState("");
+  const [editItemPrice, setEditItemPrice] = useState("");
 
   useEffect(() => {
     if (!itemCategoryId && categories[0]) setItemCategoryId(categories[0].id);
@@ -71,26 +79,65 @@ export function FoodManagementPanel({
     [selectedCategory, selectedItemId],
   );
 
+  useEffect(() => {
+    if (!selectedItem) {
+      setEditItemName("");
+      setEditItemPrice("");
+      return;
+    }
+    setEditItemName(selectedItem.name);
+    setEditItemPrice(formatMoney(selectedItem.priceCents));
+  }, [selectedItem]);
+
   const totalItems = useMemo(
     () => categories.reduce((n, c) => n + c.items.length, 0),
     [categories],
   );
 
   const createCategory = () => {
-    if (!categoryName.trim()) return;
-    const id = uniqueId(categoryName);
-    setCategories((prev) => [...prev, { id, name: categoryName.trim(), items: [] }]);
+    const name = categoryName.trim();
+    if (!name) {
+      setCategorySaveError("Enter a category name.");
+      return;
+    }
+    const lower = name.toLowerCase();
+    if (categories.some((c) => c.name.toLowerCase() === lower)) {
+      setCategorySaveError("That category already exists.");
+      return;
+    }
+    const id = categoryIdFromName(name);
+    addPendingMenuCategory(name);
+    setCategories((prev) => [...prev, { id, name, items: [] }]);
     setCategoryName("");
     setItemCategoryId(id);
+    setCategorySaveError(null);
   };
 
   const createItem = () => {
     void (async () => {
-      const priceCents = Math.round(Number(itemPrice) * 100);
-      if (!itemName.trim() || !itemCategoryId || Number.isNaN(priceCents)) return;
+      const name = itemName.trim();
+      if (!name) {
+        setItemSaveError("Enter an item name.");
+        return;
+      }
+      if (!itemCategoryId) {
+        setItemSaveError("Add a category first.");
+        return;
+      }
+      const rawPrice = itemPrice.trim().replace(",", ".");
+      if (!rawPrice) {
+        setItemSaveError("Enter a price.");
+        return;
+      }
+      const priceNum = Number.parseFloat(rawPrice);
+      if (!Number.isFinite(priceNum) || priceNum < 0) {
+        setItemSaveError("Enter a valid price.");
+        return;
+      }
+      const priceCents = Math.round(priceNum * 100);
       const catName =
         categories.find((c) => c.id === itemCategoryId)?.name ?? "Uncategorized";
-      const displayName = itemName.trim();
+      const displayName = name;
       const draftItem: CatalogItem = {
         id: uniqueId(itemName),
         name: displayName,
@@ -104,13 +151,16 @@ export function FoodManagementPanel({
         setItemSaving(true);
         setItemSaveError(null);
         try {
-          await createMenuItemOnApi({
+          const created = await createMenuItemOnApi({
             name: displayName,
             price: Math.max(0, priceCents) / 100,
             category: catName,
             modifiers: catalogItemToModifiers(draftItem),
           });
+          removePendingMenuCategory(catName);
           await onMenuRefresh?.();
+          setSelectedCategoryId(categoryIdFromName(catName));
+          setSelectedItemId(created.id);
         } catch (e) {
           setItemSaveError(e instanceof Error ? e.message : "Could not save item.");
           setItemSaving(false);
@@ -170,46 +220,121 @@ export function FoodManagementPanel({
     })();
   };
 
+  const saveSelectedItemDetails = () => {
+    void (async () => {
+      if (!selectedCategory || !selectedItem) return;
+      const name = editItemName.trim();
+      const rawPrice = editItemPrice.trim().replace(",", ".");
+      if (!name) {
+        setItemSaveError("Enter an item name.");
+        return;
+      }
+      if (!rawPrice) {
+        setItemSaveError("Enter a price.");
+        return;
+      }
+      const priceNum = Number.parseFloat(rawPrice);
+      if (!Number.isFinite(priceNum) || priceNum < 0) {
+        setItemSaveError("Enter a valid price.");
+        return;
+      }
+      const priceCents = Math.round(priceNum * 100);
+
+      if (!isDemoDataMode()) {
+        setItemSaving(true);
+        setItemSaveError(null);
+        try {
+          await updateMenuItemOnApi(selectedItem.id, {
+            name,
+            price: priceCents / 100,
+          });
+          await onMenuRefresh?.();
+        } catch (e) {
+          setItemSaveError(e instanceof Error ? e.message : "Could not save item.");
+          setItemSaving(false);
+          return;
+        }
+        setItemSaving(false);
+      } else {
+        setCategories((prev) =>
+          prev.map((c) =>
+            c.id !== selectedCategory.id
+              ? c
+              : {
+                  ...c,
+                  items: c.items.map((i) =>
+                    i.id === selectedItem.id
+                      ? { ...i, name, priceCents: Math.max(0, priceCents) }
+                      : i,
+                  ),
+                },
+          ),
+        );
+      }
+    })();
+  };
+
   const addExtra = () => {
-    const price = Math.round(Number(extraPrice) * 100);
-    if (!selectedCategory || !selectedItem || !extraName.trim() || Number.isNaN(price)) return;
-    setCategories((prev) =>
-      prev.map((c) =>
-        c.id !== selectedCategory.id
-          ? c
-          : {
-              ...c,
-              items: c.items.map((i) =>
-                i.id !== selectedItem.id
-                  ? i
-                  : {
-                      ...i,
-                      addons: [
-                        ...i.addons,
-                        {
-                          id: uniqueId(extraName),
-                          name: extraName.trim(),
-                          priceCents: Math.max(0, price),
-                        },
-                      ],
-                    },
-              ),
-            },
-      ),
-    );
-    setExtraName("");
-    setExtraPrice("");
+    void (async () => {
+      const price = Math.round(Number(extraPrice) * 100);
+      if (!selectedCategory || !selectedItem || !extraName.trim() || Number.isNaN(price)) return;
+
+      const newAddon = {
+        id: uniqueId(extraName),
+        name: extraName.trim(),
+        priceCents: Math.max(0, price),
+      };
+      const updatedItem: CatalogItem = {
+        ...selectedItem,
+        addons: [...selectedItem.addons, newAddon],
+      };
+
+      if (!isDemoDataMode()) {
+        setItemSaving(true);
+        setItemSaveError(null);
+        try {
+          await updateMenuItemOnApi(selectedItem.id, {
+            modifiers: catalogItemToModifiers(updatedItem),
+          });
+          await onMenuRefresh?.();
+        } catch (e) {
+          setItemSaveError(e instanceof Error ? e.message : "Could not save add-on.");
+          setItemSaving(false);
+          return;
+        }
+        setItemSaving(false);
+      } else {
+        setCategories((prev) =>
+          prev.map((c) =>
+            c.id !== selectedCategory.id
+              ? c
+              : {
+                  ...c,
+                  items: c.items.map((i) =>
+                    i.id !== selectedItem.id ? i : updatedItem,
+                  ),
+                },
+          ),
+        );
+      }
+
+      setExtraName("");
+      setExtraPrice("");
+    })();
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-1">
-      <h1 className="text-[15px] font-semibold text-[var(--pos-text-1)]">Menu</h1>
+      <h1 className="text-[15px] font-semibold text-[var(--pos-text-1)]">Menu setup</h1>
 
       <div className="flex flex-col gap-2 rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-3">
         <div className="flex gap-2">
           <input
             value={categoryName}
-            onChange={(e) => setCategoryName(e.target.value)}
+            onChange={(e) => {
+              setCategoryName(e.target.value);
+              if (categorySaveError) setCategorySaveError(null);
+            }}
             onKeyDown={(e) => e.key === "Enter" && createCategory()}
             placeholder="New category"
             className={inputClass}
@@ -218,6 +343,9 @@ export function FoodManagementPanel({
             Add
           </button>
         </div>
+        {categorySaveError ? (
+          <p className="text-[12px] text-red-600">{categorySaveError}</p>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <select
             value={itemCategoryId}
@@ -308,9 +436,34 @@ export function FoodManagementPanel({
 
       {selectedItem ? (
         <div className="rounded-[10px] border border-solid [border-color:var(--pos-border-hairline)] bg-[var(--pos-card)] p-3">
-          <p className="truncate text-[13px] font-medium text-[var(--pos-text-1)]">
-            {selectedItem.name}
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]">
+            Item details
           </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input
+              value={editItemName}
+              onChange={(e) => setEditItemName(e.target.value)}
+              placeholder="Item name"
+              aria-label="Item name"
+              className={inputClass}
+            />
+            <input
+              value={editItemPrice}
+              onChange={(e) => setEditItemPrice(e.target.value)}
+              placeholder="Price"
+              inputMode="decimal"
+              aria-label="Item price"
+              className={`${inputClass} max-w-[88px]`}
+            />
+            <button
+              type="button"
+              onClick={saveSelectedItemDetails}
+              disabled={itemSaving}
+              className={btnClass}
+            >
+              {itemSaving ? "…" : "Save"}
+            </button>
+          </div>
           <div className="mt-2">
             <ImageUploadField
               label="Photo"
@@ -322,6 +475,9 @@ export function FoodManagementPanel({
             {photoSaveError ? (
               <p className="mt-1 text-[12px] text-red-600">{photoSaveError}</p>
             ) : null}
+            <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
+              Menu photos are compressed to WebP before upload.
+            </p>
           </div>
           {selectedItem.addons.length > 0 ? (
             <ul className="mt-3 space-y-1 text-[12px] text-[var(--pos-text-2)]">
@@ -333,7 +489,10 @@ export function FoodManagementPanel({
               ))}
             </ul>
           ) : null}
-          <div className="mt-3 flex gap-2">
+          <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]">
+            Extras / add-ons
+          </p>
+          <div className="mt-2 flex gap-2">
             <input
               value={extraName}
               onChange={(e) => setExtraName(e.target.value)}
@@ -347,8 +506,8 @@ export function FoodManagementPanel({
               inputMode="decimal"
               className={`${inputClass} max-w-[72px]`}
             />
-            <button type="button" onClick={addExtra} className={btnClass}>
-              Add
+            <button type="button" onClick={addExtra} disabled={itemSaving} className={btnClass}>
+              {itemSaving ? "…" : "Add"}
             </button>
           </div>
         </div>

@@ -98,6 +98,12 @@ html.dark {
   --pos-icon-tile-bg: #2a2a28;
 }
 
+:root {
+  --pos-ui-scale: 1;
+  --pos-design-width: 1280px;
+  --pos-design-height: 800px;
+}
+
 html, body, #root {
   margin: 0;
   padding: 0;
@@ -107,6 +113,25 @@ html, body, #root {
   font-family: var(--font-sans);
   background: var(--pos-page);
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Scale the POS UI to fill the viewport while keeping the 1280×800 design ratio.
+ * Layout size is pre-scaled down, then transform scale() brings it back to 100%.
+ */
+.pos-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--pos-page);
+}
+
+.pos-app {
+  width: calc(100% / var(--pos-ui-scale, 1));
+  height: calc(100% / var(--pos-ui-scale, 1));
+  transform: scale(var(--pos-ui-scale, 1));
+  transform-origin: top left;
 }
 
 /* Hide scrollbars across the terminal UI; scrolling still works (wheel, touch, keys). */

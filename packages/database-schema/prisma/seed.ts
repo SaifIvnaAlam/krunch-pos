@@ -1,7 +1,6 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { buildSeedSalaryExampleBundle } from './seed-salary-example';
 
 const prisma = new PrismaClient();
 
@@ -246,20 +245,6 @@ async function main(): Promise<void> {
       is86d: false,
     },
   });
-
-  const salaryMonthKey = '2026-05';
-  const salaryBundle = buildSeedSalaryExampleBundle(salaryMonthKey);
-  await prisma.branchSalaryWorkspace.upsert({
-    where: { branchId: DEFAULT_BRANCH_ID },
-    update: {
-      bundle: salaryBundle as Prisma.InputJsonValue,
-    },
-    create: {
-      branchId: DEFAULT_BRANCH_ID,
-      bundle: salaryBundle as Prisma.InputJsonValue,
-    },
-  });
-  console.log(`Seeded example salary register for ${salaryMonthKey}.`);
 
   console.log(
     `Seeded default OWNER staff: ${owner.name} (PIN: ${defaultPin}, email: ${owner.email})`,

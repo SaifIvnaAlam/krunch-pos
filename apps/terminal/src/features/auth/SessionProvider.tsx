@@ -83,8 +83,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         writeApiProfileName(me.name);
         setApiUserName(me.name);
-        writeActiveBranch(me.activeBranch);
-        setActiveBranch(me.activeBranch);
+        if (me.activeBranch) {
+          writeActiveBranch(me.activeBranch);
+          setActiveBranch(me.activeBranch);
+        }
       })
       .catch(() => {
         /* keep cached branch from login / sessionStorage */

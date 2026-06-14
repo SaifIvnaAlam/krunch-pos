@@ -1,7 +1,5 @@
 import { compressImageFile } from "./compressImage";
-import { requireAccessToken } from "@/features/api-client/auth";
-import { getApiBaseUrl } from "@/shared/config/env";
-import { ApiRequestError } from "@/features/api-client/errors";
+import { presignUpload } from "./storageApi";
 import { toStorageRef } from "./storageRef";
 
 export type UploadScope =
@@ -55,7 +53,11 @@ export async function uploadFileToStorage(
     !isHeicFile(file)
   ) {
     try {
-      body = await compressImageFile(file);
+      const menuOpts =
+        scope === "menu"
+          ? { maxWidth: 800, maxHeight: 800, quality: 0.78, mimeType: "image/webp" as const }
+          : undefined;
+      body = await compressImageFile(file, menuOpts);
       compressed = true;
     } catch {
       // HEIC / exotic formats may fail canvas decode — upload original bytes.
@@ -69,44 +71,19 @@ export async function uploadFileToStorage(
   const ext = extensionFor(body, compressed);
   const path = `${scope}/${base}-${stamp}.${ext}`;
 
-  const token = requireAccessToken();
-  const form = new FormData();
-  form.append("path", path);
-  form.append("file", body, `${base}.${ext}`);
+  const { uploadUrl, key } = await presignUpload(
+    path,
+    body.type || "application/octet-stream",
+  );
 
-  const response = await fetch(`${getApiBaseUrl()}/storage/upload`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
+  const put = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": body.type || "application/octet-stream" },
+    body,
   });
-
-  const text = await response.text();
-  let data: unknown = undefined;
-  if (text) {
-    try {
-      data = JSON.parse(text) as unknown;
-    } catch {
-      data = text;
-    }
+  if (!put.ok) {
+    throw new Error(`Upload failed (${put.status}). Check storage connectivity.`);
   }
 
-  if (!response.ok) {
-    const rawMessage =
-      typeof data === "object" && data !== null && "message" in data
-        ? (data as { message: unknown }).message
-        : undefined;
-    const msg = Array.isArray(rawMessage)
-      ? rawMessage.join(", ")
-      : typeof rawMessage === "string"
-        ? rawMessage
-        : `HTTP ${response.status}`;
-    throw new ApiRequestError(msg, response.status, data);
-  }
-
-  const payload = data as { key?: string };
-  if (!payload?.key) {
-    throw new Error("Upload succeeded but no storage key was returned.");
-  }
-
-  return toStorageRef(payload.key);
+  return toStorageRef(key);
 }

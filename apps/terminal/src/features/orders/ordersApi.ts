@@ -10,6 +10,7 @@ export async function fetchOrdersFromApi(status?: string): Promise<ApiOrderSumma
 
 export async function createOrderOnApi(body: {
   tableNumber?: string;
+  applyServiceCharge?: boolean;
   items: Array<{
     menuItemId: string;
     quantity: number;

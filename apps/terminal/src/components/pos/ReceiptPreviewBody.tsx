@@ -29,7 +29,7 @@ export function ReceiptPreviewBody({ mediaRef }: { mediaRef: string }) {
       <iframe
         title="Attachment preview"
         src={src}
-        className="h-[min(90dvh,900px)] w-full max-w-3xl rounded-md bg-white shadow-lg"
+        className="h-[min(720px,900px)] w-full max-w-3xl rounded-md bg-white shadow-lg"
         onClick={(e) => e.stopPropagation()}
       />
     );
@@ -39,7 +39,7 @@ export function ReceiptPreviewBody({ mediaRef }: { mediaRef: string }) {
     <img
       src={src}
       alt="Receipt"
-      className="max-h-[min(90dvh,900px)] max-w-full object-contain shadow-lg"
+      className="max-h-[720px] max-w-full object-contain shadow-lg"
       onClick={(e) => e.stopPropagation()}
     />
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CircleDollarSign,
@@ -30,9 +30,13 @@ import {
   type OrderLineConfig,
 } from "@/features/menu";
 import { createOrderOnApi, holdOrderOnApi } from "@/features/orders";
+import { computeOrderFeesCents } from "@/features/orders/orderFees";
 import { processPaymentOnApi } from "@/features/payments/paymentsApi";
 import { StorageImage } from "@/features/storage";
 import { PosSidebar } from "../components/pos/PosSidebar";
+import { PosMobileNav } from "../components/pos/PosMobileNav";
+import { PosMobileHeader } from "../components/pos/PosMobileHeader";
+import { POS_SELECT_LEAF_EVENT } from "../lib/posNavEvents";
 import { OrdersManageView } from "../components/pos/OrdersManageView";
 import { GenericModuleView } from "../components/pos/GenericModuleView";
 import {
@@ -121,6 +125,16 @@ function formatMoney(cents: number) {
   return (cents / 100).toFixed(2);
 }
 
+function parseApiMoney(value: string | number | undefined): number {
+  if (value == null) return 0;
+  const n = typeof value === "string" ? Number.parseFloat(value) : value;
+  return Number.isFinite(n) ? n : 0;
+}
+
+function isItemUnavailable(item: CatalogItem): boolean {
+  return item.is86d === true || item.isAvailable === false;
+}
+
 function formatDiscountPercentLabel(p: number) {
   const clamped = Math.min(100, Math.max(0, p));
   if (clamped % 1 === 0) return String(clamped);
@@ -182,7 +196,7 @@ function lineWithConfig(
 
 export function PosTerminalPage() {
   const navigate = useNavigate();
-  const { signOut } = useSession();
+  const { signOut, userName, activeBranch } = useSession();
   const {
     categories: menuCategories,
     setCategories: setMenuCategories,
@@ -238,8 +252,8 @@ export function PosTerminalPage() {
       const detail = (ev as CustomEvent<{ leafId?: string }>).detail;
       if (detail?.leafId) setActiveLeafId(detail.leafId);
     };
-    window.addEventListener("pos-select-leaf", onNav);
-    return () => window.removeEventListener("pos-select-leaf", onNav);
+    window.addEventListener(POS_SELECT_LEAF_EVENT, onNav);
+    return () => window.removeEventListener(POS_SELECT_LEAF_EVENT, onNav);
   }, []);
 
   useEffect(() => {
@@ -286,13 +300,13 @@ export function PosTerminalPage() {
   );
   const [serviceChargeEnabled, setServiceChargeEnabled] = useState(false);
   const subtotalAfterLineDiscounts = Math.max(0, grossSubtotal - discount);
-  const service = serviceChargeEnabled
-    ? Math.round(subtotalAfterLineDiscounts * 0.1)
-    : 0;
-  const tax = Math.round(
-    Math.max(0, subtotalAfterLineDiscounts + service) * 0.0825,
+  const feeBreakdown = useMemo(
+    () => computeOrderFeesCents(subtotalAfterLineDiscounts, serviceChargeEnabled),
+    [subtotalAfterLineDiscounts, serviceChargeEnabled],
   );
-  const total = Math.max(0, subtotalAfterLineDiscounts + service + tax);
+  const service = feeBreakdown.serviceChargeCents;
+  const tax = feeBreakdown.taxCents;
+  const total = feeBreakdown.totalCents;
 
   useEffect(() => {
     setSelectedLine((i) => {
@@ -342,10 +356,25 @@ export function PosTerminalPage() {
   }, [showMenuSurface]);
 
   const addItemToCart = (item: CatalogItem) => {
-    const line = cartLineFromItem(item, 1);
-    const newIndex = cart.length;
-    setCart((c) => [...c, line]);
-    setSelectedLine(newIndex);
+    if (isItemUnavailable(item)) {
+      setCheckoutNotice(`${item.name} is unavailable.`);
+      return;
+    }
+    setCart((c) => {
+      const existingIdx = c.findIndex(
+        (l) => l.itemId === item.id && !l.itemId.startsWith("misc-"),
+      );
+      if (existingIdx >= 0) {
+        const next = c.map((l, i) =>
+          i === existingIdx ? { ...l, qty: l.qty + 1 } : l,
+        );
+        setSelectedLine(existingIdx);
+        return next;
+      }
+      const line = cartLineFromItem(item, 1);
+      setSelectedLine(c.length);
+      return [...c, line];
+    });
   };
 
   const editingLine =
@@ -535,19 +564,50 @@ export function PosTerminalPage() {
     }
     const apiItems = cart
       .filter((line) => !line.itemId.startsWith("misc-"))
-      .map((line) => ({
-        menuItemId: line.itemId,
-        quantity: line.qty,
-        modifiers: { lineConfig: line.lineConfig },
-        notes: line.note,
-      }));
+      .reduce<
+        Array<{
+          menuItemId: string;
+          quantity: number;
+          modifiers: Record<string, unknown>;
+          notes?: string;
+        }>
+      >((acc, line) => {
+        const existing = acc.find((row) => row.menuItemId === line.itemId);
+        if (existing) {
+          existing.quantity += line.qty;
+          return acc;
+        }
+        acc.push({
+          menuItemId: line.itemId,
+          quantity: line.qty,
+          modifiers: {
+            lineConfig: line.lineConfig,
+            ...(line.lineDiscountPercent != null && line.lineDiscountPercent > 0
+              ? { lineDiscountPercent: line.lineDiscountPercent }
+              : {}),
+          },
+          notes: line.note,
+        });
+        return acc;
+      }, []);
     if (apiItems.length === 0) {
       setCheckoutNotice("Misc-only carts cannot sync — add menu items.");
+      return;
+    }
+    const knownMenuIds = new Set(
+      menuCategories.flatMap((cat) => cat.items.map((item) => item.id)),
+    );
+    const staleLines = apiItems.filter((row) => !knownMenuIds.has(row.menuItemId));
+    if (staleLines.length > 0) {
+      setCheckoutNotice(
+        "Some items in the cart are no longer on the menu. Clear the cart and add them again from Take orders.",
+      );
       return;
     }
     try {
       const order = await createOrderOnApi({
         tableNumber: String(tableNumber),
+        applyServiceCharge: serviceChargeEnabled,
         items: apiItems,
       });
       if (mode === "hold") {
@@ -556,8 +616,11 @@ export function PosTerminalPage() {
         setCheckoutNotice("Order placed on hold.");
         return;
       }
-      const amount =
-        cart.reduce((sum, line) => sum + lineNetCents(line), 0) / 100;
+      const amount = parseApiMoney(order.totalAmount);
+      if (amount <= 0) {
+        setCheckoutNotice("Order total is zero — cannot pay.");
+        return;
+      }
       await processPaymentOnApi({
         orderId: order.id,
         method: "CASH",
@@ -593,7 +656,7 @@ export function PosTerminalPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
             <div className="min-w-0">
               <h1 className="text-[15px] font-medium text-[var(--pos-text-1)]">
-                Menu / POS
+                Take orders
               </h1>
               {menuLoading ? (
                 <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">Loading menu…</p>
@@ -690,6 +753,7 @@ export function PosTerminalPage() {
                 {items.map((item) => {
                   const showCat =
                     menuSearch.trim().length > 0 && item.categoryName;
+                  const unavailable = isItemUnavailable(item);
                   return (
                     <button
                       key={
@@ -698,8 +762,13 @@ export function PosTerminalPage() {
                           : item.id
                       }
                       type="button"
+                      disabled={unavailable}
                       onClick={() => addItemToCart(item)}
-                      className={`overflow-hidden rounded-[12px] bg-[var(--pos-card)] text-left transition-colors hover:bg-[var(--pos-nav-hover)]/40 ${border0}`}
+                      className={`overflow-hidden rounded-[12px] bg-[var(--pos-card)] text-left transition-colors ${border0} ${
+                        unavailable
+                          ? "cursor-not-allowed opacity-50"
+                          : "hover:bg-[var(--pos-nav-hover)]/40"
+                      }`}
                     >
                       {item.imageRef ? (
                         <StorageImage
@@ -717,6 +786,11 @@ export function PosTerminalPage() {
                       ) : null}
                       <p className="text-[13px] font-medium text-[var(--pos-text-1)]">
                         {item.name}
+                        {unavailable ? (
+                          <span className="ml-1.5 text-[10px] font-semibold uppercase text-red-600">
+                            {item.is86d ? "86'd" : "Unavailable"}
+                          </span>
+                        ) : null}
                       </p>
                       <p className="mt-1 font-mono text-[13px] font-normal text-[var(--pos-text-2)]">
                         ৳{formatMoney(item.priceCents)}
@@ -737,7 +811,7 @@ export function PosTerminalPage() {
     }
 
     if (LEDGER_LEAF_IDS.has(activeLeafId)) {
-      return <LedgerModuleView leafId={activeLeafId} />;
+      return <LedgerModuleView key={activeLeafId} leafId={activeLeafId} />;
     }
     if (HR_LEAF_IDS.has(activeLeafId)) {
       return <EmployeeModuleView />;
@@ -776,17 +850,29 @@ export function PosTerminalPage() {
 
   const orderRef = 1000 + tableNumber;
 
+  const branchLabel = activeBranch?.name ?? "Restaurant";
+  const branchAddress = activeBranch?.address ?? null;
+
   return (
     <div className="flex h-full w-full flex-col bg-[var(--pos-page)] text-[var(--pos-text-3)]">
-      <div className="relative flex min-h-0 flex-1">
+      <PosMobileHeader
+        branchName={branchLabel}
+        branchAddress={branchAddress}
+        onSignOut={handleSignOut}
+      />
+
+      <div className="relative flex min-h-0 flex-1 pb-[calc(6.25rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         <PosSidebar
           activeLeafId={activeLeafId}
           onSelectLeaf={setActiveLeafId}
           onSignOut={handleSignOut}
+          userName={userName}
+          branchName={branchLabel}
+          branchAddress={branchAddress}
         />
 
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 gap-3 px-3 pb-3 pt-2">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col lg:pb-0">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 px-3 pb-3 pt-2 lg:flex-row">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               {mainContent()}
             </main>
@@ -794,13 +880,15 @@ export function PosTerminalPage() {
             {showOrderPanel ? (
               <aside
                 ref={orderPanelRef}
-                style={{ width: `${orderPanelWidth}px`, maxWidth: "100%" }}
-                className={`relative flex min-h-0 shrink-0 flex-col rounded-[16px] bg-[var(--pos-card)] ${border0} [border-width:1px]`}
+                style={
+                  { "--order-panel-w": `${orderPanelWidth}px` } as CSSProperties
+                }
+                className={`relative flex min-h-0 w-full max-h-[min(45vh,420px)] shrink-0 flex-col rounded-[16px] bg-[var(--pos-card)] lg:max-h-none lg:w-[var(--order-panel-w)] lg:max-w-full ${border0} [border-width:1px]`}
               >
                 <button
                   type="button"
                   onMouseDown={startResizeOrderPanel}
-                  className="absolute -left-1 top-0 h-full w-2 cursor-col-resize rounded-full bg-transparent"
+                  className="absolute -left-1 top-0 hidden h-full w-2 cursor-col-resize rounded-full bg-transparent lg:block"
                   aria-label="Resize order panel"
                   title="Drag to resize panel"
                 />
@@ -1192,10 +1280,6 @@ export function PosTerminalPage() {
                       <span>Tax</span>
                       <span className="font-mono tabular-nums">৳{formatMoney(tax)}</span>
                     </div>
-                    <div className="flex justify-between border-t border-solid [border-color:var(--pos-border-hairline)] pt-1 text-[11px] font-semibold text-[var(--pos-accent)]">
-                      <span>Due</span>
-                      <span className="font-mono tabular-nums">৳{formatMoney(total)}</span>
-                    </div>
                     <div className="col-span-2 flex justify-between border-t border-solid [border-color:var(--pos-border-hairline)] pt-1 text-[14px] font-semibold text-[var(--pos-text-1)]">
                       <span>Total</span>
                       <span className="font-mono tabular-nums">৳{formatMoney(total)}</span>
@@ -1276,6 +1360,8 @@ export function PosTerminalPage() {
         </div>
       </div>
 
+      <PosMobileNav activeLeafId={activeLeafId} onSelectLeaf={setActiveLeafId} />
+
       {editModalOpen && editingLine && editingCatalogItem && editDraftConfig ? (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-4 sm:items-center"
@@ -1290,7 +1376,7 @@ export function PosTerminalPage() {
           }}
         >
           <div
-            className={`max-h-[min(88vh,760px)] w-full max-w-[460px] overflow-y-auto rounded-[20px] bg-[var(--pos-card)] p-5 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
+            className={`max-h-[704px] w-full max-w-[460px] overflow-y-auto rounded-[20px] bg-[var(--pos-card)] p-5 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
           >
             <div className="flex items-start justify-between gap-3">
               <div>

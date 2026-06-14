@@ -51,7 +51,13 @@ import {
   type DailyEntryRow,
   type ExpenseLineSaved,
 } from "@/features/daily-entry";
+import { flushLedgerWorkspacePersist, loadLedgerWorkspace } from "@/features/ledger";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
+import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import {
+  DailyEntryLedgerLinks,
+  DailyEntryReportLinks,
+} from "./DailyEntryRelatedNav";
 import { useSession } from "@/features/auth";
 
 type ExpenseLineDraft = {
@@ -1082,6 +1088,11 @@ export function DailyEntryFormView() {
   const { userName } = useSession();
   const { map: entryMap, loading: entriesLoading, error: entriesLoadError, refresh: refreshEntries } =
     useDailyEntryMap();
+
+  useEffect(() => {
+    void loadLedgerWorkspace();
+  }, []);
+
   const [activeView, setActiveView] = useState<"entry" | "history">("history");
   const [savedListVersion, setSavedListVersion] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
@@ -1955,6 +1966,7 @@ export function DailyEntryFormView() {
 
     setIsSaving(true);
     try {
+      await flushLedgerWorkspacePersist();
       const result = await saveDailyEntry(next);
       if (!result.ok) {
         setFormNotice({ kind: "global", message: result.message });
@@ -2336,19 +2348,22 @@ export function DailyEntryFormView() {
               </div>
             ) : (
               <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-solid [border-color:var(--pos-divider)]">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
-                  <h2 className={`m-0 min-w-0 leading-tight ${sectionTitleClass}`}>
-                    Saved entries 
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={openAddEntryForm}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
-                    style={{ backgroundColor: "var(--pos-sb-base)" }}
-                  >
-                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                    Add Entry
-                  </button>
+                <div className="flex shrink-0 flex-col gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className={`m-0 min-w-0 leading-tight ${sectionTitleClass}`}>
+                      Saved entries
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={openAddEntryForm}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
+                      style={{ backgroundColor: "var(--pos-sb-base)" }}
+                    >
+                      <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                      Add Entry
+                    </button>
+                  </div>
+                  <DailyEntryReportLinks compact />
                 </div>
                 <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
                   <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
@@ -2767,14 +2782,11 @@ export function DailyEntryFormView() {
                 Expense lines below — use <span className="font-medium text-[var(--pos-text-1)]">Withdrawn from bank</span> when
                 part of today&apos;s expenses was paid from the bank account (deposits are in the Bank sales field).
               </p>
-              <p className="border-b border-solid [border-color:var(--pos-divider)] pb-1 pt-2 text-[11px] font-semibold text-[var(--pos-text-1)]">
-                Ledger book entry
+              <DailyEntryLedgerLinks />
+              <p className="pt-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
+                Max {MAX_RECEIPTS_PER_LINE} images or PDFs per line (sign in required).
               </p>
-              <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                Ledger rows: pick a book, type, amount, and optional note to post to Bills &amp;
-                payments. Regular rows use title + amount (type stays Regular; not posted to the
-                ledger). Max {MAX_RECEIPTS_PER_LINE} images or PDFs per line (sign in required).
-              </p>
+              <DailyEntryReportLinks />
               {expenseLines.length > 0 ? (
                 <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(4.75rem,0.55fr)_minmax(0,0.45fr)_minmax(0,1fr)_2.25rem_2.25rem] items-center gap-x-1.5 border-b border-solid [border-color:var(--pos-divider)] pb-1.5 text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-[var(--pos-text-2)]">
                   <span className="flex min-h-8 min-w-0 items-center pl-0.5">Book / title</span>
@@ -3084,7 +3096,15 @@ export function DailyEntryFormView() {
                         </div>
                         {!ledgerSupplierForLine ? (
                           <p className="text-[9px] leading-snug text-[var(--pos-text-2)]">
-                            Match a Ledger Management book to enable type and note.
+                            Match a book from{" "}
+                            <button
+                              type="button"
+                              onClick={() => dispatchPosSelectLeaf("lm-management")}
+                              className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
+                            >
+                              ledger books
+                            </button>{" "}
+                            to enable type and note.
                           </p>
                         ) : null}
                         <div className="flex flex-col gap-0.5">
@@ -3188,7 +3208,7 @@ export function DailyEntryFormView() {
           }}
         >
           <div
-            className="flex max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-lg sm:rounded-[14px]"
+            className="flex max-h-[720px] w-full max-w-4xl flex-col overflow-hidden rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-lg sm:rounded-[14px]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="shrink-0 space-y-2 border-b border-solid [border-color:var(--pos-divider)] px-4 pb-3 pt-4">
@@ -3580,7 +3600,7 @@ export function DailyEntryFormView() {
           }}
         >
           <div
-            className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-lg sm:rounded-[14px]"
+            className="flex max-h-[704px] w-full max-w-2xl flex-col overflow-hidden rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-lg sm:rounded-[14px]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex shrink-0 items-start justify-between gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">

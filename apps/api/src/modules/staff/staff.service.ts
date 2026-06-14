@@ -325,12 +325,16 @@ export class StaffService {
     return { id: tempPerm.id };
   }
 
-  async getMe(staffId: string): Promise<{
+  async getMe(
+    staffId: string,
+    branchId: string,
+  ): Promise<{
     id: string;
     name: string;
     email: string | null;
     isActive: boolean;
     primaryBranchId: string | null;
+    activeBranch: { id: string; name: string; address: string | null };
     roles: Array<{ roleId: string; roleName: string; permissions: string[] }>;
   }> {
     const staff = await this.prisma.staff.findUnique({
@@ -350,12 +354,20 @@ export class StaffService {
 
     if (!staff) throw new NotFoundException('Staff not found');
 
+    const branch = await this.prisma.branch.findUnique({
+      where: { id: branchId },
+      select: { id: true, name: true, address: true },
+    });
+
     return {
       id: staff.id,
       name: staff.name,
       email: staff.email,
       isActive: staff.isActive,
       primaryBranchId: staff.primaryBranchId,
+      activeBranch: branch
+        ? { id: branch.id, name: branch.name, address: branch.address }
+        : { id: branchId, name: 'Branch', address: null },
       roles: staff.staffRoles.map((sr) => ({
         roleId: sr.role.id,
         roleName: sr.role.name,

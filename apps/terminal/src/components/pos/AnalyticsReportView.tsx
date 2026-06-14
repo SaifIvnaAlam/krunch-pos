@@ -249,7 +249,7 @@ export function AnalyticsReportView() {
                 </span>
               </div>
             </div>
-            <div className="h-[min(420px,50vh)] min-h-[280px] w-full">
+            <div className="h-[min(420px,400px)] min-h-[280px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={chartPoints}

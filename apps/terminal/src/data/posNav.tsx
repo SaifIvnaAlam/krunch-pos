@@ -2,10 +2,13 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   BookMarked,
+  BookOpen,
   ClipboardList,
+  LineChart,
   NotebookPen,
   Receipt,
   Salad,
+  TrendingUp,
   UtensilsCrossed,
 } from "lucide-react";
 
@@ -36,37 +39,90 @@ export type NavSection = {
   nodes: NavNode[];
 };
 
-const PRIMARY_SIDEBAR_NAV_NODES: NavNode[] = [
+const OFFICE_NAV_NODES: NavNode[] = [
   { kind: "leaf", id: "exp-daily", label: "Daily Entry Form", icon: NotebookPen },
-  { kind: "leaf", id: "lm-management", label: "Ledger Management", icon: BookMarked },
-  { kind: "leaf", id: "rep-management", label: "Reports", icon: BarChart3 },
+  {
+    kind: "branch",
+    id: "lm-branch",
+    label: "Ledger",
+    icon: BookMarked,
+    children: [
+      {
+        kind: "leaf",
+        id: "lm-management",
+        label: "Ledger books",
+        icon: BookOpen,
+      },
+      {
+        kind: "leaf",
+        id: "lm-ledger",
+        label: "Bills & payments",
+        icon: Receipt,
+      },
+    ],
+  },
+  {
+    kind: "branch",
+    id: "rep-branch",
+    label: "Reports",
+    icon: BarChart3,
+    children: [
+      {
+        kind: "leaf",
+        id: "rep-management",
+        label: "Expense reports",
+        icon: Receipt,
+      },
+      {
+        kind: "leaf",
+        id: "rep-sales",
+        label: "Sales report",
+        icon: TrendingUp,
+      },
+      {
+        kind: "leaf",
+        id: "rep-analytics",
+        label: "Analytics",
+        icon: LineChart,
+      },
+    ],
+  },
   { kind: "leaf", id: "hr-payroll", label: "Employee Salaries", icon: Receipt },
 ];
 
-const BETA_SIDEBAR_NAV_NODES: NavNode[] = [
-  { kind: "leaf", id: "menu", label: "POS", icon: UtensilsCrossed, beta: true },
-  { kind: "leaf", id: "mo-list", label: "Orders", icon: ClipboardList, beta: true },
-  { kind: "leaf", id: "fd-menu", label: "Menu", icon: Salad, beta: true },
+const OPERATIONS_NAV_NODES: NavNode[] = [
+  { kind: "leaf", id: "menu", label: "Take orders", icon: UtensilsCrossed },
+  { kind: "leaf", id: "mo-list", label: "Orders", icon: ClipboardList },
+  { kind: "leaf", id: "fd-menu", label: "Menu setup", icon: Salad },
 ];
 
 export const POS_NAV_SECTIONS: NavSection[] = [
-  { id: "main", label: "", nodes: PRIMARY_SIDEBAR_NAV_NODES },
-  { id: "upcoming", label: "Upcoming", nodes: BETA_SIDEBAR_NAV_NODES },
+  { id: "office", label: "", nodes: OFFICE_NAV_NODES },
+  { id: "operations", label: "Operations", nodes: OPERATIONS_NAV_NODES },
 ];
 
-/** IDs that open the POS menu + cart surface. */
-export const MENU_VIEW_IDS = new Set(["menu"]);
-
-export function collectAllLeafIds(): string[] {
-  const out: string[] = [];
-  function walk(nodes: NavNode[]) {
-    for (const n of nodes) {
-      if (n.kind === "leaf") out.push(n.id);
+export function leavesFromNodes(nodes: NavNode[]): NavLeaf[] {
+  const out: NavLeaf[] = [];
+  function walk(list: NavNode[]) {
+    for (const n of list) {
+      if (n.kind === "leaf") out.push(n);
       else walk(n.children);
     }
   }
-  for (const s of POS_NAV_SECTIONS) walk(s.nodes);
+  walk(nodes);
   return out;
+}
+
+/** Flat list of sidebar leaves (for mobile nav). */
+export function flattenNavLeaves(): NavLeaf[] {
+  return POS_NAV_SECTIONS.flatMap((s) => leavesFromNodes(s.nodes));
+}
+
+/** IDs that open the register (menu grid + cart). */
+export const MENU_VIEW_IDS = new Set(["menu"]);
+
+export function collectAllLeafIds(): string[] {
+  return flattenNavLeaves().map((n) => n.id);
 }
 
 /** Branch IDs that must be open to reveal this leaf (innermost parent last). */

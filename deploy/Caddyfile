@@ -1,6 +1,7 @@
 # Domains from deploy/.env (Caddy expands {$VAR} from environment).
 {
 	email {$ACME_EMAIL}
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
 }
 
 {$POS_DOMAIN} {
@@ -23,4 +24,26 @@
 
 {$S3_CONSOLE_DOMAIN} {
 	reverse_proxy minio:9001
+}
+
+# Direct IP access only — must NOT handle named domains (they use blocks above + auto HTTPS)
+:80 {
+	@ip host 194.164.91.252
+	handle @ip {
+		@minio path /krunch-pos/*
+		handle @minio {
+			reverse_proxy minio:9000
+		}
+
+		@api path /api/*
+		handle @api {
+			reverse_proxy api:3000
+		}
+
+		root * /srv/pos
+		handle {
+			try_files {path} /index.html
+			file_server
+		}
+	}
 }

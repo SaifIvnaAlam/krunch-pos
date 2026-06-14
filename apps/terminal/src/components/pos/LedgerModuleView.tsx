@@ -65,12 +65,7 @@ export const LEDGER_LEAF_IDS = new Set([
 
 export type LedgerPanelTab = "books" | "bills";
 
-const LEDGER_TAB_EVENT = "pos-ledger-tab";
-
 function selectLedgerTab(tab: LedgerPanelTab) {
-  window.dispatchEvent(
-    new CustomEvent(LEDGER_TAB_EVENT, { detail: { tab } }),
-  );
   dispatchPosSelectLeaf(tab === "bills" ? "lm-ledger" : "lm-management");
 }
 
@@ -2064,6 +2059,22 @@ function SupplierLedgerView() {
         </button>
       </div>
 
+      {ws.suppliers.length === 0 ? (
+        <div className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-3">
+          <p className="text-[12px] text-[var(--pos-text-2)]">
+            Add a ledger book first — vendor, owner, or employee — then record bills and
+            payments here.
+          </p>
+          <button
+            type="button"
+            onClick={() => selectLedgerTab("books")}
+            className="mt-2 text-[12px] font-semibold text-[var(--pos-text-1)] underline-offset-2 hover:underline"
+          >
+            Go to Ledger books
+          </button>
+        </div>
+      ) : null}
+
       <div className={`${purchaseFilters} items-end`}>
         <label className="block min-w-0 flex-1 sm:max-w-md">
           <span className={purchaseLabel}>Search</span>
@@ -2200,9 +2211,11 @@ function SupplierLedgerView() {
                   colSpan={filter ? 7 : 6}
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
-                  {ws.ledger.length === 0
-                    ? "No activity yet."
-                    : "No entries match your filters — adjust search, ledger book, type, or dates."}
+                  {ws.suppliers.length === 0
+                    ? "No ledger books yet — open Ledger books and add one to start posting bills and payments."
+                    : ws.ledger.length === 0
+                      ? "No activity yet. Use Add entry to post a bill or payment."
+                      : "No entries match your filters — adjust search, ledger book, type, or dates."}
                 </td>
               </tr>
             ) : (
@@ -2350,7 +2363,7 @@ function SupplierLedgerView() {
 }
 
 export function LedgerModuleView({ leafId }: { leafId: string }) {
-  const [tab, setTab] = useState<LedgerPanelTab>(() => ledgerTabFromLeafId(leafId));
+  const tab = ledgerTabFromLeafId(leafId);
   const ledgerLoad = useSyncExternalStore(
     subscribeWorkspace,
     getLedgerWorkspaceLoadState,
@@ -2359,21 +2372,6 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
 
   useEffect(() => {
     void loadLedgerWorkspace();
-  }, []);
-
-  useEffect(() => {
-    setTab(ledgerTabFromLeafId(leafId));
-  }, [leafId]);
-
-  useEffect(() => {
-    const onTab = (e: Event) => {
-      const detail = (e as CustomEvent<{ tab?: LedgerPanelTab }>).detail;
-      if (detail?.tab === "books" || detail?.tab === "bills") {
-        setTab(detail.tab);
-      }
-    };
-    window.addEventListener(LEDGER_TAB_EVENT, onTab);
-    return () => window.removeEventListener(LEDGER_TAB_EVENT, onTab);
   }, []);
 
   return (

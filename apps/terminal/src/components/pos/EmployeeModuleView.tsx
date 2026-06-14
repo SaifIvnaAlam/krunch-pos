@@ -1,5 +1,19 @@
-import { useEffect, useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import { Plus, Trash2, Wallet, X } from "lucide-react";
+import {
+  getSalaryBundle,
+  getSalaryWorkspaceLoadState,
+  loadSalaryWorkspace,
+  setSalaryBundle,
+  subscribeSalaryBundle,
+} from "@/features/payroll";
 import {
   createSalaryPayment,
   defaultDocForNewMonth,
@@ -7,11 +21,9 @@ import {
   emptySalaryRow,
   isMonthKey,
   labelFromMonthKey,
-  readSalarySheetBundle,
   summarizeSalaryDoc,
   sumPaymentsForRow,
   totalPayableForRow,
-  writeSalarySheetBundle,
   type SalaryPayment,
   type SalarySheetDoc,
   type SalarySheetRow,
@@ -141,7 +153,7 @@ function SalaryPaymentsModal({
         onClick={onClose}
       />
       <div
-        className={`relative z-[1] flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0} shadow-lg`}
+        className={`relative z-[1] flex max-h-[704px] w-full max-w-[440px] flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0} shadow-lg`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="salary-payments-title"
@@ -260,9 +272,9 @@ function SalaryPaymentsModal({
 }
 
 function PayrollSalaries() {
-  const [bundle, setBundle] = useState(() => readSalarySheetBundle());
+  const bundle = useSyncExternalStore(subscribeSalaryBundle, getSalaryBundle);
+  const loadState = useSyncExternalStore(subscribeSalaryBundle, getSalaryWorkspaceLoadState);
   const [poolDraft, setPoolDraft] = useState("");
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [paymentEditorRowId, setPaymentEditorRowId] = useState<string | null>(null);
 
   const activeKey = bundle.selectedMonthKey;
@@ -272,13 +284,11 @@ function PayrollSalaries() {
     : null;
 
   useEffect(() => {
-    const res = writeSalarySheetBundle(bundle);
-    if (!res.ok) setSaveMessage(res.message);
-    else setSaveMessage(null);
-  }, [bundle]);
+    void loadSalaryWorkspace();
+  }, []);
 
   const patchDoc = (updater: (d: SalarySheetDoc) => SalarySheetDoc) => {
-    setBundle((b) => {
+    setSalaryBundle((b) => {
       const key = b.selectedMonthKey;
       const cur = b.months[key] ?? defaultDocForNewMonth(key);
       const nextDoc = updater(cur);
@@ -291,7 +301,7 @@ function PayrollSalaries() {
 
   const selectMonth = (monthKey: string) => {
     if (!isMonthKey(monthKey)) return;
-    setBundle((b) => ({
+    setSalaryBundle((b) => ({
       ...b,
       selectedMonthKey: monthKey,
       months: b.months[monthKey]
@@ -422,26 +432,9 @@ function PayrollSalaries() {
             Split by %
           </GhostButton>
         </div>
-        <Toolbar className="gap-2">
-          <GhostButton
-            type="button"
-            onClick={() => {
-              setBundle((b) => ({
-                ...b,
-                months: {
-                  ...b.months,
-                  [b.selectedMonthKey]: defaultDocForNewMonth(b.selectedMonthKey),
-                },
-              }));
-              setPoolDraft("");
-            }}
-          >
-            Restore example
-          </GhostButton>
-          <PrimaryButton type="button" onClick={() => patchDoc((d) => ({ ...d, rows: [...d.rows, emptySalaryRow()] }))}>
-            Add row
-          </PrimaryButton>
-        </Toolbar>
+        <PrimaryButton type="button" onClick={() => patchDoc((d) => ({ ...d, rows: [...d.rows, emptySalaryRow()] }))}>
+          Add row
+        </PrimaryButton>
       </Toolbar>
       <div className={`shrink-0 overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
         <div className="border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
@@ -501,9 +494,14 @@ function PayrollSalaries() {
           </table>
         </div>
       </div>
-      {saveMessage ? (
+      {loadState.loading ? (
+        <p className="text-[12px] text-[var(--pos-text-2)]" role="status">
+          Loading salary registers…
+        </p>
+      ) : null}
+      {loadState.error ? (
         <p className="text-[12px] text-red-600 dark:text-red-400" role="status">
-          {saveMessage}
+          {loadState.error}
         </p>
       ) : null}
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
