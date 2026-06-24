@@ -37,8 +37,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       NODE_ENV: production
       REDIS_DISABLED: "true"
-      S3_ENDPOINT: http://minio:9000
-      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://194.164.91.252}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-${S3_ENDPOINT}}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET}
@@ -59,8 +59,6 @@ services:
       - "443:443"
     environment:
       POS_DOMAIN: ${POS_DOMAIN}
-      S3_DOMAIN: ${S3_DOMAIN}
-      S3_CONSOLE_DOMAIN: ${S3_CONSOLE_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -69,43 +67,25 @@ services:
       - caddy_config:/config
     depends_on:
       - api
-      - minio
     networks: [krunch]
 
-  minio:
-    <<: *default_dns
-    image: minio/minio:latest
-    restart: always
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_SERVER_URL: https://${S3_DOMAIN}
-      MINIO_BROWSER_REDIRECT_URL: https://${S3_CONSOLE_DOMAIN}
-      MINIO_API_CORS_ALLOW_ORIGIN: https://${POS_DOMAIN}
-    volumes:
-      - minio_data:/data
-    expose:
-      - "9000"
-      - "9001"
-    networks: [krunch]
-
-  minio-init:
+  # No local MinIO — storage uses the shared MinIO already running on the VPS
+  # (S3_ENDPOINT). This one-shot job just ensures the krunch-pos bucket exists.
+  bucket-init:
     <<: *default_dns
     image: minio/mc:latest
-    depends_on:
-      - minio
     restart: "no"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
     entrypoint: >
       /bin/sh -c "
-      sleep 8;
-      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD;
-      mc mb --ignore-existing local/${S3_BUCKET};
-      mc anonymous set none local/${S3_BUCKET};
-      echo MinIO bucket ready;
+      mc alias set shared $$S3_ENDPOINT $$S3_ACCESS_KEY $$S3_SECRET_KEY;
+      mc mb --ignore-existing shared/$$S3_BUCKET;
+      mc anonymous set none shared/$$S3_BUCKET;
+      echo Bucket $$S3_BUCKET ready on $$S3_ENDPOINT;
       "
     networks: [krunch]
 
@@ -132,7 +112,6 @@ services:
 
 volumes:
   pg_data:
-  minio_data:
   caddy_data:
   caddy_config:
   n8n_data:

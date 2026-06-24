@@ -3,7 +3,8 @@
 #
 # Prerequisites:
 #   - SSH: ssh root@217.154.53.60 works from this machine
-#   - DNS A records → 217.154.53.60 for POS_DOMAIN, S3_DOMAIN, S3_CONSOLE_DOMAIN
+#   - DNS A record → 217.154.53.60 for POS_DOMAIN
+#   - Shared MinIO reachable at S3_ENDPOINT (s3.storage.inventivelab.bd)
 #   - deploy/.env filled (copy from deploy/.env.example)
 #
 # Usage:
@@ -36,22 +37,15 @@ VPS_HOST="${VPS_HOST:-217.154.53.60}"
 VPS_USER="${VPS_USER:-root}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/krunch-pos}"
 
-for var in POS_DOMAIN S3_DOMAIN POSTGRES_PASSWORD MINIO_ROOT_PASSWORD JWT_ACCESS_SECRET JWT_REFRESH_SECRET; do
+for var in POS_DOMAIN POSTGRES_PASSWORD JWT_ACCESS_SECRET JWT_REFRESH_SECRET S3_ENDPOINT S3_ACCESS_KEY S3_SECRET_KEY; do
   if [[ -z "${!var:-}" ]] || [[ "${!var}" == change-me* ]]; then
     echo "Set ${var} in deploy/.env before deploying."
     exit 1
   fi
 done
 
-# MinIO API keys default to root user when omitted
-if [[ -z "${S3_ACCESS_KEY:-}" ]]; then
-  S3_ACCESS_KEY="${MINIO_ROOT_USER}"
-fi
-if [[ -z "${S3_SECRET_KEY:-}" ]]; then
-  S3_SECRET_KEY="${MINIO_ROOT_PASSWORD}"
-fi
-export S3_ACCESS_KEY S3_SECRET_KEY
-export S3_ENDPOINT="${S3_ENDPOINT:-https://${S3_DOMAIN}}"
+# Storage uses the shared MinIO on the VPS (no local MinIO container).
+export S3_ACCESS_KEY S3_SECRET_KEY S3_ENDPOINT
 export CORS_ORIGIN="${CORS_ORIGIN:-https://${POS_DOMAIN}}"
 
 vps_ssh() {
@@ -147,8 +141,8 @@ vps_rsync \
 echo "==> Writing deploy/.env on server"
 vps_rsync "${ENV_FILE}" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/deploy/.env"
 
-echo "==> Starting stack"
-vps_ssh "cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env up -d --build"
+echo "==> Starting stack (removing the old dedicated MinIO container if present)"
+vps_ssh "cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans"
 
 echo "==> Syncing Postgres password with deploy/.env (volume may keep an older password)"
 vps_ssh "cd ${REMOTE_DIR}/deploy && set -a && . ./.env && set +a && docker compose -f docker-compose.prod.yml exec -T postgres psql -U \${POSTGRES_USER} -d \${POSTGRES_DB} -c \"ALTER USER \${POSTGRES_USER} WITH PASSWORD '\${POSTGRES_PASSWORD}';\"" || true
@@ -171,8 +165,7 @@ echo ""
 echo "=== Deployed ==="
 echo "  POS:        https://${POS_DOMAIN}"
 echo "  API:        https://${POS_DOMAIN}/api/v1/health"
-echo "  S3:         https://${S3_DOMAIN}"
-echo "  S3 console: https://${S3_CONSOLE_DOMAIN}"
+echo "  S3:         ${S3_ENDPOINT} (shared MinIO, bucket ${S3_BUCKET:-krunch-pos})"
 echo ""
 echo "Sign in with your restaurant email at https://${POS_DOMAIN}"
 echo "Optional n8n: ssh ${VPS_USER}@${VPS_HOST} 'cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env --profile n8n up -d'"

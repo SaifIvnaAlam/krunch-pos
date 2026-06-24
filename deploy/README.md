@@ -1,6 +1,6 @@
 # Production deploy (VPS)
 
-Hosts **Postgres**, **Nest API**, **POS (static)**, and **MinIO** on one server with **Caddy** (HTTPS on 80/443).
+Hosts **Postgres**, **Nest API**, and **POS (static)** on one server with **Caddy** (HTTPS on 80/443). Object storage uses the **shared MinIO** already running on the VPS (`s3.storage.inventivelab.bd`) — this stack does not run its own MinIO.
 
 ## Credentials & reference
 
@@ -20,13 +20,13 @@ cp deploy/CREDENTIALS.template.md deploy/CREDENTIALS.local.md
 
 ## DNS (required)
 
-Point these **A records** to your VPS IP (`217.154.53.60`):
+Point this **A record** to your VPS IP (`217.154.53.60`):
 
 | Host | Example |
 |------|---------|
 | POS | `steakandmarrow.inventivelab.bd` |
-| S3 API | `s3.steakandmarrow.inventivelab.bd` |
-| MinIO console | `s3-console.steakandmarrow.inventivelab.bd` |
+
+S3 (`s3.storage.inventivelab.bd`) is the shared MinIO and is already configured.
 
 Wait until `dig steakandmarrow.inventivelab.bd +short` returns the VPS IP.
 
@@ -41,7 +41,7 @@ Wait until `dig steakandmarrow.inventivelab.bd +short` returns the VPS IP.
    Set at minimum:
 
    - `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`
-   - `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`
+   - `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` (shared MinIO)
    - `VPS_PASSWORD` (root SSH password for IONOS VPS)
 
    Generate JWT secrets:
@@ -148,7 +148,6 @@ ssh root@217.154.53.60 'cd /opt/krunch-pos/deploy && source .env && docker compo
 ```
 Internet → Caddy :443
   steakandmarrow.*     → /srv/pos (React build) + /api/* → api:3000
-  s3.*                 → minio:9000
-  s3-console.*         → minio:9001
 postgres (internal)    ← api
+api → shared MinIO @ s3.storage.inventivelab.bd (bucket: krunch-pos)
 ```

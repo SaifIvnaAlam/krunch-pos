@@ -18,23 +18,13 @@
 	}
 }
 
-{$S3_DOMAIN} {
-	reverse_proxy minio:9000
-}
-
-{$S3_CONSOLE_DOMAIN} {
-	reverse_proxy minio:9001
-}
+# Object storage is served by the shared MinIO on the VPS
+# (s3.storage.inventivelab.bd); this stack does not proxy it.
 
 # Direct IP access only — must NOT handle named domains (they use blocks above + auto HTTPS)
 :80 {
 	@ip host 194.164.91.252
 	handle @ip {
-		@minio path /krunch-pos/*
-		handle @minio {
-			reverse_proxy minio:9000
-		}
-
 		@api path /api/*
 		handle @api {
 			reverse_proxy api:3000
