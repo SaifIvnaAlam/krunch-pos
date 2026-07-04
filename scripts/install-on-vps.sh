@@ -29,10 +29,11 @@ fi
 
 cd "$INSTALL_DIR"
 
-# Stop legacy stack on port 80
-if [[ -f /root/docker-compose.yaml ]]; then
-  (cd /root && docker compose down 2>/dev/null) || true
-fi
+# The shared host Caddy fronts 80/443 for OneSign + n8n + Krunch. Don't stop it or
+# the /root n8n stack — just make sure Caddy imports Krunch's site config.
+mkdir -p /etc/caddy/conf.d
+grep -qF "import /etc/caddy/conf.d/*.caddy" /etc/caddy/Caddyfile \
+  || printf "\nimport /etc/caddy/conf.d/*.caddy\n" >> /etc/caddy/Caddyfile
 
 # deploy/.env: reuse /root MinIO creds + generate secrets if missing
 ENV_FILE="${INSTALL_DIR}/deploy/.env"
@@ -82,6 +83,10 @@ cp -R apps/terminal/dist deploy/pos-static
 
 cd deploy
 docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+
+echo "==> Publishing Krunch site through the shared host Caddy (graceful reload)"
+install -D -m 0644 "${INSTALL_DIR}/deploy/krunch.caddy" /etc/caddy/conf.d/krunch.caddy
+caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
 
 echo "Waiting for API..."
 for _ in $(seq 1 40); do

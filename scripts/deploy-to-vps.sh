@@ -123,11 +123,8 @@ npm run build -w terminal
 rm -rf "${ROOT}/deploy/pos-static"
 cp -R "${ROOT}/apps/terminal/dist" "${ROOT}/deploy/pos-static"
 
-echo "==> Stopping legacy /root compose (frees port 80 for Caddy)"
-vps_ssh 'if [ -f /root/docker-compose.yaml ]; then cd /root && docker compose down 2>/dev/null || true; fi'
-
-echo "==> Stopping host Caddy if it holds ports 80/443"
-vps_ssh 'systemctl stop caddy 2>/dev/null || true; systemctl disable caddy 2>/dev/null || true'
+echo "==> Ensuring host Caddy imports Krunch site config (OneSign + n8n stay up)"
+vps_ssh 'mkdir -p /etc/caddy/conf.d; grep -qF "import /etc/caddy/conf.d/*.caddy" /etc/caddy/Caddyfile || printf "\nimport /etc/caddy/conf.d/*.caddy\n" >> /etc/caddy/Caddyfile'
 
 echo "==> Syncing to ${REMOTE_DIR}"
 vps_ssh "mkdir -p ${REMOTE_DIR}"
@@ -141,8 +138,11 @@ vps_rsync \
 echo "==> Writing deploy/.env on server"
 vps_rsync "${ENV_FILE}" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/deploy/.env"
 
-echo "==> Starting stack (removing the old dedicated MinIO container if present)"
+echo "==> Starting stack (removing the old dedicated Caddy/MinIO containers if present)"
 vps_ssh "cd ${REMOTE_DIR}/deploy && docker compose -f docker-compose.prod.yml --env-file .env up -d --build --remove-orphans"
+
+echo "==> Publishing Krunch site through the shared host Caddy (graceful reload)"
+vps_ssh "install -D -m 0644 ${REMOTE_DIR}/deploy/krunch.caddy /etc/caddy/conf.d/krunch.caddy && caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy"
 
 echo "==> Syncing Postgres password with deploy/.env (volume may keep an older password)"
 vps_ssh "cd ${REMOTE_DIR}/deploy && set -a && . ./.env && set +a && docker compose -f docker-compose.prod.yml exec -T postgres psql -U \${POSTGRES_USER} -d \${POSTGRES_DB} -c \"ALTER USER \${POSTGRES_USER} WITH PASSWORD '\${POSTGRES_PASSWORD}';\"" || true

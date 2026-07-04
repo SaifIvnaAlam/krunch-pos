@@ -1,4 +1,6 @@
-# Production stack: Postgres + API + POS (static) + MinIO + Caddy (HTTPS).
+# Production stack: Postgres + API (+ one-shot bucket-init). TLS/routing and the
+# POS static build are handled by the shared host Caddy (see deploy/krunch.caddy),
+# and object storage uses the shared MinIO on the VPS.
 # Run from deploy/ with: docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 name: krunch-pos
 
@@ -31,6 +33,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.api
     restart: always
+    # Published on loopback only; the shared host Caddy reverse-proxies /api/* here.
+    ports:
+      - "127.0.0.1:3001:3000"
     env_file: .env
     environment:
       PORT: "3000"
@@ -50,24 +55,10 @@ services:
         condition: service_healthy
     networks: [krunch]
 
-  caddy:
-    <<: *default_dns
-    image: caddy:2-alpine
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      POS_DOMAIN: ${POS_DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./pos-static:/srv/pos:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-    networks: [krunch]
+  # No dedicated Caddy here — the shared host Caddy on the VPS (systemd) fronts
+  # 80/443 for OneSign, n8n, and Krunch. It reverse-proxies steakandmarrow.* to
+  # the API on 127.0.0.1:3001 and serves the POS build from deploy/pos-static.
+  # See deploy/krunch.caddy (installed into /etc/caddy/conf.d by the deploy script).
 
   # No local MinIO — storage uses the shared MinIO already running on the VPS
   # (S3_ENDPOINT). This one-shot job just ensures the krunch-pos bucket exists.
@@ -112,8 +103,6 @@ services:
 
 volumes:
   pg_data:
-  caddy_data:
-  caddy_config:
   n8n_data:
 
 networks:

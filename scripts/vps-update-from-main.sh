@@ -46,9 +46,18 @@ fi
 rm -rf deploy/pos-static
 cp -R apps/terminal/dist deploy/pos-static
 
+echo "==> Ensuring host Caddy imports Krunch site config (OneSign + n8n stay up)"
+mkdir -p /etc/caddy/conf.d
+grep -qF "import /etc/caddy/conf.d/*.caddy" /etc/caddy/Caddyfile \
+  || printf "\nimport /etc/caddy/conf.d/*.caddy\n" >> /etc/caddy/Caddyfile
+
 echo "==> Rebuilding and restarting stack"
 cd deploy
 docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+
+echo "==> Publishing Krunch site through the shared host Caddy (graceful reload)"
+install -D -m 0644 "${INSTALL_DIR}/deploy/krunch.caddy" /etc/caddy/conf.d/krunch.caddy
+caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
 
 echo "==> Waiting for API"
 for _ in $(seq 1 40); do

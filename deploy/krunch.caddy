@@ -1,0 +1,27 @@
+# Krunch POS site config for the SHARED host Caddy.
+# Installed to /etc/caddy/conf.d/krunch.caddy by the deploy script and pulled in
+# via `import /etc/caddy/conf.d/*.caddy` in /etc/caddy/Caddyfile. This lives
+# alongside the existing OneSign + n8n site blocks — nothing here evicts them.
+
+# POS terminal (static build) + API reverse proxy.
+steakandmarrow.inventivelab.bd {
+	encode gzip zstd
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	root * /opt/krunch-pos/deploy/pos-static
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Krunch object storage on the shared MinIO (S3 API on :9000).
+# Host header is preserved so MinIO can validate presigned-URL signatures.
+s3.storage.inventivelab.bd {
+	reverse_proxy 127.0.0.1:9000 {
+		header_up Host {host}
+	}
+}

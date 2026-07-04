@@ -1,6 +1,6 @@
 # Production deploy (VPS)
 
-Hosts **Postgres**, **Nest API**, and **POS (static)** on one server with **Caddy** (HTTPS on 80/443). Object storage uses the **shared MinIO** already running on the VPS (`s3.storage.inventivelab.bd`) — this stack does not run its own MinIO.
+Hosts **Postgres** and the **Nest API** on the VPS. TLS + routing are handled by the **shared host Caddy** (systemd) already serving OneSign and n8n on 80/443 — Krunch plugs into it via `deploy/krunch.caddy` (imported from `/etc/caddy/conf.d`), so nothing evicts the other apps. The API is published on `127.0.0.1:3001`, the POS build is served from `deploy/pos-static`, and object storage uses the **shared MinIO** on the VPS (`s3.storage.inventivelab.bd`) — this stack runs no Caddy or MinIO container of its own.
 
 ## Credentials & reference
 
@@ -20,7 +20,7 @@ cp deploy/CREDENTIALS.template.md deploy/CREDENTIALS.local.md
 
 ## DNS (required)
 
-Point this **A record** to your VPS IP (`217.154.53.60`):
+Point this **A record** to your VPS IP (`194.164.91.252`):
 
 | Host | Example |
 |------|---------|
@@ -80,9 +80,9 @@ VPS_PASSWORD=your-root-password ./scripts/deploy-to-vps.sh
 This script:
 
 - Builds the terminal with `VITE_API_URL=https://<POS_DOMAIN>/api/v1`
-- Stops the old `/root/docker-compose.yaml` (frees port 80)
 - Syncs the repo to `/opt/krunch-pos` on the server
 - Runs `docker compose -f deploy/docker-compose.prod.yml up -d --build`
+- Installs `deploy/krunch.caddy` into the shared host Caddy (`/etc/caddy/conf.d`) and **reloads it gracefully** — OneSign + n8n stay up
 - Syncs Postgres role password with `deploy/.env` (avoids API crash-loop on re-deploy)
 - Runs Prisma seed (portal users)
 
@@ -99,7 +99,7 @@ Re-seed after deploy if needed — see manual commands below.
 ```bash
 # From Mac (password in deploy/.env):
 cat scripts/vps-fix-postgres-password.sh | \
-  ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no root@217.154.53.60 bash -s
+  ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no root@194.164.91.252 bash -s
 ```
 
 **SSH without password:** add your Mac `~/.ssh/id_ed25519.pub` to `/root/.ssh/authorized_keys` on the VPS, then remove `VPS_PASSWORD` from `deploy/.env`.
@@ -137,8 +137,8 @@ docker exec krunch-pos-postgres pg_dump -U postgres postgres > /tmp/krunch.sql
 Restore on VPS:
 
 ```bash
-scp /tmp/krunch.sql root@217.154.53.60:/tmp/
-ssh root@217.154.53.60 'cd /opt/krunch-pos/deploy && source .env && docker compose -f docker-compose.prod.yml exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < /tmp/krunch.sql'
+scp /tmp/krunch.sql root@194.164.91.252:/tmp/
+ssh root@194.164.91.252 'cd /opt/krunch-pos/deploy && source .env && docker compose -f docker-compose.prod.yml exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < /tmp/krunch.sql'
 ```
 
 (Adjust DB name/user if you changed them from the example.)
@@ -146,8 +146,9 @@ ssh root@217.154.53.60 'cd /opt/krunch-pos/deploy && source .env && docker compo
 ## Architecture
 
 ```
-Internet → Caddy :443
-  steakandmarrow.*     → /srv/pos (React build) + /api/* → api:3000
-postgres (internal)    ← api
-api → shared MinIO @ s3.storage.inventivelab.bd (bucket: krunch-pos)
+Internet → shared host Caddy :443 (also serves OneSign + n8n)
+  steakandmarrow.inventivelab.bd → deploy/pos-static (React build) + /api/* → 127.0.0.1:3001
+  s3.storage.inventivelab.bd     → MinIO :9000 (bucket: krunch-pos)
+api (container :3000) → published on 127.0.0.1:3001
+postgres (internal)   ← api
 ```
