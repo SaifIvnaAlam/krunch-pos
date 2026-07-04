@@ -8,6 +8,7 @@ interface ImportMetaEnv {
   readonly VITE_SEEDED_ADMIN_EMAIL?: string;
   readonly VITE_DEFAULT_BRANCH_ID?: string;
   readonly VITE_DEFAULT_TERMINAL_ID?: string;
+  readonly VITE_MEDIA_PUBLIC_BASE_URL?: string;
 }
 
 interface ImportMeta {

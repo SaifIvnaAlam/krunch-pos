@@ -11,7 +11,7 @@ import {
   addPendingMenuCategory,
   removePendingMenuCategory,
 } from "@/features/menu/menuCategoryStorage";
-import { fromStorageRef, uploadFileToStorage } from "@/features/storage";
+import { fromStorageRef, isMediaRef, uploadFileToStorage } from "@/features/storage";
 import { isDemoDataMode } from "@/shared/config/env";
 import type { CatalogCategory, CatalogItem } from "@/features/menu";
 
@@ -195,7 +195,11 @@ export function FoodManagementPanel({
       setPhotoSaveError(null);
       try {
         if (!isDemoDataMode()) {
-          const imageKey = ref ? (fromStorageRef(ref) ?? undefined) : null;
+          const imageKey = ref
+            ? isMediaRef(ref)
+              ? ref
+              : fromStorageRef(ref) ?? undefined
+            : undefined;
           await updateMenuItemOnApi(selectedItem.id, { imageKey: imageKey ?? null });
           await onMenuRefresh?.();
         } else {

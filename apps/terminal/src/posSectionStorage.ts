@@ -1,4 +1,4 @@
-import { collectAllLeafIds } from "./data/posNav";
+import { collectAllLeafIds, HIDDEN_NAV_LEAF_IDS } from "./data/posNav";
 
 /** Persisted sidebar section inside the POS shell (localStorage). */
 export const POS_LAST_LEAF_STORAGE_KEY = "remi-pos-last-leaf";
@@ -76,5 +76,7 @@ export function writeStoredLastLeafId(leafId: string): void {
 }
 
 export function resolveInitialLeafId(): string {
-  return readStoredLastLeafId() ?? POS_DEFAULT_LEAF_ID;
+  const stored = readStoredLastLeafId();
+  if (stored && !HIDDEN_NAV_LEAF_IDS.has(stored)) return stored;
+  return POS_DEFAULT_LEAF_ID;
 }

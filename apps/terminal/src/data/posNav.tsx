@@ -20,6 +20,8 @@ export type NavLeaf = {
   icon: LucideIcon;
   addon?: boolean;
   beta?: boolean;
+  /** When true, leaf stays routable but is omitted from sidebar / mobile nav. */
+  hidden?: boolean;
 };
 
 export type NavBranch = {
@@ -29,6 +31,7 @@ export type NavBranch = {
   icon: LucideIcon;
   addon?: boolean;
   beta?: boolean;
+  hidden?: boolean;
   children: NavNode[];
 };
 
@@ -76,15 +79,47 @@ const OFFICE_NAV_NODES: NavNode[] = [
 ];
 
 const OPERATIONS_NAV_NODES: NavNode[] = [
-  { kind: "leaf", id: "menu", label: "Take orders", icon: UtensilsCrossed },
-  { kind: "leaf", id: "mo-list", label: "Orders", icon: ClipboardList },
-  { kind: "leaf", id: "fd-menu", label: "Menu setup", icon: Salad },
+  { kind: "leaf", id: "menu", label: "Take orders", icon: UtensilsCrossed, hidden: true },
+  { kind: "leaf", id: "mo-list", label: "Orders", icon: ClipboardList, hidden: true },
+  { kind: "leaf", id: "fd-menu", label: "Menu setup", icon: Salad, hidden: true },
 ];
 
 export const POS_NAV_SECTIONS: NavSection[] = [
   { id: "office", label: "", nodes: OFFICE_NAV_NODES },
   { id: "operations", label: "Operations", nodes: OPERATIONS_NAV_NODES },
 ];
+
+export const HIDDEN_NAV_LEAF_IDS = new Set(
+  OPERATIONS_NAV_NODES.filter((n): n is NavLeaf => n.kind === "leaf" && n.hidden === true).map(
+    (n) => n.id,
+  ),
+);
+
+function isNavNodeVisible(node: NavNode): boolean {
+  if (node.hidden) return false;
+  if (node.kind === "branch") {
+    return filterVisibleNavNodes(node.children).length > 0;
+  }
+  return true;
+}
+
+export function filterVisibleNavNodes(nodes: NavNode[]): NavNode[] {
+  return nodes
+    .filter(isNavNodeVisible)
+    .map((node) =>
+      node.kind === "branch"
+        ? { ...node, children: filterVisibleNavNodes(node.children) }
+        : node,
+    );
+}
+
+/** Sidebar / mobile nav sections (hidden leaves omitted; empty sections dropped). */
+export function getVisibleNavSections(): NavSection[] {
+  return POS_NAV_SECTIONS.map((section) => ({
+    ...section,
+    nodes: filterVisibleNavNodes(section.nodes),
+  })).filter((section) => section.nodes.length > 0);
+}
 
 export function leavesFromNodes(nodes: NavNode[]): NavLeaf[] {
   const out: NavLeaf[] = [];

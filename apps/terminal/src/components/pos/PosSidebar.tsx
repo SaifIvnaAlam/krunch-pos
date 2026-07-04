@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "../ThemeToggle";
 import {
-  POS_NAV_SECTIONS,
+  getVisibleNavSections,
   branchPathToLeaf,
   type NavBranch,
   type NavNode,
@@ -217,7 +217,7 @@ export function PosSidebar({
   const [openBranches, setOpenBranches] = useState<Record<string, boolean>>({});
   const navRef = useRef<HTMLElement | null>(null);
   const [collapsedCanScrollDown, setCollapsedCanScrollDown] = useState(false);
-  const navSections = POS_NAV_SECTIONS.filter((section) => section.nodes.length > 0);
+  const navSections = getVisibleNavSections();
   const userInitials = initialsFromName(userName);
   const userDisplayName = userName.trim() || "Signed in";
 

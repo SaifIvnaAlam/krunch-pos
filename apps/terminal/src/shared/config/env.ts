@@ -29,3 +29,16 @@ export function getDefaultTerminalId(): string {
   if (typeof v === "string" && v.length > 0) return v;
   return "terminal-dev-001";
 }
+
+/** Stable public base for `media:{id}` refs (no trailing slash). */
+export function getMediaPublicBaseUrl(): string {
+  const v = raw.VITE_MEDIA_PUBLIC_BASE_URL;
+  if (typeof v === "string" && v.length > 0) {
+    return v.replace(/\/+$/, "");
+  }
+  return "https://s3.storage.inventivelab.bd/media";
+}
+
+export function getMediaPublicUrl(mediaId: string): string {
+  return `${getMediaPublicBaseUrl()}/${mediaId}`;
+}

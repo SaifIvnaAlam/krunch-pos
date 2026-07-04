@@ -18,9 +18,9 @@ import {
   X,
 } from "lucide-react";
 import { sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
-import { uploadFileToStorage, resolveMediaUrl } from "@/features/storage";
+import { uploadFileToStorage, resolveMediaUrl, purgeStoredMediaRef } from "@/features/storage";
 import { StorageImage } from "@/features/storage/StorageImage";
-import { isStorageRef } from "@/features/storage/storageRef";
+import { isPersistedMediaRef } from "@/features/storage/storageRef";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
 import {
   getLedgerWorkspaceLoadState,
@@ -300,7 +300,7 @@ function LedgerAttachmentDetail({ attachment }: { attachment: LedgerAttachment }
     <div className="mt-4 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2.5">
       <p className={purchaseLabel}>Attachment</p>
       {isImage &&
-      (isStorageRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
+      (isPersistedMediaRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
         <StorageImage
           mediaRef={attachment.dataUrl}
           alt=""
@@ -348,12 +348,14 @@ function LedgerEntryAttachmentField({
       setError(null);
       void (async () => {
         try {
+          const previousRef = attachment?.dataUrl;
           const dataUrl = await uploadFileToStorage(file, "ledger", file.name);
           onChange({
             fileName: file.name,
             mimeType: file.type || "application/octet-stream",
             dataUrl,
           });
+          if (previousRef) purgeStoredMediaRef(previousRef);
         } catch {
           setError("Could not upload file");
         }
@@ -388,7 +390,9 @@ function LedgerEntryAttachmentField({
             type="button"
             onClick={() => {
               setError(null);
+              const previousRef = attachment?.dataUrl;
               onChange(null);
+              if (previousRef) purgeStoredMediaRef(previousRef);
             }}
             className="inline-flex h-10 shrink-0 items-center rounded-[9px] border border-solid border-[#c45a5a]/45 px-3 text-[11px] font-medium text-[#8a3030] hover:bg-[#f5e4e4]/60"
           >
@@ -409,7 +413,7 @@ function LedgerEntryAttachmentField({
         </p>
       )}
       {attachment?.mimeType.startsWith("image/") &&
-      (isStorageRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
+      (isPersistedMediaRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
         <StorageImage
           mediaRef={attachment.dataUrl}
           alt=""

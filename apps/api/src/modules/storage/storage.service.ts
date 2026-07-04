@@ -7,16 +7,24 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { Prisma } from '@prisma/client';
+import { Readable } from 'stream';
 import {
   assertBranchStorageKey,
+  isMediaRef,
+  mediaIdFromRef,
   normalizeStorageObjectKey,
 } from '../../common/storage-key';
+import { buildMediaObjectKey } from '../../common/media-key';
+import { generateMediaId } from '../../common/media-id';
+import { PrismaService } from '../../prisma/prisma.service';
 
 export interface PresignedUpload {
   uploadUrl: string;
@@ -32,6 +40,21 @@ export interface PresignedDownload {
   expiresIn: number;
 }
 
+export interface PresignedMediaUpload {
+  uploadUrl: string;
+  mediaId: string;
+  publicUrl: string;
+  key: string;
+  bucket: string;
+  expiresIn: number;
+}
+
+export interface StoredObjectBody {
+  body: Readable;
+  contentType: string;
+  contentLength?: number;
+}
+
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
@@ -41,8 +64,12 @@ export class StorageService implements OnModuleInit {
   private defaultExpiresIn = 900;
   private internalEndpoint = '';
   private publicEndpoint = '';
+  private mediaPublicBaseUrl = '';
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   onModuleInit(): void {
     const endpoint = this.config.get<string>('S3_ENDPOINT', '').trim();
@@ -56,6 +83,9 @@ export class StorageService implements OnModuleInit {
     this.internalEndpoint = endpoint;
     this.publicEndpoint =
       this.config.get<string>('S3_PUBLIC_ENDPOINT', '').trim() || endpoint;
+    this.mediaPublicBaseUrl =
+      this.config.get<string>('MEDIA_PUBLIC_BASE_URL', '').trim() ||
+      `${this.publicEndpoint.replace(/\/+$/, '')}/media`;
 
     if (!endpoint || !accessKey || !secretKey) {
       this.logger.warn(
@@ -114,6 +144,143 @@ export class StorageService implements OnModuleInit {
     } catch {
       throw new ForbiddenException('Invalid storage key for this branch');
     }
+  }
+
+  mediaPublicUrl(mediaId: string): string {
+    return `${this.mediaPublicBaseUrl.replace(/\/+$/, '')}/${mediaId}`;
+  }
+
+  async presignMediaUpload(
+    branchId: string,
+    contentType: string,
+    scope: string,
+    expiresIn = this.defaultExpiresIn,
+  ): Promise<PresignedMediaUpload> {
+    const mediaId = await this.createMediaAssetRecord(
+      branchId,
+      contentType,
+      scope,
+    );
+    const key = buildMediaObjectKey(branchId, mediaId, contentType);
+
+    const { uploadUrl, bucket } = await this.presignUpload(
+      key,
+      contentType,
+      expiresIn,
+    );
+
+    return {
+      uploadUrl,
+      mediaId,
+      publicUrl: this.mediaPublicUrl(mediaId),
+      key,
+      bucket,
+      expiresIn,
+    };
+  }
+
+  private async createMediaAssetRecord(
+    branchId: string,
+    contentType: string,
+    scope: string,
+  ): Promise<string> {
+    const maxAttempts = 8;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const mediaId = generateMediaId();
+      const key = buildMediaObjectKey(branchId, mediaId, contentType);
+      assertBranchStorageKey(branchId, key);
+
+      try {
+        await this.prisma.mediaAsset.create({
+          data: {
+            id: mediaId,
+            branchId,
+            objectKey: key,
+            contentType,
+            scope,
+          },
+        });
+        return mediaId;
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002' &&
+          attempt < maxAttempts - 1
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new ServiceUnavailableException(
+      'Could not allocate a unique media id',
+    );
+  }
+
+  async deleteObject(key: string): Promise<void> {
+    const client = this.requireClient();
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+      }),
+    );
+  }
+
+  /** Remove a persisted `media:` or `storage:` ref from object storage (and MediaAsset when applicable). */
+  async deletePersistedRef(branchId: string, ref: string): Promise<void> {
+    const trimmed = ref.trim();
+    if (!trimmed.startsWith('media:') && !trimmed.startsWith('storage:')) {
+      return;
+    }
+
+    if (isMediaRef(trimmed)) {
+      const mediaId = mediaIdFromRef(trimmed);
+      if (!mediaId) return;
+
+      const asset = await this.prisma.mediaAsset.findUnique({
+        where: { id: mediaId },
+      });
+      if (!asset) return;
+      if (asset.branchId !== branchId) {
+        throw new ForbiddenException('Invalid storage ref for this branch');
+      }
+
+      try {
+        await this.deleteObject(asset.objectKey);
+      } catch (error) {
+        this.logger.warn(
+          `S3 delete failed for media ${mediaId} (${asset.objectKey}): ${error}`,
+        );
+      }
+
+      await this.prisma.mediaAsset.delete({ where: { id: mediaId } }).catch(() => {});
+      return;
+    }
+
+    const key = normalizeStorageObjectKey(trimmed);
+    assertBranchStorageKey(branchId, key);
+    await this.deleteObject(key);
+  }
+
+  async getObject(key: string): Promise<StoredObjectBody> {
+    const client = this.requireClient();
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+      }),
+    );
+    if (!response.Body) {
+      throw new ServiceUnavailableException('Object body missing');
+    }
+    return {
+      body: response.Body as Readable,
+      contentType: response.ContentType ?? 'application/octet-stream',
+      contentLength: response.ContentLength,
+    };
   }
 
   async presignUpload(

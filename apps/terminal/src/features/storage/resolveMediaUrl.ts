@@ -1,4 +1,5 @@
-import { isInlineDataRef, fromStorageRef } from "./storageRef";
+import { isInlineDataRef, fromMediaRef, fromStorageRef } from "./storageRef";
+import { getMediaPublicUrl } from "@/shared/config/env";
 import { presignDownload } from "./storageApi";
 
 type CacheEntry = { url: string; expiresAt: number };
@@ -22,7 +23,7 @@ function cacheSet(key: string, url: string, expiresInSeconds: number): void {
   });
 }
 
-/** Resolve `data:…`, `storage:…`, or plain https URLs for display / download. */
+/** Resolve `data:…`, `media:…`, `storage:…`, or plain https URLs for display / download. */
 export async function resolveMediaUrl(ref: string): Promise<string> {
   if (!ref) return "";
   if (
@@ -33,6 +34,12 @@ export async function resolveMediaUrl(ref: string): Promise<string> {
   ) {
     return ref;
   }
+
+  const mediaId = fromMediaRef(ref);
+  if (mediaId) {
+    return getMediaPublicUrl(mediaId);
+  }
+
   const key = fromStorageRef(ref);
   if (!key) return ref;
 

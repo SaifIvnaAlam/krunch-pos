@@ -23,6 +23,7 @@ model Branch {
   dailyEntries DailyEntry[]
   ledgerWorkspace BranchLedgerWorkspace?
   salaryWorkspace BranchSalaryWorkspace?
+  mediaAssets  MediaAsset[]
 }
 
 model Staff {
@@ -287,6 +288,20 @@ model DailyEntry {
 
   @@unique([branchId, date])
   @@index([branchId, date])
+}
+
+/// Uploaded file metadata — stable public URLs at `{MEDIA_PUBLIC_BASE_URL}/{id}`.
+model MediaAsset {
+  id          String   @id @default(uuid())
+  branchId    String
+  objectKey   String   @unique
+  contentType String
+  scope       String
+  createdAt   DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
 }
 
 /// Branch-scoped ledger books, bills/payments, and purchase moves (terminal Ledger module).

@@ -1,5 +1,7 @@
 const ACCESS = "universal_pos_terminal_access";
 const REFRESH = "universal_pos_terminal_refresh";
+const REMEMBERED_EMAIL = "universal_pos_terminal_remembered_email";
+const REMEMBERED_BRANCH = "universal_pos_terminal_remembered_branch";
 const DEMO_FLAG = "remi_pos_demo_auth";
 const DEMO_NAME = "remi_pos_user_name";
 
@@ -143,5 +145,30 @@ export function readDemoUserName(): string {
     return sessionStorage.getItem(DEMO_NAME) ?? "";
   } catch {
     return "";
+  }
+}
+
+export function readRememberedEmail(): string {
+  try {
+    return localStorage.getItem(REMEMBERED_EMAIL) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function readRememberedBranchId(): string {
+  try {
+    return localStorage.getItem(REMEMBERED_BRANCH) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function writeRememberedLogin(email: string, branchId: string): void {
+  try {
+    localStorage.setItem(REMEMBERED_EMAIL, email.trim().toLowerCase());
+    localStorage.setItem(REMEMBERED_BRANCH, branchId);
+  } catch {
+    /* ignore */
   }
 }

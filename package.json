@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "dev": "node scripts/check-node.mjs && npm run db:up && node scripts/wait-for-postgres.mjs && turbo run dev",
+    "dev:prod": "turbo run dev --filter=terminal",
+    "dev:local": "node scripts/check-node.mjs && npm run db:up && node scripts/wait-for-postgres.mjs && turbo run dev --filter=terminal",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",

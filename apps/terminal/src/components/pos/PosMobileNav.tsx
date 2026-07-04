@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { POS_NAV_SECTIONS, leavesFromNodes } from "../../data/posNav";
+import { getVisibleNavSections, leavesFromNodes } from "../../data/posNav";
 
 function MobileNavButton({
   leafId,
@@ -53,7 +53,7 @@ export function PosMobileNav({
       className="fixed inset-x-0 bottom-0 z-40 border-t border-solid [border-color:var(--pos-sb-border)] [background:var(--pos-sb-bg)] pb-[env(safe-area-inset-bottom,0px)] lg:hidden"
     >
       <div className="flex flex-col gap-1 px-1 py-1.5">
-        {POS_NAV_SECTIONS.map((section, sectionIndex) => {
+        {getVisibleNavSections().map((section, sectionIndex) => {
           const leaves = leavesFromNodes(section.nodes);
           if (leaves.length === 0) return null;
           return (

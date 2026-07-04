@@ -65,7 +65,7 @@ export function apiMenuItemsToCategories(items: ApiMenuItem[]): CatalogCategory[
       isAvailable: row.isAvailable,
       is86d: row.is86d,
       imageRef: row.imageKey
-        ? row.imageKey.startsWith("storage:")
+        ? row.imageKey.startsWith("storage:") || row.imageKey.startsWith("media:")
           ? row.imageKey
           : toStorageRef(row.imageKey)
         : null,

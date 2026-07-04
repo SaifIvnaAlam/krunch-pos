@@ -12,11 +12,16 @@ function SplashGate() {
   const { isSignedIn } = useSession();
 
   useEffect(() => {
+    if (isSignedIn) return;
     const timer = setTimeout(() => {
-      navigate(isSignedIn ? "/pos" : "/signin", { replace: true });
-    }, 2800);
+      navigate("/signin", { replace: true });
+    }, 500);
     return () => clearTimeout(timer);
   }, [navigate, isSignedIn]);
+
+  if (isSignedIn) {
+    return <Navigate to="/pos" replace />;
+  }
 
   return <SplashScreen />;
 }

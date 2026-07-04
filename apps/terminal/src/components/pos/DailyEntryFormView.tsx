@@ -22,7 +22,7 @@ import {
   type InputHTMLAttributes,
 } from "react";
 import { readValidAccessToken } from "@/features/auth";
-import { uploadFileToStorage, fromStorageRef } from "@/features/storage";
+import { uploadFileToStorage, fromStorageRef, isMediaRef, purgeStoredMediaRef } from "@/features/storage";
 import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
 import {
@@ -54,10 +54,6 @@ import {
 import { flushLedgerWorkspacePersist, loadLedgerWorkspace } from "@/features/ledger";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
-import {
-  DailyEntryLedgerLinks,
-  DailyEntryReportLinks,
-} from "./DailyEntryRelatedNav";
 import { useSession } from "@/features/auth";
 
 type ExpenseLineDraft = {
@@ -105,26 +101,35 @@ function isPdfDataUrl(url: string): boolean {
 
 function isPdfMediaRef(ref: string): boolean {
   if (isPdfDataUrl(ref)) return true;
+  if (isMediaRef(ref)) return false;
   const key = fromStorageRef(ref);
   return key != null && key.toLowerCase().endsWith(".pdf");
 }
 
-function clipboardImageFilesFromDataTransfer(data: DataTransfer | null): File[] {
+function clipboardAttachmentFilesFromDataTransfer(data: DataTransfer | null): File[] {
   if (!data) return [];
   const files: File[] = [];
   if (data.items?.length) {
     for (let i = 0; i < data.items.length; i++) {
       const item = data.items[i];
       if (item.kind !== "file") continue;
-      if (!item.type.startsWith("image/")) continue;
       const f = item.getAsFile();
-      if (f) files.push(f);
+      if (!f || f.size === 0) continue;
+      if (
+        item.type.startsWith("image/") ||
+        item.type === "application/pdf" ||
+        isReceiptAttachmentFile(f) ||
+        // macOS screenshots often omit MIME type on clipboard file items.
+        !item.type
+      ) {
+        files.push(f);
+      }
     }
   }
   if (files.length === 0 && data.files?.length) {
     for (let i = 0; i < data.files.length; i++) {
       const f = data.files[i];
-      if (f.type.startsWith("image/")) files.push(f);
+      if (isReceiptAttachmentFile(f) || (!f.type && f.size > 0)) files.push(f);
     }
   }
   return files;
@@ -140,48 +145,11 @@ function expenseLineIdFromEventTarget(target: EventTarget | null): string | null
   return null;
 }
 
-async function mergeReceiptDataUrls(
-  existing: readonly string[],
-  files: readonly File[],
-): Promise<{ ok: true; urls: string[] } | { ok: false; message: string }> {
-  if (!readValidAccessToken()) {
-    return {
-      ok: false,
-      message: "Sign in to attach files (storage requires an active session).",
-    };
-  }
-  const room = MAX_RECEIPTS_PER_LINE - existing.length;
-  if (room <= 0) {
-    return {
-      ok: false,
-      message: `At most ${MAX_RECEIPTS_PER_LINE} attachments per expense line.`,
-    };
-  }
-  const next = [...existing];
-  const slice = files.slice(0, room);
-  try {
-    for (const file of slice) {
-      if (!isReceiptAttachmentFile(file)) {
-        return {
-          ok: false,
-          message: "Only images or PDF files can be attached.",
-        };
-      }
-      if (file.size > MAX_RECEIPT_BYTES) {
-        return {
-          ok: false,
-          message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
-        };
-      }
-      next.push(await uploadFileToStorage(file, "receipts", file.name));
-    }
-  } catch (e) {
-    return {
-      ok: false,
-      message: e instanceof Error ? e.message : "Could not upload attachment.",
-    };
-  }
-  return { ok: true, urls: next };
+function expenseLineIdFromPasteEvent(e: ClipboardEvent): string | null {
+  return (
+    expenseLineIdFromEventTarget(e.target) ??
+    expenseLineIdFromEventTarget(document.activeElement)
+  );
 }
 
 async function mergeVoidAttachmentDataUrls(
@@ -1388,58 +1356,6 @@ export function DailyEntryFormView() {
     setHistoryReceiptsLineIndex(null);
   }, [historyDetailRow]);
 
-  useEffect(() => {
-    if (activeView !== "entry") return;
-    const onPaste = (e: ClipboardEvent) => {
-      const files = clipboardImageFilesFromDataTransfer(e.clipboardData);
-      if (files.length === 0) return;
-      const lineId = expenseLineIdFromEventTarget(e.target);
-      const voidRoot = (e.target as HTMLElement | null)?.closest?.(
-        "[data-void-attachment-anchor]",
-      );
-      if (voidRoot) {
-        e.preventDefault();
-        void (async () => {
-          const result = await mergeVoidAttachmentDataUrls(
-            voidSaleAttachmentUrlsRef.current,
-            files,
-          );
-          if (result.ok) {
-            setFormNotice((n) =>
-              n.kind === "salesField" ? { kind: "none" } : n,
-            );
-            setVoidSaleAttachmentUrls(result.urls);
-          } else {
-            setFormNotice({
-              kind: "salesField",
-              message: result.message,
-              part: "voidAttach",
-            });
-          }
-        })();
-        return;
-      }
-      if (!lineId) return;
-      const line = expenseLinesRef.current.find((l) => l.id === lineId);
-      if (!line) return;
-      e.preventDefault();
-      void (async () => {
-        const result = await mergeReceiptDataUrls(line.receiptDataUrls, files);
-        if (result.ok) {
-          setExpenseLines((lines) =>
-            lines.map((l) =>
-              l.id === lineId ? { ...l, receiptDataUrls: result.urls } : l,
-            ),
-          );
-        } else {
-          setFormNotice({ kind: "globalError", message: result.message });
-        }
-      })();
-    };
-    document.addEventListener("paste", onPaste);
-    return () => document.removeEventListener("paste", onPaste);
-  }, [activeView]);
-
   // TEMP: Alt+X (Windows/Linux) or ⌥+X Option+X (Mac) — random fields for quick Save testing; remove when done.
   useEffect(() => {
     const rnd = () => String(Math.floor(Math.random() * 40_000) + 500);
@@ -1509,6 +1425,116 @@ export function DailyEntryFormView() {
     );
   }
 
+  async function attachReceiptFilesToExpenseLine(lineId: string, picked: readonly File[]) {
+    if (picked.length === 0) return;
+    const line = expenseLinesRef.current.find((l) => l.id === lineId);
+    if (!line) return;
+    const urls = line.receiptDataUrls;
+
+    if (!readValidAccessToken()) {
+      setFormNotice({
+        kind: "globalError",
+        message: "Sign in to attach files (storage requires an active session).",
+      });
+      return;
+    }
+    const room = MAX_RECEIPTS_PER_LINE - urls.length;
+    if (room <= 0) {
+      setFormNotice({
+        kind: "globalError",
+        message: `At most ${MAX_RECEIPTS_PER_LINE} attachments per expense line.`,
+      });
+      return;
+    }
+    const slice = picked.slice(0, room);
+    for (const file of slice) {
+      if (!isReceiptAttachmentFile(file)) {
+        setFormNotice({
+          kind: "globalError",
+          message: "Only images or PDF files can be attached.",
+        });
+        return;
+      }
+      if (file.size > MAX_RECEIPT_BYTES) {
+        setFormNotice({
+          kind: "globalError",
+          message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
+        });
+        return;
+      }
+    }
+
+    const previewUrls = slice.map((f) => URL.createObjectURL(f));
+    let current = [...urls, ...previewUrls];
+    patchLine(lineId, { receiptDataUrls: current });
+    setAttachBusyLineId(lineId);
+    try {
+      for (let i = 0; i < slice.length; i++) {
+        const file = slice[i];
+        const preview = previewUrls[i];
+        try {
+          const ref = await uploadFileToStorage(file, "receipts", file.name);
+          current = current.map((u) => (u === preview ? ref : u));
+          patchLine(lineId, { receiptDataUrls: current });
+        } catch (err) {
+          URL.revokeObjectURL(preview);
+          current = current.filter((u) => u !== preview);
+          patchLine(lineId, { receiptDataUrls: current });
+          setFormNotice({
+            kind: "globalError",
+            message:
+              err instanceof Error ? err.message : "Could not upload attachment.",
+          });
+          return;
+        }
+        requestAnimationFrame(() => URL.revokeObjectURL(preview));
+      }
+      setFormNotice((n) => (n.kind === "globalError" ? { kind: "none" } : n));
+    } finally {
+      setAttachBusyLineId(null);
+    }
+  }
+
+  useEffect(() => {
+    if (activeView !== "entry") return;
+    const onPaste = (e: ClipboardEvent) => {
+      const files = clipboardAttachmentFilesFromDataTransfer(e.clipboardData);
+      if (files.length === 0) return;
+      const voidRoot =
+        (e.target as HTMLElement | null)?.closest?.("[data-void-attachment-anchor]") ??
+        document.activeElement?.closest?.("[data-void-attachment-anchor]");
+      if (voidRoot) {
+        e.preventDefault();
+        void (async () => {
+          const result = await mergeVoidAttachmentDataUrls(
+            voidSaleAttachmentUrlsRef.current,
+            files,
+          );
+          if (result.ok) {
+            setFormNotice((n) =>
+              n.kind === "salesField" ? { kind: "none" } : n,
+            );
+            setVoidSaleAttachmentUrls(result.urls);
+          } else {
+            setFormNotice({
+              kind: "salesField",
+              message: result.message,
+              part: "voidAttach",
+            });
+          }
+        })();
+        return;
+      }
+      const lineId = expenseLineIdFromPasteEvent(e);
+      if (!lineId) return;
+      if (!expenseLinesRef.current.some((l) => l.id === lineId)) return;
+      e.preventDefault();
+      void attachReceiptFilesToExpenseLine(lineId, files);
+    };
+    document.addEventListener("paste", onPaste, true);
+    return () => document.removeEventListener("paste", onPaste, true);
+  }, [activeView]);
+
   function addVendorExpenseLine() {
     setExpenseLines((lines) => [...lines, newVendorExpenseLine()]);
   }
@@ -1521,7 +1547,15 @@ export function DailyEntryFormView() {
     setFormNotice((n) =>
       n.kind === "field" && n.lineId === id ? { kind: "none" } : n,
     );
-    setExpenseLines((lines) => lines.filter((l) => l.id !== id));
+    setExpenseLines((lines) => {
+      const line = lines.find((l) => l.id === id);
+      if (line) {
+        for (const url of line.receiptDataUrls ?? []) {
+          purgeStoredMediaRef(url);
+        }
+      }
+      return lines.filter((l) => l.id !== id);
+    });
   }
 
   function clearSalesFieldNotice() {
@@ -1561,79 +1595,9 @@ export function DailyEntryFormView() {
           tabIndex={-1}
           aria-hidden
           onChange={(e) => {
-            // Copy files before clearing the input — FileList is live and empties when value is reset.
             const picked = e.target.files ? Array.from(e.target.files) : [];
             e.target.value = "";
-            if (picked.length === 0) return;
-            void (async () => {
-              if (!readValidAccessToken()) {
-                setFormNotice({
-                  kind: "globalError",
-                  message:
-                    "Sign in to attach files (storage requires an active session).",
-                });
-                return;
-              }
-              const room = MAX_RECEIPTS_PER_LINE - urls.length;
-              if (room <= 0) {
-                setFormNotice({
-                  kind: "globalError",
-                  message: `At most ${MAX_RECEIPTS_PER_LINE} attachments per expense line.`,
-                });
-                return;
-              }
-              const slice = picked.slice(0, room);
-              for (const file of slice) {
-                if (!isReceiptAttachmentFile(file)) {
-                  setFormNotice({
-                    kind: "globalError",
-                    message: "Only images or PDF files can be attached.",
-                  });
-                  return;
-                }
-                if (file.size > MAX_RECEIPT_BYTES) {
-                  setFormNotice({
-                    kind: "globalError",
-                    message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
-                  });
-                  return;
-                }
-              }
-
-              const previewUrls = slice.map((f) => URL.createObjectURL(f));
-              let current = [...urls, ...previewUrls];
-              patchLine(line.id, { receiptDataUrls: current });
-              setAttachBusyLineId(line.id);
-              try {
-                for (let i = 0; i < slice.length; i++) {
-                  const file = slice[i];
-                  const preview = previewUrls[i];
-                  try {
-                    const ref = await uploadFileToStorage(file, "receipts", file.name);
-                    current = current.map((u) => (u === preview ? ref : u));
-                    patchLine(line.id, { receiptDataUrls: current });
-                  } catch (err) {
-                    URL.revokeObjectURL(preview);
-                    current = current.filter((u) => u !== preview);
-                    patchLine(line.id, { receiptDataUrls: current });
-                    setFormNotice({
-                      kind: "globalError",
-                      message:
-                        err instanceof Error
-                          ? err.message
-                          : "Could not upload attachment.",
-                    });
-                    return;
-                  }
-                  requestAnimationFrame(() => URL.revokeObjectURL(preview));
-                }
-                setFormNotice((n) =>
-                  n.kind === "globalError" ? { kind: "none" } : n,
-                );
-              } finally {
-                setAttachBusyLineId(null);
-              }
-            })();
+            void attachReceiptFilesToExpenseLine(line.id, picked);
           }}
         />
         <label
@@ -1702,9 +1666,11 @@ export function DailyEntryFormView() {
               aria-label="Remove attachment"
               onClick={(e) => {
                 e.stopPropagation();
+                const removed = urls[idx];
                 patchLine(line.id, {
                   receiptDataUrls: urls.filter((_, j) => j !== idx),
                 });
+                purgeStoredMediaRef(removed);
               }}
             >
               ×
@@ -1806,7 +1772,9 @@ export function DailyEntryFormView() {
               onClick={(e) => {
                 e.stopPropagation();
                 clearSalesFieldNotice();
+                const removed = urls[idx];
                 setVoidSaleAttachmentUrls(urls.filter((_, j) => j !== idx));
+                purgeStoredMediaRef(removed);
               }}
             >
               ×
@@ -2363,7 +2331,6 @@ export function DailyEntryFormView() {
                       Add Entry
                     </button>
                   </div>
-                  <DailyEntryReportLinks compact />
                 </div>
                 <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
                   <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
@@ -2778,15 +2745,6 @@ export function DailyEntryFormView() {
                   </p>
                 </div>
               </div>
-              <p className="mt-2 border-t border-solid [border-color:var(--pos-divider)] pt-2 text-[10px] leading-snug text-[var(--pos-text-2)]">
-                Expense lines below — use <span className="font-medium text-[var(--pos-text-1)]">Withdrawn from bank</span> when
-                part of today&apos;s expenses was paid from the bank account (deposits are in the Bank sales field).
-              </p>
-              <DailyEntryLedgerLinks />
-              <p className="pt-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
-                Max {MAX_RECEIPTS_PER_LINE} images or PDFs per line (sign in required).
-              </p>
-              <DailyEntryReportLinks />
               {expenseLines.length > 0 ? (
                 <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(4.75rem,0.55fr)_minmax(0,0.45fr)_minmax(0,1fr)_2.25rem_2.25rem] items-center gap-x-1.5 border-b border-solid [border-color:var(--pos-divider)] pb-1.5 text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-[var(--pos-text-2)]">
                   <span className="flex min-h-8 min-w-0 items-center pl-0.5">Book / title</span>
@@ -2816,11 +2774,7 @@ export function DailyEntryFormView() {
                     <span className="sr-only">Remove</span>
                   </span>
                 </div>
-              ) : (
-                <p className="text-[10px] italic text-[var(--pos-text-2)]">
-                  No expense lines yet.
-                </p>
-              )}
+              ) : null}
               <div className="space-y-1.5 pr-0.5">
                 {expenseLines.map((line) => {
                   if (line.kind === "regular") {

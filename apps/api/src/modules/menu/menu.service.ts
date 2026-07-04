@@ -5,7 +5,7 @@ import { asJsonInput } from '../../common/prisma-json';
 import { AuditService } from '../audit/audit.service';
 import { RedisService } from '../../redis/redis.service';
 
-import { normalizeStorageObjectKey } from '../../common/storage-key';
+import { normalizeImageKey } from '../../common/storage-key';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
 
@@ -34,7 +34,7 @@ export class MenuService {
         description: dto.description,
         price: dto.price,
         category: dto.category,
-        imageKey: dto.imageKey ? normalizeStorageObjectKey(dto.imageKey) : undefined,
+        imageKey: dto.imageKey ? normalizeImageKey(dto.imageKey) : undefined,
         modifiers: asJsonInput(dto.modifiers ?? undefined),
       },
     });
@@ -60,7 +60,7 @@ export class MenuService {
         imageKey:
           dto.imageKey === null || dto.imageKey === ''
             ? null
-            : normalizeStorageObjectKey(dto.imageKey),
+            : normalizeImageKey(dto.imageKey),
       }),
       ...(dto.modifiers !== undefined && { modifiers: asJsonInput(dto.modifiers) }),
     };

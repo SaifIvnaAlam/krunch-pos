@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { ImagePlus, Loader2, X } from "lucide-react";
 import { StorageImage } from "@/features/storage/StorageImage";
-import { isStorageRef } from "@/features/storage/storageRef";
+import { deleteStoredMediaRef } from "@/features/storage/storageApi";
+import { isPersistedMediaRef } from "@/features/storage/storageRef";
 
 type Props = {
   label?: string;
@@ -26,11 +27,15 @@ export function ImageUploadField({
 
   const onPick = async (file: File | undefined) => {
     if (!file || disabled) return;
+    const previousRef = mediaRef;
     setUploading(true);
     setError(null);
     try {
       const ref = await onUpload(file);
       onMediaRefChange(ref);
+      if (previousRef && isPersistedMediaRef(previousRef) && previousRef !== ref) {
+        void deleteStoredMediaRef(previousRef).catch(() => {});
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -43,7 +48,7 @@ export function ImageUploadField({
     <div>
       <p className="text-[12px] font-medium text-[var(--pos-text-1)]">{label}</p>
       <div className="mt-2 flex flex-wrap items-start gap-3">
-        {mediaRef && (isStorageRef(mediaRef) || mediaRef.startsWith("data:")) ? (
+        {mediaRef && (isPersistedMediaRef(mediaRef) || mediaRef.startsWith("data:")) ? (
           <div className="relative w-[120px] shrink-0">
             <StorageImage
               mediaRef={mediaRef}
@@ -53,7 +58,13 @@ export function ImageUploadField({
             <button
               type="button"
               disabled={disabled || uploading}
-              onClick={() => onMediaRefChange(null)}
+              onClick={() => {
+                const previousRef = mediaRef;
+                onMediaRefChange(null);
+                if (previousRef && isPersistedMediaRef(previousRef)) {
+                  void deleteStoredMediaRef(previousRef).catch(() => {});
+                }
+              }}
               className="absolute -right-1 -top-1 flex size-6 items-center justify-center rounded-full border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] text-[var(--pos-text-2)]"
               aria-label="Remove image"
             >

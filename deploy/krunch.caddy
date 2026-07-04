@@ -19,8 +19,13 @@ steakandmarrow.inventivelab.bd {
 }
 
 # Krunch object storage on the shared MinIO (S3 API on :9000).
-# Host header is preserved so MinIO can validate presigned-URL signatures.
+# `/media/*` is served by the Krunch API (stable public URLs); everything else goes to MinIO.
 s3.storage.inventivelab.bd {
+	handle /media/* {
+		rewrite * /api/v1{uri}
+		reverse_proxy 127.0.0.1:3001
+	}
+
 	reverse_proxy 127.0.0.1:9000 {
 		header_up Host {host}
 	}

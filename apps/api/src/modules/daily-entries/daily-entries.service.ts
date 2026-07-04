@@ -1,10 +1,16 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DailyEntry, Prisma } from '@prisma/client';
+import {
+  attachmentRefsDropped,
+  collectDailyEntryAttachmentRefs,
+} from '../../common/daily-entry-attachments';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
 
 export type DailyEntryDto = {
@@ -68,7 +74,12 @@ function mapRow(row: DailyEntry): DailyEntryDto {
 
 @Injectable()
 export class DailyEntriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DailyEntriesService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async listForBranch(branchId: string): Promise<DailyEntryDto[]> {
     const rows = await this.prisma.dailyEntry.findMany({
@@ -98,6 +109,15 @@ export class DailyEntriesService {
         'This daily entry is locked and cannot be edited.',
       );
     }
+
+    const orphanedRefs = attachmentRefsDropped(
+      existing ? collectDailyEntryAttachmentRefs(existing) : [],
+      collectDailyEntryAttachmentRefs({
+        voidSaleAttachmentDataUrls: dto.voidSaleAttachmentDataUrls,
+        expenseLines: dto.expenseLines,
+      }),
+    );
+    await this.deleteAttachmentRefs(branchId, orphanedRefs);
 
     const voidSale =
       dto.voidSale != null && dto.voidSale > 0 ? new Prisma.Decimal(dto.voidSale) : null;
@@ -201,8 +221,32 @@ export class DailyEntriesService {
       );
     }
 
+    await this.deleteAttachmentRefs(
+      branchId,
+      collectDailyEntryAttachmentRefs(existing),
+    );
+
     await this.prisma.dailyEntry.delete({
       where: { branchId_date: { branchId, date } },
     });
+  }
+
+  private async deleteAttachmentRefs(
+    branchId: string,
+    refs: readonly string[],
+  ): Promise<void> {
+    if (refs.length === 0) return;
+
+    await Promise.all(
+      refs.map(async (ref) => {
+        try {
+          await this.storage.deletePersistedRef(branchId, ref);
+        } catch (error) {
+          this.logger.warn(
+            `Failed to delete attachment ref ${ref} for branch ${branchId}: ${error}`,
+          );
+        }
+      }),
+    );
   }
 }
