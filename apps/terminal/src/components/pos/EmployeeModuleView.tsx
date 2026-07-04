@@ -18,7 +18,7 @@ import {
   createSalaryPayment,
   defaultDocForNewMonth,
   distributeServiceChargePool,
-  emptySalaryRow,
+  ensureMonthDoc,
   isMonthKey,
   labelFromMonthKey,
   summarizeSalaryDoc,
@@ -28,11 +28,12 @@ import {
   type SalarySheetDoc,
   type SalarySheetRow,
 } from "../../lib/salarySheetStorage";
+import { useActiveEmployees } from "../../lib/employeeDirectoryStorage";
 
 const border0 =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
 
-export const HR_LEAF_IDS = new Set(["hr-payroll"]);
+export const HR_PAYROLL_LEAF_IDS = new Set(["hr-payroll"]);
 
 function Toolbar({
   children,
@@ -153,7 +154,7 @@ function SalaryPaymentsModal({
         onClick={onClose}
       />
       <div
-        className={`relative z-[1] flex max-h-[704px] w-full max-w-[440px] flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0} shadow-lg`}
+        className={`relative z-[1] flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0} shadow-lg`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="salary-payments-title"
@@ -272,13 +273,26 @@ function SalaryPaymentsModal({
 }
 
 function PayrollSalaries() {
-  const bundle = useSyncExternalStore(subscribeSalaryBundle, getSalaryBundle);
-  const loadState = useSyncExternalStore(subscribeSalaryBundle, getSalaryWorkspaceLoadState);
+  const employees = useActiveEmployees();
+  const employeeSyncKey = employees
+    .map((e) => `${e.id}\t${e.name}\t${e.active}\t${e.serviceChargePct}`)
+    .join("\n");
+
+  const bundle = useSyncExternalStore(
+    subscribeSalaryBundle,
+    getSalaryBundle,
+    getSalaryBundle,
+  );
+  const loadState = useSyncExternalStore(
+    subscribeSalaryBundle,
+    getSalaryWorkspaceLoadState,
+    getSalaryWorkspaceLoadState,
+  );
   const [poolDraft, setPoolDraft] = useState("");
   const [paymentEditorRowId, setPaymentEditorRowId] = useState<string | null>(null);
 
   const activeKey = bundle.selectedMonthKey;
-  const doc = bundle.months[activeKey] ?? defaultDocForNewMonth(activeKey);
+  const doc = bundle.months[activeKey] ?? ensureMonthDoc(activeKey, undefined, employees);
   const paymentEditorRow = paymentEditorRowId
     ? doc.rows.find((x) => x.id === paymentEditorRowId) ?? null
     : null;
@@ -287,14 +301,37 @@ function PayrollSalaries() {
     void loadSalaryWorkspace();
   }, []);
 
+  useEffect(() => {
+    setSalaryBundle((b) => {
+      const key = b.selectedMonthKey;
+      const cur = b.months[key];
+      const next = ensureMonthDoc(key, cur, employees);
+      if (
+        cur &&
+        cur.rows.length === next.rows.length &&
+        cur.rows.every((row, i) => row.employeeId === next.rows[i]?.employeeId)
+      ) {
+        return b;
+      }
+      return { ...b, months: { ...b.months, [key]: next } };
+    });
+  }, [employeeSyncKey, activeKey, employees]);
+
   const patchDoc = (updater: (d: SalarySheetDoc) => SalarySheetDoc) => {
     setSalaryBundle((b) => {
       const key = b.selectedMonthKey;
-      const cur = b.months[key] ?? defaultDocForNewMonth(key);
+      const cur = ensureMonthDoc(key, b.months[key], employees);
       const nextDoc = updater(cur);
       return {
         ...b,
-        months: { ...b.months, [key]: { ...nextDoc, updatedAt: new Date().toISOString() } },
+        months: {
+          ...b.months,
+          [key]: {
+            ...nextDoc,
+            periodLabel: labelFromMonthKey(key),
+            updatedAt: new Date().toISOString(),
+          },
+        },
       };
     });
   };
@@ -304,9 +341,10 @@ function PayrollSalaries() {
     setSalaryBundle((b) => ({
       ...b,
       selectedMonthKey: monthKey,
-      months: b.months[monthKey]
-        ? b.months
-        : { ...b.months, [monthKey]: defaultDocForNewMonth(monthKey) },
+      months: {
+        ...b.months,
+        [monthKey]: ensureMonthDoc(monthKey, b.months[monthKey], employees),
+      },
     }));
   };
 
@@ -317,8 +355,7 @@ function PayrollSalaries() {
       .map((monthKey) => {
         const d = bundle.months[monthKey]!;
         const s = summarizeSalaryDoc(d);
-        const label = d.periodLabel.trim() || labelFromMonthKey(monthKey);
-        return { monthKey, label, ...s };
+        return { monthKey, label: labelFromMonthKey(monthKey), ...s };
       });
   }, [bundle.months]);
 
@@ -365,12 +402,16 @@ function PayrollSalaries() {
     "h-8 w-full min-w-[72px] rounded-[6px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-right font-mono text-[11px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
   const inputName =
     "h-8 w-full min-w-[100px] rounded-[6px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-left text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden pr-1">
-      <h1 className="shrink-0 text-[16px] font-semibold text-[var(--pos-text-1)]">
-        Employee Salaries
-      </h1>
+      <div className="shrink-0">
+        <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Employee Salaries</h1>
+        <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">
+          Staff rows come from{" "}
+          <span className="font-medium text-[var(--pos-text-1)]">Employee Management</span>. Add or
+          deactivate people there — this sheet updates automatically.
+        </p>
+      </div>
       <SalaryPaymentsModal
         row={paymentEditorRow}
         open={paymentEditorRowId != null && paymentEditorRow != null}
@@ -402,21 +443,9 @@ function PayrollSalaries() {
               aria-label="Salary month"
             />
           </label>
-          <label className="flex min-w-[140px] max-w-[220px] flex-col gap-1">
+          <label className="flex min-w-[140px] max-w-[200px] flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              Period label
-            </span>
-            <input
-              type="text"
-              value={doc.periodLabel}
-              onChange={(e) => patchDoc((d) => ({ ...d, periodLabel: e.target.value }))}
-              className={inputName}
-              aria-label="Pay period label"
-            />
-          </label>
-          <label className="flex min-w-[120px] max-w-[160px] flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              SC pool
+              Service charge pool
             </span>
             <input
               type="text"
@@ -432,9 +461,23 @@ function PayrollSalaries() {
             Split by %
           </GhostButton>
         </div>
-        <PrimaryButton type="button" onClick={() => patchDoc((d) => ({ ...d, rows: [...d.rows, emptySalaryRow()] }))}>
-          Add row
-        </PrimaryButton>
+        <Toolbar className="gap-2">
+          <GhostButton
+            type="button"
+            onClick={() => {
+              setSalaryBundle((b) => ({
+                ...b,
+                months: {
+                  ...b.months,
+                  [b.selectedMonthKey]: defaultDocForNewMonth(b.selectedMonthKey, employees),
+                },
+              }));
+              setPoolDraft("");
+            }}
+          >
+            Clear month
+          </GhostButton>
+        </Toolbar>
       </Toolbar>
       <div className={`shrink-0 overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
         <div className="border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
@@ -496,7 +539,7 @@ function PayrollSalaries() {
       </div>
       {loadState.loading ? (
         <p className="text-[12px] text-[var(--pos-text-2)]" role="status">
-          Loading salary registers…
+          Loading salary registers...
         </p>
       ) : null}
       {loadState.error ? (
@@ -528,7 +571,6 @@ function PayrollSalaries() {
                 <th className={`${thNum} min-w-[128px]`} title="Sum of dated payout lines for this employee">
                   Paid (sum)
                 </th>
-                <th className="w-10 px-1 py-2.5" aria-label="Row actions" />
               </tr>
             </thead>
             <tbody>
@@ -539,14 +581,10 @@ function PayrollSalaries() {
                     key={r.id}
                     className="border-b border-solid [border-color:var(--pos-border-hairline)] transition-colors hover:bg-[var(--pos-sidebar)]/50"
                   >
-                    <td className={`sticky left-0 z-[1] bg-[var(--pos-card)] px-2 py-1.5 ${tdNum}`}>
-                      <input
-                        type="text"
-                        value={r.name}
-                        onChange={(e) => updateRow(r.id, { name: e.target.value })}
-                        className={inputName}
-                        aria-label={`Name row ${r.id}`}
-                      />
+                    <td className={`sticky left-0 z-[1] bg-[var(--pos-card)] px-3 py-1.5 align-middle`}>
+                      <span className="text-[12px] font-medium text-[var(--pos-text-1)]">
+                        {r.name.trim() || "—"}
+                      </span>
                     </td>
                     <td className={tdNum}>
                       <input
@@ -623,20 +661,6 @@ function PayrollSalaries() {
                         </button>
                       </div>
                     </td>
-                    <td className="px-1 py-1.5 text-center align-middle">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patchDoc((d) =>
-                            d.rows.length <= 1 ? d : { ...d, rows: d.rows.filter((x) => x.id !== r.id) },
-                          )
-                        }
-                        className="inline-flex size-8 items-center justify-center rounded-[6px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
-                        aria-label={`Remove ${r.name || "row"}`}
-                      >
-                        <Trash2 className="size-3.5" strokeWidth={2} />
-                      </button>
-                    </td>
                   </tr>
                 );
               })}
@@ -663,7 +687,6 @@ function PayrollSalaries() {
                 <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
                   {formatWhole(totals.paid)}
                 </td>
-                <td className="border-t border-solid [border-color:var(--pos-divider)]" />
               </tr>
             </tbody>
           </table>

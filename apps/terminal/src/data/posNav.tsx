@@ -9,6 +9,7 @@ import {
   Receipt,
   Salad,
   TrendingUp,
+  UserRound,
   UtensilsCrossed,
 } from "lucide-react";
 
@@ -47,18 +48,8 @@ const OFFICE_NAV_NODES: NavNode[] = [
     label: "Ledger",
     icon: BookMarked,
     children: [
-      {
-        kind: "leaf",
-        id: "lm-management",
-        label: "Ledger books",
-        icon: BookOpen,
-      },
-      {
-        kind: "leaf",
-        id: "lm-ledger",
-        label: "Bills & payments",
-        icon: Receipt,
-      },
+      { kind: "leaf", id: "lm-management", label: "Ledger books", icon: BookOpen },
+      { kind: "leaf", id: "lm-ledger", label: "Bills & payments", icon: Receipt },
     ],
   },
   {
@@ -67,27 +58,21 @@ const OFFICE_NAV_NODES: NavNode[] = [
     label: "Reports",
     icon: BarChart3,
     children: [
-      {
-        kind: "leaf",
-        id: "rep-management",
-        label: "Expense reports",
-        icon: Receipt,
-      },
-      {
-        kind: "leaf",
-        id: "rep-sales",
-        label: "Sales report",
-        icon: TrendingUp,
-      },
-      {
-        kind: "leaf",
-        id: "rep-analytics",
-        label: "Analytics",
-        icon: LineChart,
-      },
+      { kind: "leaf", id: "rep-management", label: "Expense reports", icon: Receipt },
+      { kind: "leaf", id: "rep-sales", label: "Sales report", icon: TrendingUp },
+      { kind: "leaf", id: "rep-analytics", label: "Analytics", icon: LineChart },
     ],
   },
-  { kind: "leaf", id: "hr-payroll", label: "Employee Salaries", icon: Receipt },
+  {
+    kind: "branch",
+    id: "hr-branch",
+    label: "Employees",
+    icon: UserRound,
+    children: [
+      { kind: "leaf", id: "hr-employees", label: "Employee Management", icon: UserRound },
+      { kind: "leaf", id: "hr-payroll", label: "Employee Salaries", icon: Receipt },
+    ],
+  },
 ];
 
 const OPERATIONS_NAV_NODES: NavNode[] = [
@@ -118,7 +103,7 @@ export function flattenNavLeaves(): NavLeaf[] {
   return POS_NAV_SECTIONS.flatMap((s) => leavesFromNodes(s.nodes));
 }
 
-/** IDs that open the register (menu grid + cart). */
+/** IDs that open the POS menu + cart surface. */
 export const MENU_VIEW_IDS = new Set(["menu"]);
 
 export function collectAllLeafIds(): string[] {

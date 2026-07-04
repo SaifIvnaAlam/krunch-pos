@@ -137,6 +137,41 @@ function nextId(prefix: string, existing: string[]): string {
   return `${prefix}-${String(next).padStart(4, "0")}`;
 }
 
+/** Ledger book display name for a staff member. */
+export function employeeLedgerBookName(fullName: string): string {
+  return `${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}${fullName.trim()}`;
+}
+
+/** Create or return the Staff ledger book for this employee (session workspace). */
+export function upsertEmployeeLedgerBook(employee: {
+  name: string;
+  phone?: string;
+}): string {
+  const name = employeeLedgerBookName(employee.name);
+  const w = getWorkspace();
+  const existing = w.suppliers.find((s) => s.name === name);
+  if (existing) return existing.id;
+
+  const id = nextId("sup", w.suppliers.map((s) => s.id));
+  const row: Supplier = {
+    id,
+    name,
+    bookPurpose: "employees",
+    contactPerson: employee.name.trim(),
+    phone: employee.phone?.trim() ?? "",
+    email: "",
+    address: "",
+    notes: "",
+  };
+  setWorkspace((prev) => ({ ...prev, suppliers: [...prev.suppliers, row] }));
+  return id;
+}
+
+export function hasEmployeeLedgerBook(fullName: string): boolean {
+  const name = employeeLedgerBookName(fullName);
+  return getWorkspace().suppliers.some((s) => s.name === name);
+}
+
 function useWorkspace(): Workspace {
   return useSyncExternalStore(subscribeWorkspace, getWorkspace, getWorkspace);
 }
@@ -2062,7 +2097,7 @@ function SupplierLedgerView() {
       {ws.suppliers.length === 0 ? (
         <div className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-3">
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            Add a ledger book first — vendor, owner, or employee — then record bills and
+            Add a ledger book first - vendor, owner, or employee - then record bills and
             payments here.
           </p>
           <button
@@ -2212,10 +2247,10 @@ function SupplierLedgerView() {
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
                   {ws.suppliers.length === 0
-                    ? "No ledger books yet — open Ledger books and add one to start posting bills and payments."
+                    ? "No ledger books yet - open Ledger books and add one to start posting bills and payments."
                     : ws.ledger.length === 0
                       ? "No activity yet. Use Add entry to post a bill or payment."
-                      : "No entries match your filters — adjust search, ledger book, type, or dates."}
+                      : "No entries match your filters - adjust search, ledger book, type, or dates."}
                 </td>
               </tr>
             ) : (

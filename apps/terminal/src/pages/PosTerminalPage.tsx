@@ -30,7 +30,6 @@ import {
   type OrderLineConfig,
 } from "@/features/menu";
 import { createOrderOnApi, holdOrderOnApi } from "@/features/orders";
-import { computeOrderFeesCents } from "@/features/orders/orderFees";
 import { processPaymentOnApi } from "@/features/payments/paymentsApi";
 import { StorageImage } from "@/features/storage";
 import { PosSidebar } from "../components/pos/PosSidebar";
@@ -39,10 +38,11 @@ import { PosMobileHeader } from "../components/pos/PosMobileHeader";
 import { POS_SELECT_LEAF_EVENT } from "../lib/posNavEvents";
 import { OrdersManageView } from "../components/pos/OrdersManageView";
 import { GenericModuleView } from "../components/pos/GenericModuleView";
+import { EmployeeModuleView, HR_PAYROLL_LEAF_IDS } from "../components/pos/EmployeeModuleView";
 import {
-  HR_LEAF_IDS,
-  EmployeeModuleView,
-} from "../components/pos/EmployeeModuleView";
+  EmployeeDirectoryView,
+  HR_DIRECTORY_LEAF_IDS,
+} from "../components/pos/EmployeeDirectoryView";
 import {
   LEDGER_LEAF_IDS,
   LedgerModuleView,
@@ -300,13 +300,13 @@ export function PosTerminalPage() {
   );
   const [serviceChargeEnabled, setServiceChargeEnabled] = useState(false);
   const subtotalAfterLineDiscounts = Math.max(0, grossSubtotal - discount);
-  const feeBreakdown = useMemo(
-    () => computeOrderFeesCents(subtotalAfterLineDiscounts, serviceChargeEnabled),
-    [subtotalAfterLineDiscounts, serviceChargeEnabled],
+  const service = serviceChargeEnabled
+    ? Math.round(subtotalAfterLineDiscounts * 0.1)
+    : 0;
+  const tax = Math.round(
+    Math.max(0, subtotalAfterLineDiscounts + service) * 0.0825,
   );
-  const service = feeBreakdown.serviceChargeCents;
-  const tax = feeBreakdown.taxCents;
-  const total = feeBreakdown.totalCents;
+  const total = Math.max(0, subtotalAfterLineDiscounts + service + tax);
 
   useEffect(() => {
     setSelectedLine((i) => {
@@ -357,24 +357,13 @@ export function PosTerminalPage() {
 
   const addItemToCart = (item: CatalogItem) => {
     if (isItemUnavailable(item)) {
-      setCheckoutNotice(`${item.name} is unavailable.`);
+      setCheckoutNotice(`${item.name} is unavailable right now.`);
       return;
     }
-    setCart((c) => {
-      const existingIdx = c.findIndex(
-        (l) => l.itemId === item.id && !l.itemId.startsWith("misc-"),
-      );
-      if (existingIdx >= 0) {
-        const next = c.map((l, i) =>
-          i === existingIdx ? { ...l, qty: l.qty + 1 } : l,
-        );
-        setSelectedLine(existingIdx);
-        return next;
-      }
-      const line = cartLineFromItem(item, 1);
-      setSelectedLine(c.length);
-      return [...c, line];
-    });
+    const line = cartLineFromItem(item, 1);
+    const newIndex = cart.length;
+    setCart((c) => [...c, line]);
+    setSelectedLine(newIndex);
   };
 
   const editingLine =
@@ -564,32 +553,12 @@ export function PosTerminalPage() {
     }
     const apiItems = cart
       .filter((line) => !line.itemId.startsWith("misc-"))
-      .reduce<
-        Array<{
-          menuItemId: string;
-          quantity: number;
-          modifiers: Record<string, unknown>;
-          notes?: string;
-        }>
-      >((acc, line) => {
-        const existing = acc.find((row) => row.menuItemId === line.itemId);
-        if (existing) {
-          existing.quantity += line.qty;
-          return acc;
-        }
-        acc.push({
-          menuItemId: line.itemId,
-          quantity: line.qty,
-          modifiers: {
-            lineConfig: line.lineConfig,
-            ...(line.lineDiscountPercent != null && line.lineDiscountPercent > 0
-              ? { lineDiscountPercent: line.lineDiscountPercent }
-              : {}),
-          },
-          notes: line.note,
-        });
-        return acc;
-      }, []);
+      .map((line) => ({
+        menuItemId: line.itemId,
+        quantity: line.qty,
+        modifiers: { lineConfig: line.lineConfig },
+        notes: line.note,
+      }));
     if (apiItems.length === 0) {
       setCheckoutNotice("Misc-only carts cannot sync — add menu items.");
       return;
@@ -618,7 +587,7 @@ export function PosTerminalPage() {
       }
       const amount = parseApiMoney(order.totalAmount);
       if (amount <= 0) {
-        setCheckoutNotice("Order total is zero — cannot pay.");
+        setCheckoutNotice("Order total is zero - cannot pay.");
         return;
       }
       await processPaymentOnApi({
@@ -813,7 +782,10 @@ export function PosTerminalPage() {
     if (LEDGER_LEAF_IDS.has(activeLeafId)) {
       return <LedgerModuleView key={activeLeafId} leafId={activeLeafId} />;
     }
-    if (HR_LEAF_IDS.has(activeLeafId)) {
+    if (HR_DIRECTORY_LEAF_IDS.has(activeLeafId)) {
+      return <EmployeeDirectoryView />;
+    }
+    if (HR_PAYROLL_LEAF_IDS.has(activeLeafId)) {
       return <EmployeeModuleView />;
     }
 
@@ -849,7 +821,6 @@ export function PosTerminalPage() {
   };
 
   const orderRef = 1000 + tableNumber;
-
   const branchLabel = activeBranch?.name ?? "Restaurant";
   const branchAddress = activeBranch?.address ?? null;
 
@@ -1376,7 +1347,7 @@ export function PosTerminalPage() {
           }}
         >
           <div
-            className={`max-h-[704px] w-full max-w-[460px] overflow-y-auto rounded-[20px] bg-[var(--pos-card)] p-5 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
+            className={`max-h-[min(88vh,760px)] w-full max-w-[460px] overflow-y-auto rounded-[20px] bg-[var(--pos-card)] p-5 ${border0} [border-width:1.5px] [border-color:var(--pos-border-strong)]`}
           >
             <div className="flex items-start justify-between gap-3">
               <div>

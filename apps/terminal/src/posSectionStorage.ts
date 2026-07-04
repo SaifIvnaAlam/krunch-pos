@@ -47,11 +47,11 @@ const LEGACY_LEAF_ID_MAP: Record<string, string> = {
   "fd-items": "fd-menu",
   "fd-addon": "fd-menu",
   "lm-suppliers": "lm-management",
-  "hr-directory": "hr-payroll",
-  "hr-roster": "hr-payroll",
-  "hr-leave": "hr-payroll",
-  "hr-schedule": "hr-payroll",
-  "hr-attendance": "hr-payroll",
+  "hr-directory": "hr-employees",
+  "hr-roster": "hr-employees",
+  "hr-leave": "hr-employees",
+  "hr-schedule": "hr-employees",
+  "hr-attendance": "hr-employees",
   "mo-online": "mo-list",
 };
 
