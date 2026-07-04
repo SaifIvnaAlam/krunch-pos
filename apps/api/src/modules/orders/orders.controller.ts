@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
+import { CreateOrderDto } from './dto/create-order.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequirePermission } from '../rbac/decorators/require-permission.decorator';
@@ -46,7 +47,7 @@ export class OrdersController {
   @RequirePermission('orders:create')
   @ApiOperation({ summary: 'Create order' })
   @ApiResponse({ status: 201, description: 'Order created' })
-  async createOrder(@Body() dto: { tableNumber?: string; items: Array<{ menuItemId: string; quantity: number; modifiers?: Record<string, unknown>; notes?: string }> }, @Req() req: Request) {
+  async createOrder(@Body() dto: CreateOrderDto, @Req() req: Request) {
     const user = req.user as JwtPayload;
     return this.ordersService.createOrder(dto, user.staffId, user.branchId, user.terminalId);
   }

@@ -149,7 +149,7 @@ export function SignInPage() {
                 Steak & Marrow
               </p>
               <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
-                Point of sale · Terminal
+                Terminal
               </p>
             </div>
           </div>

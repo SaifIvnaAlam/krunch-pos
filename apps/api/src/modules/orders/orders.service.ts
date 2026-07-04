@@ -11,16 +11,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { asJsonInput } from '../../common/prisma-json';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
-
-interface CreateOrderDto {
-  tableNumber?: string;
-  items: Array<{
-    menuItemId: string;
-    quantity: number;
-    modifiers?: Record<string, unknown>;
-    notes?: string;
-  }>;
-}
+import { computeOrderTotal } from '../../common/order-fees';
+import { CreateOrderDto } from './dto/create-order.dto';
 
 interface ModifyOrderDto {
   addItems?: Array<{
@@ -143,11 +135,11 @@ export class OrdersService {
 
     const menuItemMap = new Map(menuItems.map((mi) => [mi.id, mi]));
 
-    let totalAmount = new Decimal(0);
+    let subtotal = new Decimal(0);
     const orderItemCreates = dto.items.map((item) => {
       const menuItem = menuItemMap.get(item.menuItemId)!;
       const lineTotal = menuItem.price.mul(item.quantity);
-      totalAmount = totalAmount.add(lineTotal);
+      subtotal = subtotal.add(lineTotal);
       return {
         menuItem: { connect: { id: item.menuItemId } },
         quantity: item.quantity,
@@ -156,6 +148,8 @@ export class OrdersService {
         notes: item.notes ?? null,
       };
     });
+
+    const totalAmount = computeOrderTotal(subtotal, dto.applyServiceCharge ?? false);
 
     const order = await this.prisma.order.create({
       data: {
@@ -175,7 +169,13 @@ export class OrdersService {
       branchId,
       terminalId,
       result: 'SUCCESS',
-      metadata: { tableNumber: dto.tableNumber, itemCount: dto.items.length, totalAmount: totalAmount.toString() },
+      metadata: {
+        tableNumber: dto.tableNumber,
+        itemCount: dto.items.length,
+        subtotal: subtotal.toString(),
+        applyServiceCharge: dto.applyServiceCharge ?? false,
+        totalAmount: totalAmount.toString(),
+      },
     });
 
     return order;

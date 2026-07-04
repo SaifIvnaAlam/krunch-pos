@@ -33,7 +33,7 @@ export function SplashScreen() {
               Steak & Marrow
             </h1>
             <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
-              Point of sale · Terminal
+              Terminal
             </p>
             <p className="mt-6 text-[13px] font-normal leading-relaxed text-[var(--pos-text-2)]">
               Restaurant point of sale
