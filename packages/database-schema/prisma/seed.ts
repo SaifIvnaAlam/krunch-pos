@@ -122,7 +122,7 @@ const PORTAL_ROLE_ASSIGNMENT_ID = 'staff-azmain-fahim-role';
 function readSeedPortalConfig(): SeedPortalConfig {
   const email = process.env.SEED_OWNER_EMAIL?.trim() || 'azmainfahimanjum@gmail.com';
   const password = process.env.SEED_OWNER_PASSWORD?.trim();
-  const name = process.env.SEED_OWNER_NAME?.trim() || 'Azmain Fahim Anjum';
+  const name = process.env.SEED_OWNER_NAME?.trim().replace(/^["']|["']$/g, '') || 'Azmain Fahim Anjum';
   const pin = process.env.SEED_STAFF_PIN?.trim();
 
   if (password) {
