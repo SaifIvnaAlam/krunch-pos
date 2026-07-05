@@ -24,7 +24,7 @@ export class LedgerController {
 
   @Get('workspace')
   @RequirePermission('daily_entry:read')
-  @ApiOperation({ summary: 'Get ledger books workspace for the signed-in branch' })
+  @ApiOperation({ summary: 'Get cashbooks workspace for the signed-in branch' })
   getWorkspace(@Req() req: Request) {
     const user = req.user as JwtPayload;
     return this.ledger.getForBranch(user.branchId);
@@ -32,7 +32,7 @@ export class LedgerController {
 
   @Put('workspace')
   @RequirePermission('daily_entry:write')
-  @ApiOperation({ summary: 'Save ledger books workspace for the signed-in branch' })
+  @ApiOperation({ summary: 'Save cashbooks workspace for the signed-in branch' })
   upsertWorkspace(@Req() req: Request, @Body() dto: UpsertLedgerWorkspaceDto) {
     const user = req.user as JwtPayload;
     return this.ledger.upsertForBranch(user.branchId, dto);

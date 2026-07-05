@@ -1,4 +1,4 @@
-# Local Postgres for development — matches apps/api/.env.example DATABASE_URL
+# Optional isolated Postgres for npm run dev:local-stack — NOT used by default dev (prod DB via prod API).
 #
 # Postgres is NOT a website: port 5433 is the DB wire protocol only (browser → ERR_EMPTY_RESPONSE).
 # Web UI: start adminer and open http://localhost:5050 — System: PostgreSQL, Server: postgres,

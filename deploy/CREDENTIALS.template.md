@@ -9,7 +9,7 @@ cp deploy/CREDENTIALS.template.md deploy/CREDENTIALS.local.md
 | What | Where to store |
 |------|----------------|
 | VPS SSH password, DB, JWT, MinIO | `deploy/.env` |
-| Portal owner email/password/PIN | `deploy/.env` (`SEED_OWNER_*`, `SEED_STAFF_PIN`) + copy to `deploy/CREDENTIALS.local.md` |
+| Portal owner email/password/PIN | First-deploy bootstrap in `deploy/.env` (`SEED_OWNER_*`); **live users live in the `Staff` table** |
 | Public URLs & runbook | `deploy/README.md` |
 
 ## Quick deploy

@@ -86,18 +86,36 @@ This script:
 - Syncs Postgres role password with `deploy/.env` (avoids API crash-loop on re-deploy)
 - Runs Prisma seed (portal users)
 
-### Portal users (seeded)
+### Portal users
 
-Set in `deploy/.env` before deploy (see `SEED_OWNER_*` in `.env.example`):
+**Runtime auth uses the `Staff` table in Postgres** (`email` + bcrypt `passwordHash`). The `.env` file does not store login credentials for day-to-day use.
+
+| Where | Purpose |
+|-------|---------|
+| `Staff` table | All portal users (Azmain and any future accounts). Passwords are hashed — never plaintext. |
+| `SEED_OWNER_*` in `deploy/.env` | **First deploy only** — creates/updates one bootstrap owner when `prisma db seed` runs. |
+
+After the first owner exists, create more users via the API (requires `staff:create`):
+
+```bash
+curl -X POST "https://${POS_DOMAIN}/api/v1/staff" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Jane Manager","email":"jane@example.com","password":"SecurePass123","pin":"5678","primaryBranchId":"a0000000-0000-4000-8000-000000000001"}'
+```
+
+Reset a password: `PATCH /api/v1/staff/:id` with `{ "password": "NewPass123!" }`.
+
+Bootstrap seed variables (see `SEED_OWNER_*` in `.env.example`):
 
 | Variable | Purpose |
 |----------|---------|
-| `SEED_OWNER_NAME` | Display name (default: Azmain Fahim Anjum) |
-| `SEED_OWNER_EMAIL` | Email used on the terminal sign-in page (default: azmainfahimanjum@gmail.com) |
-| `SEED_OWNER_PASSWORD` | Portal password (min 8 chars; required in production) |
+| `SEED_OWNER_NAME` | Display name for the first seeded owner |
+| `SEED_OWNER_EMAIL` | Email for the first seeded owner |
+| `SEED_OWNER_PASSWORD` | Password for the first seeded owner (min 8 chars; required in production seed) |
 | `SEED_BRANCH_ADDRESS` | Optional branch address; omit to leave blank |
 | `SEED_BRANCH_TIMEZONE` | Branch timezone (default: `Asia/Dhaka`; falls back to `GENERIC_TIMEZONE`) |
-| `SEED_STAFF_PIN` | Optional staff PIN; random if omitted |
+| `SEED_STAFF_PIN` | Optional staff PIN for seeded owner; random if omitted |
 
 Production seed **fails** without `SEED_OWNER_PASSWORD`. Passwords are not logged.
 

@@ -7,7 +7,8 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig(async ({ mode }) => {
   const env = loadEnv(mode, __dirname, "");
   const apiProxyTarget =
-    env.DEV_API_PROXY_TARGET?.trim() || "http://localhost:3001";
+    env.DEV_API_PROXY_TARGET?.trim() ||
+    "https://steakandmarrow.inventivelab.bd";
   const apiProxySecure = apiProxyTarget.startsWith("https://");
 
   // @ts-expect-error process is a nodejs global
@@ -32,7 +33,7 @@ export default defineConfig(async ({ mode }) => {
     strictPort: false,
     host: host || false,
     // Same-origin API in browser dev (VITE_API_URL=/api/v1).
-    // Default: local Nest on :3001. Set DEV_API_PROXY_TARGET to production URL to use prod DB.
+    // Default: production API (prod DB). Set DEV_API_PROXY_TARGET=http://localhost:3001 for isolated local stack.
     proxy: {
       "/api": {
         target: apiProxyTarget,

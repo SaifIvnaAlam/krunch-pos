@@ -3,14 +3,11 @@ import {
   BarChart3,
   BookMarked,
   BookOpen,
-  ClipboardList,
   LineChart,
   NotebookPen,
   Receipt,
-  Salad,
   TrendingUp,
   UserRound,
-  UtensilsCrossed,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -20,8 +17,6 @@ export type NavLeaf = {
   icon: LucideIcon;
   addon?: boolean;
   beta?: boolean;
-  /** When true, leaf stays routable but is omitted from sidebar / mobile nav. */
-  hidden?: boolean;
 };
 
 export type NavBranch = {
@@ -31,7 +26,6 @@ export type NavBranch = {
   icon: LucideIcon;
   addon?: boolean;
   beta?: boolean;
-  hidden?: boolean;
   children: NavNode[];
 };
 
@@ -48,10 +42,10 @@ const OFFICE_NAV_NODES: NavNode[] = [
   {
     kind: "branch",
     id: "lm-branch",
-    label: "Ledger",
+    label: "Cashbooks",
     icon: BookMarked,
     children: [
-      { kind: "leaf", id: "lm-management", label: "Ledger books", icon: BookOpen },
+      { kind: "leaf", id: "lm-management", label: "Manage books", icon: BookOpen },
       { kind: "leaf", id: "lm-ledger", label: "Bills & payments", icon: Receipt },
     ],
   },
@@ -78,34 +72,13 @@ const OFFICE_NAV_NODES: NavNode[] = [
   },
 ];
 
-const OPERATIONS_NAV_NODES: NavNode[] = [
-  { kind: "leaf", id: "menu", label: "Take orders", icon: UtensilsCrossed, hidden: true },
-  { kind: "leaf", id: "mo-list", label: "Orders", icon: ClipboardList, hidden: true },
-  { kind: "leaf", id: "fd-menu", label: "Menu setup", icon: Salad, hidden: true },
-];
-
 export const POS_NAV_SECTIONS: NavSection[] = [
   { id: "office", label: "", nodes: OFFICE_NAV_NODES },
-  { id: "operations", label: "Operations", nodes: OPERATIONS_NAV_NODES },
 ];
-
-export const HIDDEN_NAV_LEAF_IDS = new Set(
-  OPERATIONS_NAV_NODES.filter((n): n is NavLeaf => n.kind === "leaf" && n.hidden === true).map(
-    (n) => n.id,
-  ),
-);
-
-function isNavNodeVisible(node: NavNode): boolean {
-  if (node.hidden) return false;
-  if (node.kind === "branch") {
-    return filterVisibleNavNodes(node.children).length > 0;
-  }
-  return true;
-}
 
 export function filterVisibleNavNodes(nodes: NavNode[]): NavNode[] {
   return nodes
-    .filter(isNavNodeVisible)
+    .filter((node) => node.kind !== "branch" || filterVisibleNavNodes(node.children).length > 0)
     .map((node) =>
       node.kind === "branch"
         ? { ...node, children: filterVisibleNavNodes(node.children) }
@@ -113,7 +86,7 @@ export function filterVisibleNavNodes(nodes: NavNode[]): NavNode[] {
     );
 }
 
-/** Sidebar / mobile nav sections (hidden leaves omitted; empty sections dropped). */
+/** Sidebar / mobile nav sections (empty sections dropped). */
 export function getVisibleNavSections(): NavSection[] {
   return POS_NAV_SECTIONS.map((section) => ({
     ...section,
@@ -137,9 +110,6 @@ export function leavesFromNodes(nodes: NavNode[]): NavLeaf[] {
 export function flattenNavLeaves(): NavLeaf[] {
   return POS_NAV_SECTIONS.flatMap((s) => leavesFromNodes(s.nodes));
 }
-
-/** IDs that open the POS menu + cart surface. */
-export const MENU_VIEW_IDS = new Set(["menu"]);
 
 export function collectAllLeafIds(): string[] {
   return flattenNavLeaves().map((n) => n.id);
@@ -167,34 +137,4 @@ export function branchPathToLeaf(leafId: string): string[] {
     if (walk(s.nodes, [])) break;
   }
   return path;
-}
-
-export function findLeafMeta(id: string): {
-  label: string;
-  icon: LucideIcon;
-  addon?: boolean;
-  beta?: boolean;
-} | null {
-  function walk(nodes: NavNode[]): {
-    label: string;
-    icon: LucideIcon;
-    addon?: boolean;
-    beta?: boolean;
-  } | null {
-    for (const n of nodes) {
-      if (n.kind === "leaf" && n.id === id) {
-        return { label: n.label, icon: n.icon, addon: n.addon, beta: n.beta };
-      }
-      if (n.kind === "branch") {
-        const hit = walk(n.children);
-        if (hit) return hit;
-      }
-    }
-    return null;
-  }
-  for (const s of POS_NAV_SECTIONS) {
-    const hit = walk(s.nodes);
-    if (hit) return hit;
-  }
-  return null;
 }

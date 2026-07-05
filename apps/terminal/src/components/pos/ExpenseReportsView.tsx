@@ -6,7 +6,7 @@ import {
   useDailyEntryMap,
   type DailyEntryRow,
 } from "@/features/daily-entry";
-import { expenseSavedLineLedgerLabel } from "../../lib/ledgerLineReportLabels";
+import { expenseSavedLineLedgerReportLabel } from "../../lib/ledgerLineReportLabels";
 
 const MONTH_ABBR = [
   "Jan",
@@ -48,8 +48,6 @@ type FlatLine = {
   amount: number;
   receiptCount: number;
   ledgerEntryLabel: string;
-  /** null when this row is a legacy single total with no line-level detail. */
-  postedToLedger: boolean | null;
   stableKey: string;
 };
 
@@ -59,15 +57,14 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
       const kind = savedLineKind(line);
       const description =
         kind === "vendor"
-          ? (line.vendor ?? "").trim() || "Ledger book"
+          ? (line.vendor ?? "").trim() || "Cashbook"
           : (line.label ?? "").trim() || "Regular expense";
       const note =
         kind === "vendor"
           ? (line.ledgerNote ?? "").trim()
           : (line.note ?? "").trim();
       const lineKindLabel =
-        kind === "vendor" ? "Ledger book" : "Regular expense";
-      const postedToLedger = kind === "vendor" ? Boolean(line.ledgerLink) : null;
+        kind === "vendor" ? "Cashbook" : "Regular expense";
       const idPart =
         line.lineId && String(line.lineId).trim().length > 0
           ? String(line.lineId).trim()
@@ -79,8 +76,7 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
         note,
         amount: line.amount,
         receiptCount: line.receiptDataUrls?.length ?? 0,
-        ledgerEntryLabel: expenseSavedLineLedgerLabel(line),
-        postedToLedger,
+        ledgerEntryLabel: expenseSavedLineLedgerReportLabel(line),
         stableKey: `${r.date}:${idPart}`,
       };
     });
@@ -95,7 +91,6 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
         amount: r.expenses ?? 0,
         receiptCount: 0,
         ledgerEntryLabel: "—",
-        postedToLedger: null,
         stableKey: `${r.date}:legacy-total`,
       },
     ];
@@ -111,7 +106,6 @@ type ReportRow = {
   description: string;
   note: string;
   ledgerEntryLabel: string;
-  postedLabel: string;
   amount: number;
   receiptCount: number;
   enteredBy: string;
@@ -125,9 +119,6 @@ function buildReportRows(saved: DailyEntryRow[]): ReportRow[] {
     const displayDate = formatDateKeyAsDisplay(r.date);
     const enteredBy = (r.enteredBy ?? "").trim() || "—";
     lines.forEach((line) => {
-      let postedLabel = "—";
-      if (line.postedToLedger === true) postedLabel = "Yes";
-      else if (line.postedToLedger === false) postedLabel = "No";
       out.push({
         id: line.stableKey,
         dateKey: r.date,
@@ -136,7 +127,6 @@ function buildReportRows(saved: DailyEntryRow[]): ReportRow[] {
         description: line.description,
         note: line.note,
         ledgerEntryLabel: line.ledgerEntryLabel,
-        postedLabel,
         amount: line.amount,
         receiptCount: line.receiptCount,
         enteredBy,
@@ -155,7 +145,6 @@ function rowMatchesQuery(row: ReportRow, q: string): boolean {
     row.note.toLowerCase(),
     row.lineKindLabel.toLowerCase(),
     row.ledgerEntryLabel.toLowerCase(),
-    row.postedLabel.toLowerCase(),
     row.enteredBy.toLowerCase(),
   ].join(" ");
   return hay.includes(q);
@@ -190,8 +179,8 @@ export function ExpenseReportsView() {
         <div>
           <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Expense reports</h1>
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            One row per saved expense line (ledger books and regular), including ledger entry type,
-            Bills &amp; payments sync, and receipts — aligned with Daily Entry Form.
+            One row per saved expense line (cashbooks and regular), including ledger entry type
+            and receipts — aligned with Daily Entry Form.
           </p>
         </div>
       </div>
@@ -206,7 +195,7 @@ export function ExpenseReportsView() {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search date, book, note, ledger type, posted, entered by…"
+            placeholder="Search date, book, note, ledger entry, entered by…"
             className="h-9 w-full cursor-text rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none"
           />
         </label>
@@ -235,16 +224,18 @@ export function ExpenseReportsView() {
               : "No expenses match your search."}
           </div>
         ) : (
-          <table className="w-full min-w-[980px] border-collapse text-center">
+          <table className="w-full min-w-[880px] border-collapse text-center">
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)]">
                 <th className={`whitespace-nowrap ${thBase}`}>Date</th>
                 <th className={`min-w-[120px] ${thBase}`}>Line kind</th>
                 <th className={`min-w-[160px] text-left ${thBase}`}>Description</th>
                 <th className={`min-w-[120px] text-left ${thBase}`}>Note</th>
-                <th className={`min-w-[100px] ${thBase}`}>Ledger entry</th>
-                <th className={`whitespace-nowrap ${thBase}`} title="Posted to Bills &amp; payments from Daily Entry">
-                  Posted
+                <th
+                  className={`min-w-[120px] ${thBase}`}
+                  title="Ledger type when synced to Bills &amp; payments; “not posted” if sync failed"
+                >
+                  Ledger entry
                 </th>
                 <th className={thBase}>Amount</th>
                 <th className={`w-24 ${thBase}`}>Receipts</th>
@@ -268,7 +259,6 @@ export function ExpenseReportsView() {
                     {row.note ? row.note : "—"}
                   </td>
                   <td className="px-3 py-2 text-[var(--pos-text-2)]">{row.ledgerEntryLabel}</td>
-                  <td className="px-3 py-2 text-[var(--pos-text-2)]">{row.postedLabel}</td>
                   <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
                     {formatMoney(row.amount)}
                   </td>
@@ -285,7 +275,7 @@ export function ExpenseReportsView() {
               <tr>
                 <th
                   className="px-3 py-2 text-right text-[11px] font-semibold text-[var(--pos-text-1)]"
-                  colSpan={6}
+                  colSpan={5}
                   scope="row"
                 >
                   Total (filtered)

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   ForbiddenException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
@@ -12,10 +13,21 @@ import { AuditService } from '../audit/audit.service';
 
 const BCRYPT_SALT_ROUNDS = 10;
 const PBKDF2_ITERATIONS = 100000;
+const MIN_PORTAL_PASSWORD_LENGTH = 8;
+
+function assertPortalPassword(password: string): void {
+  if (password.length < MIN_PORTAL_PASSWORD_LENGTH) {
+    throw new BadRequestException(
+      `Portal password must be at least ${MIN_PORTAL_PASSWORD_LENGTH} characters.`,
+    );
+  }
+}
 
 interface CreateStaffDto {
   name: string;
   email?: string;
+  /** Portal sign-in password (min 8 chars). Required when email is set. Stored as bcrypt hash only. */
+  password?: string;
   pin: string;
   nfcCardUid?: string;
   primaryBranchId?: string;
@@ -24,6 +36,8 @@ interface CreateStaffDto {
 interface UpdateStaffDto {
   name?: string;
   email?: string;
+  /** Set or reset portal sign-in password (min 8 chars). Stored as bcrypt hash only. */
+  password?: string;
   pin?: string;
   nfcCardUid?: string;
   isActive?: boolean;
@@ -149,6 +163,16 @@ export class StaffService {
       if (existing) {
         throw new ConflictException('Email already in use');
       }
+      if (!dto.password?.trim()) {
+        throw new BadRequestException('Password is required when email is set.');
+      }
+    } else if (dto.password?.trim()) {
+      throw new BadRequestException('Email is required when setting a portal password.');
+    }
+
+    const portalPassword = dto.password?.trim();
+    if (portalPassword) {
+      assertPortalPassword(portalPassword);
     }
 
     const pinHash = await bcrypt.hash(dto.pin, BCRYPT_SALT_ROUNDS);
@@ -159,6 +183,9 @@ export class StaffService {
       data: {
         name: dto.name,
         email: dto.email,
+        passwordHash: portalPassword
+          ? await bcrypt.hash(portalPassword, BCRYPT_SALT_ROUNDS)
+          : undefined,
         pinHash,
         pbkdf2Hash,
         pbkdf2Salt: pbkdf2Salt.toString('hex'),
@@ -198,6 +225,16 @@ export class StaffService {
     if (dto.email !== undefined) updateData['email'] = dto.email;
     if (dto.nfcCardUid !== undefined) updateData['nfcCardUid'] = dto.nfcCardUid;
     if (dto.isActive !== undefined) updateData['isActive'] = dto.isActive;
+
+    if (dto.password !== undefined) {
+      const portalPassword = dto.password.trim();
+      if (!portalPassword) {
+        updateData['passwordHash'] = null;
+      } else {
+        assertPortalPassword(portalPassword);
+        updateData['passwordHash'] = await bcrypt.hash(portalPassword, BCRYPT_SALT_ROUNDS);
+      }
+    }
 
     if (dto.pin !== undefined) {
       updateData['pinHash'] = await bcrypt.hash(dto.pin, BCRYPT_SALT_ROUNDS);

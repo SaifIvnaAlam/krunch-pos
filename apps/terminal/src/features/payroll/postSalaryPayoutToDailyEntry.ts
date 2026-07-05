@@ -87,7 +87,7 @@ function buildStaffExpenseLine(params: {
   };
 }
 
-/** Posts one salary-register payout to Daily Entry (expenses + staff ledger). */
+/** Posts one salary-register payout to Daily Entry (expenses + staff cashbook). */
 export async function postSalaryPayoutToDailyEntry(
   params: PostSalaryPayoutParams,
 ): Promise<PostSalaryPayoutResult> {
@@ -110,7 +110,7 @@ export async function postSalaryPayoutToDailyEntry(
   if (!supplierId) {
     return {
       ok: false,
-      message: `Could not find ledger book “${bookName}”. Create it in Employee Management.`,
+      message: `Could not find cashbook “${bookName}”. Create it in Employee Management.`,
     };
   }
 
@@ -140,7 +140,7 @@ export async function postSalaryPayoutToDailyEntry(
   if (!ledgerRes.ok) {
     return {
       ok: false,
-      message: "Could not post to the staff ledger — check the amount and ledger book.",
+      message: "Could not post to the staff cashbook — check the amount and cashbook.",
     };
   }
 

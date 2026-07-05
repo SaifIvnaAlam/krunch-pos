@@ -74,4 +74,4 @@ docker compose -f docker-compose.prod.yml --env-file .env exec -T api sh -c \
 
 echo ""
 echo "Updated. POS: https://${POS_DOMAIN}"
-echo "Test: curl -sS -X POST https://${POS_DOMAIN}/api/v1/auth/login/restaurants -H 'Content-Type: application/json' -d '{\"email\":\"azmainfahimanjum@gmail.com\"}'"
+echo "Test: curl -sS -X POST https://${POS_DOMAIN}/api/v1/auth/login/restaurants -H 'Content-Type: application/json' -d '{\"email\":\"${SEED_OWNER_EMAIL}\"}'"

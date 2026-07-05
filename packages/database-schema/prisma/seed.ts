@@ -116,13 +116,13 @@ type SeedPortalConfig = {
   pin: string;
 };
 
-const PORTAL_STAFF_ID = 'staff-azmain-fahim';
-const PORTAL_ROLE_ASSIGNMENT_ID = 'staff-azmain-fahim-role';
+const PORTAL_STAFF_ID = 'staff-seed-owner';
+const PORTAL_ROLE_ASSIGNMENT_ID = 'staff-seed-owner-role';
 
 function readSeedPortalConfig(): SeedPortalConfig {
-  const email = process.env.SEED_OWNER_EMAIL?.trim() || 'azmainfahimanjum@gmail.com';
+  const email = process.env.SEED_OWNER_EMAIL?.trim() || 'owner@example.com';
   const password = process.env.SEED_OWNER_PASSWORD?.trim();
-  const name = process.env.SEED_OWNER_NAME?.trim().replace(/^["']|["']$/g, '') || 'Azmain Fahim Anjum';
+  const name = process.env.SEED_OWNER_NAME?.trim().replace(/^["']|["']$/g, '') || 'Example Owner';
   const pin = process.env.SEED_STAFF_PIN?.trim();
 
   if (password) {
@@ -271,6 +271,7 @@ async function main(): Promise<void> {
   await removeDemoSeedData();
 
   const portalConfig = readSeedPortalConfig();
+  // Bootstrap only: upserts the first portal owner into Staff (passwordHash). Ongoing users → POST /staff.
   const pinHash = await bcrypt.hash(portalConfig.pin, BCRYPT_SALT_ROUNDS);
   const portalPasswordHash = await bcrypt.hash(portalConfig.password, BCRYPT_SALT_ROUNDS);
 

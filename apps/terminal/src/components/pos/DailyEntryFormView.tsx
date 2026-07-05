@@ -68,7 +68,7 @@ type ExpenseLineDraft = {
   receiptDataUrls: string[];
   /** Vendor lines: optional Bills & payments row on save (same book, amount, entry date). */
   ledgerKind: "" | NonNullable<ExpenseLineSaved["ledgerKind"]>;
-  /** Staff ledger books — salary, service charge, bonus, overtime. When set, line posts like Ledger Management staff flow. */
+  /** Staff cashbooks — salary, service charge, bonus, overtime. When set, line posts like Cashbooks staff flow. */
   ledgerEmployeeLineKind: "" | EmployeeLedgerLineKind;
   ledgerNote: string;
 };
@@ -376,7 +376,7 @@ function findFirstExpenseValidationError(
     if (line.kind === "vendor") {
       if (parseAmount(line.amount) > 0 && !line.vendor.trim()) {
         return {
-          message: "Select or enter a ledger book name, or remove this row.",
+          message: "Select or enter a cashbook name, or remove this row.",
           lineId: line.id,
           part: "vendor",
         };
@@ -408,7 +408,7 @@ function findFirstExpenseValidationError(
       if (isEmp ? line.ledgerEmployeeLineKind : line.ledgerKind) {
         if (!supplierId) {
           return {
-            message: "Ledger posting needs a book name that matches Ledger Management.",
+            message: "Cashbook posting needs a book name that matches Cashbooks.",
             lineId: line.id,
             part: "vendor",
           };
@@ -1372,7 +1372,7 @@ export function DailyEntryFormView() {
       setPathaoSale(rnd());
       setFoodiSale(rnd());
       setFoodpandaSale(rnd());
-      const ledgerSample = getLedgerBookNamesSnapshot("all")[0] ?? "Ledger book";
+      const ledgerSample = getLedgerBookNamesSnapshot("all")[0] ?? "Cashbook";
       setExpenseLines([
         { ...newVendorExpenseLine(), vendor: ledgerSample, amount: rnd() },
         {
@@ -2927,7 +2927,7 @@ export function DailyEntryFormView() {
                                   }
                                 }
                               }}
-                              aria-label="Ledger book"
+                              aria-label="Cashbook"
                               aria-invalid={vendorErr ? true : undefined}
                             >
                               <option value="">Book…</option>
@@ -2946,7 +2946,7 @@ export function DailyEntryFormView() {
                                 placeholder="Name"
                                 className={`${textInputClass} min-h-8 min-w-[4.5rem] shrink-0 flex-1 py-0 text-[11px]`}
                                 autoComplete="off"
-                                aria-label="Custom ledger book name"
+                                aria-label="Custom cashbook name"
                               />
                             ) : null}
                           </div>
@@ -3056,7 +3056,7 @@ export function DailyEntryFormView() {
                               onClick={() => dispatchPosSelectLeaf("lm-management")}
                               className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
                             >
-                              ledger books
+                              cashbooks
                             </button>{" "}
                             to enable type and note.
                           </p>
@@ -3089,7 +3089,7 @@ export function DailyEntryFormView() {
                     onClick={addVendorExpenseLine}
                     className="w-full flex-1 rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30"
                   >
-                    Add ledger book line
+                    Add cashbook line
                   </button>
                 </div>
               </div>
@@ -3293,7 +3293,7 @@ export function DailyEntryFormView() {
                           const kind = savedLineKind(line);
                           const title =
                             kind === "vendor"
-                              ? (line.vendor ?? "").trim() || "Ledger book"
+                              ? (line.vendor ?? "").trim() || "Cashbook"
                               : (line.label ?? "").trim() || "Regular expense";
                           const noteText =
                             kind === "vendor"
@@ -3312,7 +3312,7 @@ export function DailyEntryFormView() {
                                 {title}
                               </td>
                               <td className="whitespace-nowrap px-2 py-1.5 text-[var(--pos-text-2)]">
-                                {kind === "vendor" ? "Ledger book" : "Regular"}
+                                {kind === "vendor" ? "Cashbook" : "Regular"}
                               </td>
                               <td className="max-w-[12rem] px-2 py-1.5 break-words text-[var(--pos-text-2)]">
                                 {noteText ? noteText : "—"}
@@ -3595,7 +3595,7 @@ export function DailyEntryFormView() {
                 const kind = savedLineKind(line);
                 const title =
                   kind === "vendor"
-                    ? (line.vendor ?? "").trim() || "Ledger book"
+                    ? (line.vendor ?? "").trim() || "Cashbook"
                     : (line.label ?? "").trim() || "Regular expense";
                 const lineNote =
                   kind === "vendor"

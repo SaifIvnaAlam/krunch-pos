@@ -73,7 +73,7 @@ function ledgerTabFromLeafId(leafId: string): LedgerPanelTab {
   return leafId === "lm-ledger" ? "bills" : "books";
 }
 
-/** Why this ledger book exists — vendor AP, owner equity/draws, or employee advances/payables. */
+/** Why this cashbook exists — vendor AP, owner equity/draws, or employee advances/payables. */
 export type { LedgerBookPurpose };
 
 export const LEDGER_BOOK_PURPOSE_OPTIONS: {
@@ -85,7 +85,7 @@ export const LEDGER_BOOK_PURPOSE_OPTIONS: {
   { value: "employees", label: "Employees" },
 ];
 
-/** Ledger book title prefix for employees (matches owner-style “Owner — …” naming). */
+/** Cashbook title prefix for employees (matches owner-style “Owner — …” naming). */
 export const EMPLOYEE_LEDGER_BOOK_NAME_PREFIX = "Staff — ";
 
 export type { EmployeeLedgerLineKind };
@@ -137,12 +137,12 @@ function nextId(prefix: string, existing: string[]): string {
   return `${prefix}-${String(next).padStart(4, "0")}`;
 }
 
-/** Ledger book display name for a staff member. */
+/** Cashbook display name for a staff member. */
 export function employeeLedgerBookName(fullName: string): string {
   return `${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}${fullName.trim()}`;
 }
 
-/** Create or return the Staff ledger book for this employee (session workspace). */
+/** Create or return the Staff cashbook for this employee (session workspace). */
 export function upsertEmployeeLedgerBook(employee: {
   name: string;
   phone?: string;
@@ -179,7 +179,7 @@ function useWorkspace(): Workspace {
 let ledgerBookNamesCacheKey = "";
 let ledgerBookNamesCache: string[] = [];
 
-/** Sorted unique names from Ledger books — for Daily Entry vendor lines and pickers. */
+/** Sorted unique names from Cashbooks — for Daily Entry vendor lines and pickers. */
 export function subscribeLedgerWorkspace(cb: () => void): () => void {
   return subscribeWorkspace(cb);
 }
@@ -200,7 +200,7 @@ export function getLedgerBookNamesSnapshot(
   return ledgerBookNamesCache;
 }
 
-/** Match a ledger book display name to its id (for Daily Entry lines). */
+/** Match a cashbook display name to its id (for Daily Entry lines). */
 export function resolveLedgerSupplierIdByBookName(bookName: string): string | null {
   const t = bookName.trim();
   if (!t) return null;
@@ -217,7 +217,7 @@ function isEmployeesBookSupplierId(supplierId: string): boolean {
   return supplierBookPurpose(supplierId) === "employees";
 }
 
-/** Daily Entry / reports: true when this supplier id is a Staff (employees) ledger book. */
+/** Daily Entry / reports: true when this supplier id is a Staff (employees) cashbook. */
 export function isEmployeesLedgerSupplierId(supplierId: string): boolean {
   return isEmployeesBookSupplierId(supplierId);
 }
@@ -492,14 +492,14 @@ function LedgerEntryDetailContent({
       <>
         <div className="mb-4 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2.5">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]">
-            Staff ledger
+            Staff cashbook
           </p>
           <p className="mt-1 text-[14px] font-semibold text-[var(--pos-text-1)]">{empKind}</p>
           <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">{flowLabel}</p>
         </div>
         <dl className="space-y-3 text-[12px]">
           <div>
-            <dt className={purchaseLabel}>Ledger book</dt>
+            <dt className={purchaseLabel}>Cashbook</dt>
             <dd className="mt-0.5 font-medium text-[var(--pos-text-1)]">{supplierLabel}</dd>
           </div>
           <div>
@@ -646,7 +646,7 @@ function LedgerEntryDetailContent({
     <>
     <dl className="space-y-3 text-[12px]">
       <div>
-        <dt className={purchaseLabel}>Ledger book</dt>
+        <dt className={purchaseLabel}>Cashbook</dt>
         <dd className="mt-0.5 font-medium text-[var(--pos-text-1)]">{supplierLabel}</dd>
       </div>
       <div>
@@ -908,11 +908,11 @@ function SupplierListView() {
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
-          title="Ledger Books"
+          title="Cashbooks"
           subtitle="Tag each book as vendor, owners, or employees. Balances come from Bills & Payments."
         />
         <PrimaryButton type="button" onClick={startCreate}>
-          Add ledger book
+          Add cashbook
         </PrimaryButton>
       </div>
 
@@ -930,12 +930,12 @@ function SupplierListView() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search name, contact, email, phone…"
               className={purchaseSearchInput}
-              aria-label="Filter ledger books"
+              aria-label="Filter cashbooks"
             />
           </label>
           <p className="text-[11px] text-[var(--pos-text-2)] sm:ml-auto">
             Showing{" "}
-            <span className="font-semibold text-[var(--pos-text-1)]">{rows.length}</span> ledger books
+            <span className="font-semibold text-[var(--pos-text-1)]">{rows.length}</span> cashbooks
           </p>
         </div>
         <ChoiceChips
@@ -980,7 +980,7 @@ function SupplierListView() {
                   colSpan={5}
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
-                  No ledger books match. Add one or clear the search.
+                  No cashbooks match. Add one or clear the search.
                 </td>
               </tr>
             ) : (
@@ -1050,7 +1050,7 @@ function SupplierListView() {
         <LedgerDrawerFrame
           width="wide"
           title={
-            ws.suppliers.some((s) => s.id === draft.id) ? "Edit ledger book" : "New ledger book"
+            ws.suppliers.some((s) => s.id === draft.id) ? "Edit cashbook" : "New cashbook"
           }
           titleId="ledger-book-drawer-title"
           subtitle={
@@ -1100,7 +1100,7 @@ function SupplierListView() {
                   Use <span className="font-medium text-[var(--pos-text-1)]">
                     {EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}
                   </span>
-                  then the employee’s full name — one ledger book per person.
+                  then the employee’s full name — one cashbook per person.
                 </p>
               ) : null}
             </label>
@@ -1110,7 +1110,7 @@ function SupplierListView() {
                 value={draft.bookPurpose ?? "vendor"}
                 options={LEDGER_BOOK_PURPOSE_OPTIONS}
                 onChange={(bookPurpose) => setDraft((d) => ({ ...d, bookPurpose }))}
-                ariaLabel="Ledger book type"
+                ariaLabel="Cashbook type"
               />
               <p className="mt-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
                 {(draft.bookPurpose ?? "vendor") === "vendor"
@@ -1209,7 +1209,7 @@ function ledgerDraftSummaryLabel(d: LedgerEntryDraft): string {
     if (d.employeeLineKind) {
       return employeeLedgerLineKindLabel(d.employeeLineKind as EmployeeLedgerLineKind);
     }
-    return "Staff ledger";
+    return "Staff cashbook";
   }
   return ledgerKindForDisplay(d.kind);
 }
@@ -1244,7 +1244,7 @@ type LedgerEntryDraft = {
   method: (typeof LEDGER_PAYMENT_METHODS)[number];
   notes: string;
   attachment: LedgerAttachment | null;
-  /** Set on employee ledger books — salary, service charge, bonus, overtime. */
+  /** Set on employee cashbooks — salary, service charge, bonus, overtime. */
   employeeLineKind: "" | EmployeeLedgerLineKind;
 };
 
@@ -1529,7 +1529,7 @@ export function removeDailyLedgerExpenseLink(link: {
 const LEDGER_DRAWER_WIDTH = {
   /** Add entry / compact forms */
   narrow: "max-w-[380px]",
-  /** Edit ledger book (wider fields) */
+  /** Edit cashbook (wider fields) */
   wide: "max-w-[520px]",
 } as const;
 
@@ -2079,7 +2079,7 @@ function SupplierLedgerView() {
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
-          title={viewingEmployeeBook ? "Staff Ledger" : "Bills & Payments"}
+          title={viewingEmployeeBook ? "Staff cashbook" : "Bills & Payments"}
           subtitle={
             viewingEmployeeBook
               ? "Record salary, service charge, bonus, and overtime — not vendor bills."
@@ -2101,7 +2101,7 @@ function SupplierLedgerView() {
       {ws.suppliers.length === 0 ? (
         <div className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-3">
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            Add a ledger book first - vendor, owner, or employee - then record bills and
+            Add a cashbook first - vendor, owner, or employee - then record bills and
             payments here.
           </p>
           <button
@@ -2109,7 +2109,7 @@ function SupplierLedgerView() {
             onClick={() => selectLedgerTab("books")}
             className="mt-2 text-[12px] font-semibold text-[var(--pos-text-1)] underline-offset-2 hover:underline"
           >
-            Go to Ledger books
+            Go to Cashbooks
           </button>
         </div>
       ) : null}
@@ -2141,7 +2141,7 @@ function SupplierLedgerView() {
               setWorkspace((w) => ({ ...w, ledgerSupplierFilter: e.target.value }))
             }
             className={purchaseField}
-            aria-label="Filter by ledger book"
+            aria-label="Filter by cashbook"
           >
             <option value="">All books</option>
             {ws.suppliers.map((s) => (
@@ -2231,7 +2231,7 @@ function SupplierLedgerView() {
           <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
             <tr className="border-b border-solid [border-color:var(--pos-divider)]">
               <th className={purchaseTh}>Date</th>
-              <th className={purchaseTh}>Ledger book</th>
+              <th className={purchaseTh}>Cashbook</th>
               <th className={purchaseTh}>{viewingEmployeeBook ? "Line" : "Type"}</th>
               <th className={purchaseTh}>Details</th>
               <th className={`${purchaseTh} text-right`}>
@@ -2251,10 +2251,10 @@ function SupplierLedgerView() {
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
                   {ws.suppliers.length === 0
-                    ? "No ledger books yet - open Ledger books and add one to start posting bills and payments."
+                    ? "No cashbooks yet - open Cashbooks and add one to start posting bills and payments."
                     : ws.ledger.length === 0
                       ? "No activity yet. Use Add entry to post a bill or payment."
-                      : "No entries match your filters - adjust search, ledger book, type, or dates."}
+                      : "No entries match your filters - adjust search, cashbook, type, or dates."}
                 </td>
               </tr>
             ) : (
@@ -2349,7 +2349,7 @@ function SupplierLedgerView() {
         <LedgerDrawerFrame
           title={
             ledgerDraft.supplierId && isEmployeesBookSupplierId(ledgerDraft.supplierId)
-              ? "Add staff ledger line"
+              ? "Add staff cashbook line"
               : "Add ledger entry"
           }
           titleId="ledger-entry-drawer-title"
@@ -2360,7 +2360,7 @@ function SupplierLedgerView() {
               </p>
             ) : (
               <p className="text-[11px] text-[var(--pos-text-2)]">
-                Choose a ledger book, then enter amount and note.
+                Choose a cashbook, then enter amount and note.
               </p>
             )
           }
@@ -2416,7 +2416,7 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
       {ledgerLoad.loading ? (
-        <p className="shrink-0 px-1 text-[12px] text-[var(--pos-text-2)]">Loading ledger books…</p>
+        <p className="shrink-0 px-1 text-[12px] text-[var(--pos-text-2)]">Loading cashbooks…</p>
       ) : null}
       {ledgerLoad.error ? (
         <p className="shrink-0 rounded-[8px] border border-solid border-[#c45a5a]/40 bg-[#f5e4e4]/50 px-3 py-2 text-[12px] text-[#8a3030]">

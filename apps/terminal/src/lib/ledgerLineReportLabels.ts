@@ -1,6 +1,6 @@
 /**
  * Human-readable labels for ledger-related fields on saved daily expense lines.
- * Wording matches Ledger Management / Daily Entry Form; keep in sync if those labels change.
+ * Wording matches Cashbooks / Daily Entry Form; keep in sync if those labels change.
  */
 import type { ExpenseLineSaved } from "@/features/daily-entry";
 import { savedLineKind } from "@/features/daily-entry";
@@ -24,7 +24,7 @@ const EMPLOYEE_LINE_LABEL: Record<string, string> = {
   other: "Other",
 };
 
-/** Bill / Payment / staff line type, or "—" when not a ledger book line or not set. */
+/** Bill / Payment / staff line type, or "—" when not a cashbook line or not set. */
 export function expenseSavedLineLedgerLabel(line: ExpenseLineSaved): string {
   if (savedLineKind(line) === "regular") return "—";
   const ek = line.ledgerEmployeeLineKind;
@@ -32,4 +32,15 @@ export function expenseSavedLineLedgerLabel(line: ExpenseLineSaved): string {
   const lk = line.ledgerKind;
   if (lk) return LEDGER_KIND_LABEL[lk] ?? lk;
   return "—";
+}
+
+/** Ledger entry column in expense reports — type when posted; surfaces sync failures inline. */
+export function expenseSavedLineLedgerReportLabel(line: ExpenseLineSaved): string {
+  if (savedLineKind(line) === "regular") return "—";
+  const typeLabel = expenseSavedLineLedgerLabel(line);
+  if (line.ledgerLink) {
+    return typeLabel !== "—" ? typeLabel : "Posted";
+  }
+  if (typeLabel !== "—") return `${typeLabel} · not posted`;
+  return "Not posted";
 }

@@ -43,7 +43,7 @@ export default function LandingPage() {
             </h1>
             <p className="mt-6 max-w-[620px] text-[15px] leading-[1.7] text-white/80">
               Steak & Marrow gives owners one place to record daily entries,
-              manage ledger books, staff, and reports so operations run
+              manage cashbooks, staff, and reports so operations run
               cleanly every day.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">

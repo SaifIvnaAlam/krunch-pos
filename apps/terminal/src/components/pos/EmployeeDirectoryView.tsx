@@ -332,7 +332,7 @@ export function EmployeeDirectoryView() {
       }
       upsertEmployeeLedgerBook({ name: res.employee.name, phone: res.employee.phone });
       setLedgerTick((t) => t + 1);
-      setStatusMessage(`Added ${res.employee.name} and created staff ledger book.`);
+      setStatusMessage(`Added ${res.employee.name} and created staff cashbook.`);
       closeForm();
       return;
     }
@@ -367,7 +367,7 @@ export function EmployeeDirectoryView() {
   const createLedgerBook = (e: Employee) => {
     upsertEmployeeLedgerBook({ name: e.name, phone: e.phone });
     setLedgerTick((t) => t + 1);
-    setStatusMessage(`Ledger book ready: ${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}${e.name}`);
+    setStatusMessage(`Cashbook ready: ${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}${e.name}`);
   };
 
   const createAllMissingBooks = () => {
@@ -379,7 +379,7 @@ export function EmployeeDirectoryView() {
       }
     }
     setLedgerTick((t) => t + 1);
-    setStatusMessage(n > 0 ? `Created ${n} staff ledger book(s).` : "All active staff already have ledger books.");
+    setStatusMessage(n > 0 ? `Created ${n} staff cashbook(s).` : "All active staff already have cashbooks.");
   };
 
   return (
@@ -388,7 +388,7 @@ export function EmployeeDirectoryView() {
         <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Employee Management</h1>
         <p className="mt-1 max-w-[52rem] text-[12px] leading-snug text-[var(--pos-text-2)]">
           Maintain your staff list here — synced to your branch. Basic salary, service charge %, and
-          names flow into Employee Salaries, staff ledger books, and daily-entry staff payments.
+          names flow into Employee Salaries, staff cashbooks, and daily-entry staff payments.
         </p>
       </div>
 
@@ -409,7 +409,7 @@ export function EmployeeDirectoryView() {
             Add employee
           </PrimaryButton>
           <GhostButton type="button" onClick={createAllMissingBooks}>
-            Create missing ledger books
+            Create missing cashbooks
           </GhostButton>
         </Toolbar>
         <label className="flex items-center gap-2 text-[12px] text-[var(--pos-text-2)]">
@@ -444,7 +444,7 @@ export function EmployeeDirectoryView() {
                 <th className="px-4 py-2.5">Phone</th>
                 <th className="px-4 py-2.5 text-right">Basic</th>
                 <th className="px-4 py-2.5 text-right">SC %</th>
-                <th className="px-4 py-2.5">Ledger book</th>
+                <th className="px-4 py-2.5">Cashbook</th>
                 <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5 text-right">Actions</th>
               </tr>

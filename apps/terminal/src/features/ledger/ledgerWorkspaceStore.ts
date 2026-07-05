@@ -159,7 +159,7 @@ function requireToken(): string | null {
 
 async function fetchWorkspaceFromApi(): Promise<LedgerWorkspaceData> {
   const token = requireToken();
-  if (!token) throw new Error("Sign in to load ledger books.");
+  if (!token) throw new Error("Sign in to load cashbooks.");
   const data = await apiFetch<ApiLedgerWorkspace>("/ledger/workspace", {
     method: "GET",
     token,

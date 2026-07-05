@@ -28,10 +28,11 @@ model Branch {
 }
 
 model Staff {
+  /// Portal user account (email/password sign-in) and POS staff (PIN/NFC). One row per person.
   id              String     @id @default(uuid())
   name            String
   email           String?    @unique
-  /// Optional bcrypt hash for email/password (owner portal). PIN login uses pinHash.
+  /// Bcrypt hash for email/password portal login — never store plaintext passwords.
   passwordHash    String?
   pinHash         String
   pbkdf2Hash      String
@@ -305,7 +306,7 @@ model MediaAsset {
   @@index([branchId])
 }
 
-/// Branch-scoped ledger books, bills/payments, and purchase moves (terminal Ledger module).
+/// Branch-scoped cashbooks, bills/payments, and purchase moves (terminal Ledger module).
 model BranchLedgerWorkspace {
   branchId  String   @id
   suppliers Json     @default("[]")
