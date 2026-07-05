@@ -8,6 +8,12 @@ import {
   mergeRosterNames,
 } from "./employeeDirectoryStorage";
 
+export type SalaryPaymentEmployeeLineKind =
+  | "salary"
+  | "service_charge"
+  | "bonus"
+  | "overtime";
+
 export type SalaryPayment = {
   id: string;
   /** Whole currency units (e.g. BDT). */
@@ -15,6 +21,12 @@ export type SalaryPayment = {
   /** Calendar date of disbursement (YYYY-MM-DD). */
   date: string;
   note?: string;
+  /** Daily Entry expense line id after posting to daily books. */
+  dailyEntryLineId?: string;
+  /** Calendar day of the Daily Entry row (YYYY-MM-DD). */
+  dailyEntryDate?: string;
+  /** Staff payment type used when posted to Daily Entry. */
+  postedEmployeeLineKind?: SalaryPaymentEmployeeLineKind;
 };
 
 export type SalarySheetRow = {
@@ -81,6 +93,10 @@ export function sumPaymentsForRow(r: SalarySheetRow): number {
   return r.payments.reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0);
 }
 
+export function isSalaryPaymentPosted(p: SalaryPayment): boolean {
+  return Boolean(p.dailyEntryLineId && p.dailyEntryDate);
+}
+
 export function summarizeSalaryDoc(doc: SalarySheetDoc): {
   totalPayable: number;
   totalPaidRecorded: number;
@@ -96,6 +112,44 @@ export function summarizeSalaryDoc(doc: SalarySheetDoc): {
     totalPayable,
     totalPaidRecorded,
     outstanding: totalPayable - totalPaidRecorded,
+  };
+}
+
+export function sumPostedPaymentsForDoc(doc: SalarySheetDoc): number {
+  let total = 0;
+  for (const r of doc.rows) {
+    for (const p of r.payments) {
+      if (isSalaryPaymentPosted(p)) total += p.amount;
+    }
+  }
+  return total;
+}
+
+export function countUnpostedPayments(doc: SalarySheetDoc): number {
+  let count = 0;
+  for (const r of doc.rows) {
+    for (const p of r.payments) {
+      if (!isSalaryPaymentPosted(p) && p.amount > 0) count += 1;
+    }
+  }
+  return count;
+}
+
+export function summarizeSalaryDocWithPosting(doc: SalarySheetDoc): {
+  totalPayable: number;
+  totalPaidRecorded: number;
+  outstanding: number;
+  totalPostedToBooks: number;
+  totalUnposted: number;
+  unpostedCount: number;
+} {
+  const base = summarizeSalaryDoc(doc);
+  const totalPostedToBooks = sumPostedPaymentsForDoc(doc);
+  return {
+    ...base,
+    totalPostedToBooks,
+    totalUnposted: base.totalPaidRecorded - totalPostedToBooks,
+    unpostedCount: countUnpostedPayments(doc),
   };
 }
 
@@ -161,7 +215,7 @@ export function salaryRowForEmployeeRecord(emp: Employee): SalarySheetRow {
     id: newRowId(),
     employeeId: emp.id,
     name: emp.name,
-    basic: 0,
+    basic: emp.defaultBasicSalary > 0 ? emp.defaultBasicSalary : 0,
     pct: emp.serviceChargePct,
     serviceCharge: 0,
     overtime: 0,
@@ -170,7 +224,7 @@ export function salaryRowForEmployeeRecord(emp: Employee): SalarySheetRow {
   };
 }
 
-/** One row per active employee; preserves amounts for existing ids. */
+/** One row per active employee; preserves amounts and payouts; rematches stale employee ids by name. */
 export function syncDocRowsToEmployees(
   doc: SalarySheetDoc,
   employees: Employee[],
@@ -179,17 +233,40 @@ export function syncDocRowsToEmployees(
   if (active.length === 0) return doc;
 
   const byEmployeeId = new Map<string, SalarySheetRow>();
+  const byNormalizedName = new Map<string, SalarySheetRow>();
   for (const row of doc.rows) {
     if (row.employeeId) byEmployeeId.set(row.employeeId, row);
-    else if (row.name.trim()) {
+    const nameKey = row.name.trim().toLowerCase();
+    if (nameKey && !byNormalizedName.has(nameKey)) {
+      byNormalizedName.set(nameKey, row);
+    } else if (row.name.trim()) {
       const hit = findEmployeeByName(row.name);
-      if (hit) byEmployeeId.set(hit.id, { ...row, employeeId: hit.id, name: hit.name });
+      if (hit) {
+        const linked = { ...row, employeeId: hit.id, name: hit.name };
+        byEmployeeId.set(hit.id, linked);
+        const hitKey = hit.name.trim().toLowerCase();
+        if (hitKey && !byNormalizedName.has(hitKey)) byNormalizedName.set(hitKey, linked);
+      }
     }
   }
 
   const rows = active.map((emp) => {
-    const existing = byEmployeeId.get(emp.id);
-    if (existing) return { ...existing, name: emp.name };
+    let existing = byEmployeeId.get(emp.id);
+    if (!existing) {
+      const nameKey = emp.name.trim().toLowerCase();
+      const named = nameKey ? byNormalizedName.get(nameKey) : undefined;
+      if (named) {
+        existing = { ...named, employeeId: emp.id, name: emp.name };
+      }
+    }
+    if (existing) {
+      return {
+        ...existing,
+        name: emp.name,
+        pct: emp.serviceChargePct,
+        basic: emp.defaultBasicSalary > 0 ? emp.defaultBasicSalary : 0,
+      };
+    }
     return salaryRowForEmployeeRecord(emp);
   });
 
@@ -244,7 +321,31 @@ function coercePayment(raw: unknown): SalaryPayment | null {
       : new Date().toISOString().slice(0, 10);
   const noteRaw = p.note;
   const note = typeof noteRaw === "string" && noteRaw.trim() ? noteRaw.trim() : undefined;
-  return { id, amount, date, ...(note ? { note } : {}) };
+  const dailyEntryLineId =
+    typeof p.dailyEntryLineId === "string" && p.dailyEntryLineId.trim()
+      ? p.dailyEntryLineId.trim()
+      : undefined;
+  const dailyEntryDate =
+    typeof p.dailyEntryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.dailyEntryDate)
+      ? p.dailyEntryDate
+      : undefined;
+  const kindRaw = p.postedEmployeeLineKind;
+  const postedEmployeeLineKind =
+    kindRaw === "salary" ||
+    kindRaw === "service_charge" ||
+    kindRaw === "bonus" ||
+    kindRaw === "overtime"
+      ? kindRaw
+      : undefined;
+  return {
+    id,
+    amount,
+    date,
+    ...(note ? { note } : {}),
+    ...(dailyEntryLineId ? { dailyEntryLineId } : {}),
+    ...(dailyEntryDate ? { dailyEntryDate } : {}),
+    ...(postedEmployeeLineKind ? { postedEmployeeLineKind } : {}),
+  };
 }
 
 function resolveRowEmployee(

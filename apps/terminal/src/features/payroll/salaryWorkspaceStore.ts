@@ -19,6 +19,8 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistInFlight: Promise<void> | null = null;
 let loadError: string | null = null;
 let loading = false;
+/** True after local edits; prevents a late API load from wiping unsaved salary data. */
+let localDirty = false;
 
 let loadStateSnapshot = {
   loading: false,
@@ -94,6 +96,7 @@ async function persistBundleToApi(bundle: SalarySheetBundle): Promise<void> {
       months: bundle.months,
     }),
   });
+  localDirty = false;
 }
 
 function schedulePersist() {
@@ -119,6 +122,7 @@ function schedulePersist() {
 
 export function setSalaryBundle(updater: (b: SalarySheetBundle) => SalarySheetBundle) {
   bundleSnapshot = updater(bundleSnapshot);
+  localDirty = true;
   emit();
   schedulePersist();
 }
@@ -164,7 +168,9 @@ export function loadSalaryWorkspace(): Promise<void> {
     try {
       let bundle = await fetchBundleFromApi();
       bundle = await maybeMigrateLegacyLocal(bundle);
-      bundleSnapshot = bundle;
+      if (!localDirty) {
+        bundleSnapshot = bundle;
+      }
       loadedFromApi = true;
       loadError = null;
     } catch (e) {
@@ -185,6 +191,18 @@ export async function flushSalaryWorkspacePersist(): Promise<void> {
     persistTimer = null;
   }
   if (persistInFlight) await persistInFlight;
-  if (isDemoDataMode() || !requireToken()) return;
-  await persistBundleToApi(bundleSnapshot);
+  if (isDemoDataMode()) return;
+  if (!requireToken()) {
+    throw new Error("Sign in to save salary registers.");
+  }
+  try {
+    await persistBundleToApi(bundleSnapshot);
+    loadError = null;
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Could not save salary workspace.";
+    loadError = message;
+    emit();
+    throw new Error(message);
+  }
 }

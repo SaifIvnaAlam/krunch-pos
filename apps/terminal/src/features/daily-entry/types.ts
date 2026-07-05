@@ -20,6 +20,8 @@ export type ExpenseLineSaved = {
     | "overtime";
   ledgerNote?: string;
   ledgerLink?: LedgerExpenseLink;
+  /** Links back to a salary-register payout when posted from Employee Salaries. */
+  salaryPaymentId?: string;
 };
 
 export type DailyEntryRow = {

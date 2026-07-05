@@ -10,6 +10,9 @@ export {
   bankNetAfterWithdrawals,
   bankSaleNetAfterServiceCharge,
   bankSaleServiceChargeAmount,
+  computeRemainingBalanceForRow,
+  dateAddDays,
+  expenseTotalFromExpenseLines,
   listDailyEntriesDescendingFromMap,
   savedLineKind,
 } from "./calculations";

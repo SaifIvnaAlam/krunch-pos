@@ -1,5 +1,10 @@
-import { useCallback, useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { Pencil, Plus, Trash2, UserRound, X } from "lucide-react";
+import {
+  getEmployeeDirectoryLoadState,
+  loadEmployeeDirectory,
+  subscribeEmployeeDirectoryStore,
+} from "@/features/employees";
 import {
   addEmployee,
   removeEmployee,
@@ -72,6 +77,7 @@ type EmployeeDraft = {
   name: string;
   role: string;
   phone: string;
+  defaultBasicSalary: string;
   serviceChargePct: string;
   notes: string;
   active: boolean;
@@ -82,6 +88,7 @@ function emptyDraft(): EmployeeDraft {
     name: "",
     role: "",
     phone: "",
+    defaultBasicSalary: "",
     serviceChargePct: "",
     notes: "",
     active: true,
@@ -93,10 +100,19 @@ function draftFromEmployee(e: Employee): EmployeeDraft {
     name: e.name,
     role: e.role,
     phone: e.phone,
+    defaultBasicSalary: e.defaultBasicSalary > 0 ? String(e.defaultBasicSalary) : "",
     serviceChargePct: e.serviceChargePct === null ? "" : String(e.serviceChargePct),
     notes: e.notes,
     active: e.active,
   };
+}
+
+function parseMoneyInput(raw: string): number {
+  const t = raw.replace(/,/g, "").trim();
+  if (t === "") return 0;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.round(n));
 }
 
 function parsePctInput(raw: string): number | null {
@@ -188,6 +204,19 @@ function EmployeeFormModal({
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+              Basic salary (BDT)
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={draft.defaultBasicSalary}
+              onChange={(e) => onChange({ ...draft, defaultBasicSalary: e.target.value })}
+              className={fieldClass}
+              placeholder="Fixed monthly basic pay"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
               Service charge %
             </span>
             <input
@@ -240,7 +269,16 @@ function EmployeeFormModal({
 
 export function EmployeeDirectoryView() {
   const employees = useEmployeeDirectory();
+  const loadState = useSyncExternalStore(
+    subscribeEmployeeDirectoryStore,
+    getEmployeeDirectoryLoadState,
+    getEmployeeDirectoryLoadState,
+  );
   const [, setLedgerTick] = useState(0);
+
+  useEffect(() => {
+    void loadEmployeeDirectory();
+  }, []);
 
   const [showInactive, setShowInactive] = useState(false);
   const [formMode, setFormMode] = useState<"add" | "edit" | null>(null);
@@ -281,6 +319,7 @@ export function EmployeeDirectoryView() {
       name: draft.name,
       role: draft.role,
       phone: draft.phone,
+      defaultBasicSalary: parseMoneyInput(draft.defaultBasicSalary),
       serviceChargePct: parsePctInput(draft.serviceChargePct),
       notes: draft.notes,
       active: draft.active,
@@ -291,7 +330,9 @@ export function EmployeeDirectoryView() {
         setFormError(res.message);
         return;
       }
-      setStatusMessage(`Added ${res.employee.name}.`);
+      upsertEmployeeLedgerBook({ name: res.employee.name, phone: res.employee.phone });
+      setLedgerTick((t) => t + 1);
+      setStatusMessage(`Added ${res.employee.name} and created staff ledger book.`);
       closeForm();
       return;
     }
@@ -346,10 +387,21 @@ export function EmployeeDirectoryView() {
       <div className="shrink-0">
         <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Employee Management</h1>
         <p className="mt-1 max-w-[52rem] text-[12px] leading-snug text-[var(--pos-text-2)]">
-          Maintain your staff list here. Names flow into Employee Salaries, staff ledger books, and
-          daily-entry staff payments — no need to re-type them on each screen.
+          Maintain your staff list here — synced to your branch. Basic salary, service charge %, and
+          names flow into Employee Salaries, staff ledger books, and daily-entry staff payments.
         </p>
       </div>
+
+      {loadState.loading ? (
+        <p className="text-[12px] text-[var(--pos-text-2)]" role="status">
+          Loading staff directory…
+        </p>
+      ) : null}
+      {loadState.error ? (
+        <p className="text-[12px] text-red-600 dark:text-red-400" role="status">
+          {loadState.error}
+        </p>
+      ) : null}
 
       <Toolbar className="shrink-0 flex-wrap items-center justify-between gap-3">
         <Toolbar>
@@ -384,12 +436,13 @@ export function EmployeeDirectoryView() {
           </p>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-[12px]">
+          <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
             <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
               <tr className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--pos-text-2)]">
                 <th className="px-4 py-2.5">Name</th>
                 <th className="px-4 py-2.5">Role</th>
                 <th className="px-4 py-2.5">Phone</th>
+                <th className="px-4 py-2.5 text-right">Basic</th>
                 <th className="px-4 py-2.5 text-right">SC %</th>
                 <th className="px-4 py-2.5">Ledger book</th>
                 <th className="px-4 py-2.5">Status</th>
@@ -399,7 +452,7 @@ export function EmployeeDirectoryView() {
             <tbody>
               {visible.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-[var(--pos-text-2)]">
+                  <td colSpan={8} className="px-4 py-10 text-center text-[var(--pos-text-2)]">
                     No employees yet. Add your first team member.
                   </td>
                 </tr>
@@ -420,6 +473,9 @@ export function EmployeeDirectoryView() {
                       <td className="px-4 py-2.5 text-[var(--pos-text-2)]">{e.role || "—"}</td>
                       <td className="px-4 py-2.5 font-mono text-[11px] text-[var(--pos-text-2)]">
                         {e.phone || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-[11px]">
+                        {e.defaultBasicSalary > 0 ? e.defaultBasicSalary.toLocaleString("en-BD") : "—"}
                       </td>
                       <td className="px-4 py-2.5 text-right font-mono text-[11px]">
                         {e.serviceChargePct ?? "—"}

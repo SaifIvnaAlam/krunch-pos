@@ -23,6 +23,7 @@ model Branch {
   dailyEntries DailyEntry[]
   ledgerWorkspace BranchLedgerWorkspace?
   salaryWorkspace BranchSalaryWorkspace?
+  employeeDirectory BranchEmployeeDirectory?
   mediaAssets  MediaAsset[]
 }
 
@@ -319,6 +320,15 @@ model BranchLedgerWorkspace {
 model BranchSalaryWorkspace {
   branchId  String   @id
   bundle    Json     @default("{}")
+  updatedAt DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+}
+
+/// Branch-scoped staff roster (terminal Employee Management).
+model BranchEmployeeDirectory {
+  branchId  String   @id
+  employees Json     @default("[]")
   updatedAt DateTime @updatedAt
 
   branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
