@@ -182,7 +182,10 @@ async function removeDemoSeedData(): Promise<void> {
 }
 
 async function removeLegacyPortalStaff(reassignToStaffId: string): Promise<void> {
-  const legacyStaffIds = ['default-owner', 'staff-alam-saifivn'];
+  const legacyStaffIds = ['default-owner', 'staff-alam-saifivn', 'staff-seed-owner'].filter(
+    (id) => id !== reassignToStaffId,
+  );
+  if (legacyStaffIds.length === 0) return;
 
   await prisma.dailyEntry.updateMany({
     where: { enteredByStaffId: { in: legacyStaffIds } },
@@ -271,6 +274,29 @@ async function main(): Promise<void> {
   await removeDemoSeedData();
 
   const portalConfig = readSeedPortalConfig();
+  const isPlaceholderSeed =
+    !process.env.SEED_OWNER_EMAIL?.trim() || portalConfig.email === 'owner@example.com';
+
+  const existingRealPortalUser = isPlaceholderSeed
+    ? await prisma.staff.findFirst({
+        where: {
+          id: { not: PORTAL_STAFF_ID },
+          email: { not: null },
+          isActive: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      })
+    : null;
+
+  if (existingRealPortalUser) {
+    await removeLegacyPortalStaff(existingRealPortalUser.id);
+    console.log(
+      `Skipped placeholder portal seed; using existing user ${existingRealPortalUser.name} (${existingRealPortalUser.email})`,
+    );
+    console.log('Seed complete.');
+    return;
+  }
+
   // Bootstrap only: upserts the first portal owner into Staff (passwordHash). Ongoing users → POST /staff.
   const pinHash = await bcrypt.hash(portalConfig.pin, BCRYPT_SALT_ROUNDS);
   const portalPasswordHash = await bcrypt.hash(portalConfig.password, BCRYPT_SALT_ROUNDS);
