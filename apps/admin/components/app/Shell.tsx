@@ -15,7 +15,7 @@ export function Shell({
           <nav>
             <div className="rounded-xl border border-0 bg-elevated p-3">
               <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-label">
-                Krunch pos
+                Steak & Marrow
               </div>
               <div className="mt-2 text-[13px] font-semibold text-white">
                 Owner control room

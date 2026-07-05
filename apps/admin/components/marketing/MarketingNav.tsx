@@ -22,7 +22,7 @@ export function MarketingNav() {
           href="/"
           className="text-base font-bold tracking-[-0.02em] text-white"
         >
-          Krunch pos
+          Steak & Marrow
         </a>
 
         <nav className="hidden items-center gap-8 md:flex">
@@ -66,7 +66,7 @@ export function MarketingNav() {
           aria-modal="true"
         >
           <div className="flex h-[60px] items-center justify-between border-b border-0 px-6">
-            <span className="text-base font-bold text-white">Krunch pos</span>
+            <span className="text-base font-bold text-white">Steak & Marrow</span>
             <button
               type="button"
               className="text-[13px] font-semibold text-body"

@@ -3,7 +3,7 @@ import './globals.css';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'Krunch pos',
+  title: 'Steak & Marrow',
   description:
     'Owner portal for restaurant POS: locations, staff invites, and role-based access.',
   icons: {

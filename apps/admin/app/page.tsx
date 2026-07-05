@@ -42,9 +42,9 @@ export default function LandingPage() {
               <span className="text-white/85">we keep your team aligned</span>
             </h1>
             <p className="mt-6 max-w-[620px] text-[15px] leading-[1.7] text-white/80">
-              Krunch pos gives owners one place to create locations, invite
-              staff, and control permissions so service runs cleanly across
-              every branch.
+              Steak & Marrow gives owners one place to record daily entries,
+              manage ledger books, staff, and reports so operations run
+              cleanly every day.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <a
@@ -452,7 +452,7 @@ export default function LandingPage() {
                     <a href="/login">Sign in</a>
                   </Button>
                   <Button variant="secondary" asChild>
-                    <a href="/app">Open portal demo</a>
+                    <a href="/app">Open owner portal</a>
                   </Button>
                 </div>
               </div>

@@ -70,7 +70,7 @@ export class BranchesService {
       data: {
         name: dto.name,
         address: dto.address,
-        timezone: dto.timezone ?? 'UTC',
+        timezone: dto.timezone ?? 'Asia/Dhaka',
       },
     });
 

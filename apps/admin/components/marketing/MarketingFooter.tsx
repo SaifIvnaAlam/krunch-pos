@@ -20,7 +20,7 @@ const cols = [
   {
     title: 'Company',
     links: [
-      ['Krunch pos', '/'],
+      ['Steak & Marrow', '/'],
       ['Talk to sales', '#contact'],
     ],
   },
@@ -38,7 +38,7 @@ export function MarketingFooter() {
     <footer className="border-t border-0 bg-page">
       <div className="mx-auto max-w-content px-6 pb-10 pt-16">
         <div className="mb-12 text-base font-bold tracking-[-0.02em] text-white">
-          Krunch pos
+          Steak & Marrow
         </div>
         <div className="grid grid-cols-2 gap-10 md:grid-cols-4">
           {cols.map((c) => (
@@ -63,7 +63,7 @@ export function MarketingFooter() {
         </div>
         <div className="mt-12 flex flex-wrap items-center justify-between gap-4 border-t border-0 pt-8">
           <p className="text-[12px] text-muted">
-            © {new Date().getFullYear()} Krunch pos. All rights reserved.
+            © {new Date().getFullYear()} Steak & Marrow. All rights reserved.
           </p>
           <div className="flex gap-6 text-[13px] text-caption">
             <a

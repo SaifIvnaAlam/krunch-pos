@@ -30,7 +30,7 @@ function TickerItems({ prefix }: { prefix: string }) {
 export function TrustTicker() {
   return (
     <div className="overflow-hidden rounded-[10px] border border-0 bg-card">
-      <div className="krunch-ticker-track flex gap-8 py-4 pl-6">
+      <div className="brand-ticker-track flex gap-8 py-4 pl-6">
         <TickerItems prefix="a" />
         <TickerItems prefix="b" />
       </div>

@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Steak & Marrow",
   "version": "0.1.0",
-  "identifier": "com.universalpos.terminal",
+  "identifier": "com.steakandmarrow.terminal",
   "build": {
     "beforeDevCommand": "npm run dev -- --strictPort --port 1420",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "",
+        "title": "Steak & Marrow",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,

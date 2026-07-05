@@ -42,7 +42,7 @@ export function GenericModuleView({
       <div className={`rounded-[14px] bg-[var(--pos-card)] ${border0} overflow-hidden`}>
         <div className="border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
-            Records · demo
+            Records
           </p>
         </div>
         {DEMO_ROWS.map((r) => (

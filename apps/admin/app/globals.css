@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Krunch pos — ServHQ-inspired admin marketing design system (dark only) */
+/* Steak & Marrow — admin marketing design system (dark only) */
 
 :root {
   --page: #0a0a0a;
@@ -57,7 +57,7 @@ body {
   -webkit-user-select: text;
 }
 
-@keyframes krunch-ticker {
+@keyframes brand-ticker {
   0% {
     transform: translateX(0);
   }
@@ -66,14 +66,14 @@ body {
   }
 }
 
-.krunch-ticker-track {
+.brand-ticker-track {
   display: flex;
   width: max-content;
-  animation: krunch-ticker 14s linear infinite;
+  animation: brand-ticker 14s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .krunch-ticker-track {
+  .brand-ticker-track {
     animation: none;
   }
   * {

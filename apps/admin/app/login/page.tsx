@@ -26,8 +26,8 @@ export default function LoginPage({
               Owner and admin portal
             </h1>
             <p className="mt-4 max-w-[55ch] text-[15px] leading-[1.7] text-body">
-              For restaurant owners and branch admins using Krunch pos. Manage
-              locations, staff invites, and roles from one place.
+              For restaurant owners and branch admins using Steak & Marrow.
+              Manage daily entries, ledger, staff, and reports from one place.
             </p>
 
             <div className="mt-8 rounded-bento border border-0 bg-card p-5 text-[13px] text-caption">

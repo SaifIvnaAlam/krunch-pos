@@ -1,6 +1,6 @@
 # Production deploy (VPS)
 
-Hosts **Postgres** and the **Nest API** on the VPS. TLS + routing are handled by the **shared host Caddy** (systemd) already serving OneSign and n8n on 80/443 — Krunch plugs into it via `deploy/krunch.caddy` (imported from `/etc/caddy/conf.d`), so nothing evicts the other apps. The API is published on `127.0.0.1:3001`, the POS build is served from `deploy/pos-static`, and object storage uses the **shared MinIO** on the VPS (`s3.storage.inventivelab.bd`) — this stack runs no Caddy or MinIO container of its own.
+Hosts **Postgres** and the **Nest API** for **Steak & Marrow** on the VPS. TLS + routing are handled by the **shared host Caddy** (systemd) already serving OneSign and n8n on 80/443 — the POS site plugs into it via `deploy/krunch.caddy` (imported from `/etc/caddy/conf.d`), so nothing evicts the other apps. The API is published on `127.0.0.1:3001`, the POS build is served from `deploy/pos-static`, and object storage uses the **shared MinIO** on the VPS (`s3.storage.inventivelab.bd`) — this stack runs no Caddy or MinIO container of its own.
 
 ## Credentials & reference
 
@@ -88,7 +88,22 @@ This script:
 
 ### Portal users (seeded)
 
-Configured in `packages/database-schema/prisma/seed.ts`. Default production branch: **Steak & Marrow**.
+Set in `deploy/.env` before deploy (see `SEED_OWNER_*` in `.env.example`):
+
+| Variable | Purpose |
+|----------|---------|
+| `SEED_OWNER_NAME` | Display name (default: Azmain Fahim Anjum) |
+| `SEED_OWNER_EMAIL` | Email used on the terminal sign-in page (default: azmainfahimanjum@gmail.com) |
+| `SEED_OWNER_PASSWORD` | Portal password (min 8 chars; required in production) |
+| `SEED_BRANCH_ADDRESS` | Optional branch address; omit to leave blank |
+| `SEED_BRANCH_TIMEZONE` | Branch timezone (default: `Asia/Dhaka`; falls back to `GENERIC_TIMEZONE`) |
+| `SEED_STAFF_PIN` | Optional staff PIN; random if omitted |
+
+Production seed **fails** without `SEED_OWNER_PASSWORD`. Passwords are not logged.
+
+Re-seeding removes legacy portal accounts and demo menu items (`Welcome Burger`).
+
+Default production branch: **Steak & Marrow**.
 
 Re-seed after deploy if needed — see manual commands below.
 

@@ -7,7 +7,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const BRANCH_ID = 'a0000000-0000-4000-8000-000000000001';
-const STAFF_ID = 'default-owner';
+const STAFF_ID = 'staff-azmain-fahim';
 const BANK_NET_RATE = 1 - 0.0175;
 
 /** Net sales targets (BDT) — shaped like the reference chart. */
@@ -100,7 +100,7 @@ async function seedMonth(
         expenseLines: [],
         remainingBalance: new Prisma.Decimal(remaining.toFixed(2)),
         enteredByStaffId: STAFF_ID,
-        enteredByName: 'Demo Seed',
+        enteredByName: 'Azmain Fahim Anjum',
       },
       update: {
         openingBalance: new Prisma.Decimal(opening.toFixed(2)),
@@ -116,7 +116,7 @@ async function seedMonth(
         expenseLines: [],
         remainingBalance: new Prisma.Decimal(remaining.toFixed(2)),
         enteredByStaffId: STAFF_ID,
-        enteredByName: 'Demo Seed',
+        enteredByName: 'Azmain Fahim Anjum',
       },
     });
 

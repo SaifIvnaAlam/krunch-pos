@@ -8,12 +8,12 @@ const faqs = [
     a: 'Most teams add a location, invite staff, and assign roles in under ten minutes. Larger rollouts are usually limited by hardware delivery, not software setup.',
   },
   {
-    q: 'Do I need technical staff to manage Krunch pos?',
+    q: 'Do I need technical staff to manage Steak & Marrow?',
     a: 'No. The owner portal is built for restaurant operators. Invites and roles are designed to be understandable without IT involvement.',
   },
   {
     q: 'How is this different from a generic POS admin panel?',
-    a: 'Krunch pos centers on invite-based access and role templates tuned for service: cashier, kitchen, manager, owner. The goal is fewer permission mistakes during rush.',
+    a: 'Steak & Marrow is built for restaurant operators. Daily entry, ledger, payroll, and reports are designed to be manageable without IT involvement.',
   },
   {
     q: 'Can we run multiple branches from one account?',
