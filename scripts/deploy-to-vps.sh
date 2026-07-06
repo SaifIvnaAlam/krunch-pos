@@ -133,7 +133,6 @@ vps_rsync \
   --exclude node_modules \
   --exclude .git \
   --exclude apps/terminal \
-  --exclude apps/admin \
   "${ROOT}/" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/"
 
 echo "==> Writing deploy/.env on server"

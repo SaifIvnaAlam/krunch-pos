@@ -18,9 +18,3 @@ export interface AuthResult {
   roles: string[];
   permissions: string[];
 }
-
-export interface OverrideResult {
-  overrideToken: string;
-  action: string;
-  expiresAt: number;
-}

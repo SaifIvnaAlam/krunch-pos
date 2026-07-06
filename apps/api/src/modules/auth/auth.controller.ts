@@ -16,13 +16,9 @@ import {
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Request } from 'express';
-import { AuthResult, OverrideResult } from './auth.types';
-import { LoginPinDto } from './dto/login-pin.dto';
+import { AuthResult } from './auth.types';
 import { LoginEmailDto } from './dto/login-email.dto';
-import { LoginGoogleDto } from './dto/login-google.dto';
-import { NfcLoginDto } from './dto/nfc-login.dto';
 import { RefreshDto } from './dto/refresh.dto';
-import { OverrideDto } from './dto/override.dto';
 import { LookupRestaurantsDto } from './dto/lookup-restaurants.dto';
 import { AuthBranchSummary } from './auth.types';
 
@@ -39,15 +35,6 @@ interface JwtPayload {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'PIN login (staff terminal)' })
-  @ApiResponse({ status: 200, description: 'Login successful' })
-  @ApiResponse({ status: 401, description: 'Invalid credentials' })
-  async login(@Body() dto: LoginPinDto): Promise<AuthResult> {
-    return this.authService.loginWithPin(dto);
-  }
-
   @Post('login/restaurants')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -63,7 +50,7 @@ export class AuthController {
 
   @Post('login/email')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Email + password (portal-style)' })
+  @ApiOperation({ summary: 'Email + password sign-in' })
   @ApiResponse({ status: 200, description: 'Login successful' })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async loginEmail(@Body() dto: LoginEmailDto): Promise<AuthResult> {
@@ -73,29 +60,6 @@ export class AuthController {
       terminalId: dto.terminalId,
       branchId: dto.branchId,
     });
-  }
-
-  @Post('login/google')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Google ID token',
-    description:
-      'Verifies a Google ID token and issues API JWTs when staff email matches.',
-  })
-  @ApiResponse({ status: 200, description: 'Login successful' })
-  @ApiResponse({ status: 400, description: 'Google OAuth not configured' })
-  @ApiResponse({ status: 401, description: 'Invalid token or no linked staff' })
-  async loginGoogle(@Body() dto: LoginGoogleDto): Promise<AuthResult> {
-    return this.authService.loginWithGoogle(dto);
-  }
-
-  @Post('login/nfc')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'NFC card login' })
-  @ApiResponse({ status: 200, description: 'Login successful' })
-  @ApiResponse({ status: 401, description: 'Invalid NFC card' })
-  async loginNfc(@Body() dto: NfcLoginDto): Promise<AuthResult> {
-    return this.authService.loginWithNfc(dto);
   }
 
   @Post('refresh')
@@ -120,17 +84,5 @@ export class AuthController {
     const user = req.user as JwtPayload;
     await this.authService.logout(token, user.staffId);
     return { message: 'Logged out successfully' };
-  }
-
-  @Post('override')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('access-token')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Request manager override token' })
-  @ApiResponse({ status: 200, description: 'Override token issued' })
-  @ApiResponse({ status: 401, description: 'Invalid manager credentials' })
-  @ApiResponse({ status: 403, description: 'Manager lacks required permission' })
-  async override(@Body() dto: OverrideDto): Promise<OverrideResult> {
-    return this.authService.requestOverride(dto);
   }
 }

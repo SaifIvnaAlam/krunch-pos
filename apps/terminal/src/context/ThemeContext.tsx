@@ -11,7 +11,6 @@ import {
   THEME_STORAGE_KEY,
   type ThemeMode,
 } from "../themeStorage";
-import { syncNativeWindowTheme } from "../tauriWindowTheme";
 
 export type { ThemeMode };
 
@@ -39,7 +38,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* ignore */
     }
-    void syncNativeWindowTheme(theme);
   }, [theme]);
 
   const setTheme = useCallback((mode: ThemeMode) => {

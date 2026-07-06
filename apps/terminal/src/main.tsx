@@ -4,9 +4,11 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./index.css";
 import { readStoredTheme } from "./themeStorage";
-import { syncNativeWindowTheme } from "./tauriWindowTheme";
 
-void syncNativeWindowTheme(readStoredTheme());
+const initialTheme = readStoredTheme();
+if (initialTheme === "dark") {
+  document.documentElement.classList.add("dark");
+}
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -19,12 +19,9 @@
     "@nestjs/config": "^3.x",
     "@nestjs/core": "^10.x",
     "@nestjs/jwt": "^10.x",
-    "@nestjs/microservices": "^10.x",
     "@nestjs/passport": "^10.x",
     "@nestjs/platform-express": "^10.x",
-    "@nestjs/platform-socket.io": "^10.x",
     "@nestjs/swagger": "^7.x",
-    "@nestjs/websockets": "^10.x",
     "@aws-sdk/client-s3": "^3.758.0",
     "@aws-sdk/s3-request-presigner": "^3.758.0",
     "@prisma/client": "^5.x",
@@ -37,7 +34,6 @@
     "passport-jwt": "^4.x",
     "reflect-metadata": "^0.2.x",
     "rxjs": "^7.x",
-    "socket.io": "^4.x",
     "uuid": "^9.x"
   },
   "devDependencies": {

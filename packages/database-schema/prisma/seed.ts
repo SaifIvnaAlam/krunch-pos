@@ -19,12 +19,6 @@ const SYSTEM_ROLES = [
     description: 'Global. Full access all branches.',
     isSystem: true,
     permissions: [
-      'orders:create', 'orders:modify', 'orders:void', 'orders:void_item',
-      'orders:hold', 'orders:discount', 'orders:price_override', 'orders:split',
-      'orders:merge', 'orders:transfer', 'payments:process', 'payments:refund',
-      'payments:void', 'payments:view', 'payments:report', 'menu:read',
-      'menu:edit', 'menu:create', 'menu:delete', 'menu:86',
-      'inventory:read', 'inventory:adjust', 'inventory:waste_log',
       'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
       'staff:assign_role', 'roles:create', 'roles:edit', 'roles:delete',
       'reports:branch', 'reports:global', 'audit:read', 'system:config',
@@ -34,18 +28,12 @@ const SYSTEM_ROLES = [
   },
   {
     name: 'ADMIN',
-    description: 'Global. Staff and menu management.',
+    description: 'Global. Staff and configuration management.',
     isSystem: true,
     permissions: [
-      'orders:create', 'orders:modify', 'orders:void', 'orders:void_item',
-      'orders:hold', 'orders:discount', 'orders:split', 'orders:merge',
-      'orders:transfer', 'payments:process', 'payments:refund', 'payments:void',
-      'payments:view', 'payments:report', 'menu:read', 'menu:edit',
-      'menu:create', 'menu:delete', 'menu:86', 'inventory:read',
-      'inventory:adjust', 'inventory:waste_log', 'staff:read', 'staff:create',
-      'staff:edit', 'staff:deactivate', 'staff:assign_role', 'roles:create',
-      'roles:edit', 'roles:delete', 'reports:branch', 'reports:global',
-      'audit:read', 'system:config',
+      'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
+      'staff:assign_role', 'roles:create', 'roles:edit', 'roles:delete',
+      'reports:branch', 'reports:global', 'audit:read', 'system:config',
       'daily_entry:read', 'daily_entry:write',
       'storage:read', 'storage:write',
     ],
@@ -55,12 +43,6 @@ const SYSTEM_ROLES = [
     description: 'Branch-scoped. Full access own branch.',
     isSystem: true,
     permissions: [
-      'orders:create', 'orders:modify', 'orders:void', 'orders:void_item',
-      'orders:hold', 'orders:discount', 'orders:price_override', 'orders:split',
-      'orders:merge', 'orders:transfer', 'payments:process', 'payments:refund',
-      'payments:void', 'payments:view', 'payments:report', 'menu:read',
-      'menu:edit', 'menu:create', 'menu:delete', 'menu:86',
-      'inventory:read', 'inventory:adjust', 'inventory:waste_log',
       'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
       'staff:assign_role', 'reports:branch', 'audit:read',
       'daily_entry:read', 'daily_entry:write',
@@ -68,39 +50,12 @@ const SYSTEM_ROLES = [
     ],
   },
   {
-    name: 'SERVER',
-    description: 'Branch-scoped. Orders, own tables.',
-    isSystem: true,
-    permissions: [
-      'orders:create', 'orders:modify', 'orders:hold',
-      'payments:process', 'payments:view', 'menu:read',
-    ],
-  },
-  {
-    name: 'CASHIER',
-    description: 'Branch-scoped. Counter orders, payments.',
-    isSystem: true,
-    permissions: [
-      'orders:create', 'orders:modify', 'payments:process',
-      'payments:view', 'payments:report', 'menu:read',
-    ],
-  },
-  {
-    name: 'KITCHEN',
-    description: 'Branch-scoped. KDS view only.',
-    isSystem: true,
-    permissions: [
-      'orders:create', 'menu:read', 'menu:86',
-    ],
-  },
-  {
     name: 'AUDITOR',
     description: 'Global. Read-only all reports.',
     isSystem: true,
     permissions: [
-      'payments:view', 'payments:report', 'menu:read',
-      'inventory:read', 'staff:read', 'reports:branch',
-      'reports:global', 'audit:read', 'storage:read',
+      'staff:read', 'reports:branch', 'reports:global', 'audit:read',
+      'daily_entry:read', 'storage:read',
     ],
   },
 ];
@@ -170,17 +125,6 @@ function readBranchTimezone(): string {
   );
 }
 
-async function removeDemoSeedData(): Promise<void> {
-  const demoMenuItemIds = ['seed-welcome-burger'];
-
-  await prisma.orderItem.deleteMany({
-    where: { menuItemId: { in: demoMenuItemIds } },
-  });
-  await prisma.menuItem.deleteMany({
-    where: { id: { in: demoMenuItemIds } },
-  });
-}
-
 async function removeLegacyPortalStaff(reassignToStaffId: string): Promise<void> {
   const legacyStaffIds = ['default-owner', 'staff-alam-saifivn', 'staff-seed-owner'].filter(
     (id) => id !== reassignToStaffId,
@@ -194,14 +138,6 @@ async function removeLegacyPortalStaff(reassignToStaffId: string): Promise<void>
   await prisma.dailyEntry.updateMany({
     where: { lockedByStaffId: { in: legacyStaffIds } },
     data: { lockedByStaffId: reassignToStaffId },
-  });
-  await prisma.order.updateMany({
-    where: { staffId: { in: legacyStaffIds } },
-    data: { staffId: reassignToStaffId },
-  });
-  await prisma.stockMovement.updateMany({
-    where: { staffId: { in: legacyStaffIds } },
-    data: { staffId: reassignToStaffId },
   });
   await prisma.auditLog.updateMany({
     where: { staffId: { in: legacyStaffIds } },
@@ -271,8 +207,6 @@ async function main(): Promise<void> {
     },
   });
 
-  await removeDemoSeedData();
-
   const portalConfig = readSeedPortalConfig();
   const isPlaceholderSeed =
     !process.env.SEED_OWNER_EMAIL?.trim() || portalConfig.email === 'owner@example.com';
@@ -297,7 +231,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Bootstrap only: upserts the first portal owner into Staff (passwordHash). Ongoing users → POST /staff.
   const pinHash = await bcrypt.hash(portalConfig.pin, BCRYPT_SALT_ROUNDS);
   const portalPasswordHash = await bcrypt.hash(portalConfig.password, BCRYPT_SALT_ROUNDS);
 

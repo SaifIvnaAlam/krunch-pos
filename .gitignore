@@ -35,10 +35,7 @@ Thumbs.db
 # Prisma
 packages/database-schema/prisma/migrations/*.sql.bak
 
-# Generated API clients — never edit, always regenerated
-apps/terminal-win/src/Generated/
-apps/terminal-qt/src/generated/
-apps/ios/Sources/Generated/
+# Generated OpenAPI spec
 openapi.json
 
 # SQLite local databases
@@ -49,12 +46,6 @@ openapi.json
 # Test coverage
 coverage/
 .nyc_output/
-
-# Native build artifacts
-apps/terminal-win/bin/
-apps/terminal-win/obj/
-apps/terminal-qt/build/
-apps/ios/DerivedData/
 
 # Local object storage (dev fallback when S3/MinIO is unreachable)
 apps/api/.local-storage/

@@ -1,6 +1,6 @@
 import { useLayoutEffect } from "react";
 
-/** Matches default Tauri window size in tauri.conf.json */
+/** Design canvas size for responsive POS layout scaling. */
 export const POS_DESIGN_WIDTH = 1280;
 export const POS_DESIGN_HEIGHT = 800;
 

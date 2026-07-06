@@ -16,19 +16,16 @@ model Branch {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  staff        Staff[]
-  orders       Order[]
-  menuItems    MenuItem[]
-  stockItems   StockItem[]
-  dailyEntries DailyEntry[]
-  ledgerWorkspace BranchLedgerWorkspace?
-  salaryWorkspace BranchSalaryWorkspace?
-  employeeDirectory BranchEmployeeDirectory?
-  mediaAssets  MediaAsset[]
+  staff               Staff[]
+  dailyEntries        DailyEntry[]
+  ledgerWorkspace     BranchLedgerWorkspace?
+  salaryWorkspace     BranchSalaryWorkspace?
+  employeeDirectory   BranchEmployeeDirectory?
+  mediaAssets         MediaAsset[]
 }
 
 model Staff {
-  /// Portal user account (email/password sign-in) and POS staff (PIN/NFC). One row per person.
+  /// Portal user account (email/password sign-in). One row per person.
   id              String     @id @default(uuid())
   name            String
   email           String?    @unique
@@ -43,15 +40,13 @@ model Staff {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
-  primaryBranch   Branch?        @relation(fields: [primaryBranchId], references: [id])
-  staffRoles      StaffRole[]
-  shifts          Shift[]
-  tempPermissions TempPermission[]
-  auditLogs       AuditLog[]
-  orders          Order[]
-  stockMovements  StockMovement[]
-  dailyEntriesEntered DailyEntry[] @relation("DailyEntryEnteredBy")
-  dailyEntriesLocked  DailyEntry[] @relation("DailyEntryLockedBy")
+  primaryBranch       Branch?          @relation(fields: [primaryBranchId], references: [id])
+  staffRoles          StaffRole[]
+  shifts              Shift[]
+  tempPermissions     TempPermission[]
+  auditLogs           AuditLog[]
+  dailyEntriesEntered DailyEntry[]     @relation("DailyEntryEnteredBy")
+  dailyEntriesLocked  DailyEntry[]     @relation("DailyEntryLockedBy")
 }
 
 model Role {
@@ -120,136 +115,6 @@ model AuditLog {
   createdAt   DateTime @default(now())
 
   staff       Staff    @relation(fields: [staffId], references: [id])
-}
-
-model Order {
-  id          String      @id @default(uuid())
-  branchId    String
-  staffId     String
-  tableNumber String?
-  status      OrderStatus @default(OPEN)
-  items       OrderItem[]
-  payments    Payment[]
-  totalAmount Decimal     @db.Decimal(10, 2)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  branch      Branch      @relation(fields: [branchId], references: [id])
-  staff       Staff       @relation(fields: [staffId], references: [id])
-}
-
-model OrderItem {
-  id          String   @id @default(uuid())
-  orderId     String
-  menuItemId  String
-  quantity    Int
-  unitPrice   Decimal  @db.Decimal(10, 2)
-  modifiers   Json?
-  notes       String?
-  voidedAt    DateTime?
-  voidedBy    String?
-
-  order       Order    @relation(fields: [orderId], references: [id])
-  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
-}
-
-model MenuItem {
-  id          String      @id @default(uuid())
-  branchId    String
-  name        String
-  description String?
-  price       Decimal     @db.Decimal(10, 2)
-  category    String
-  isAvailable Boolean     @default(true)
-  is86d       Boolean     @default(false)
-  imageKey    String?
-  modifiers   Json?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-
-  branch      Branch      @relation(fields: [branchId], references: [id])
-  orderItems  OrderItem[]
-}
-
-/// Ingredient / SKU stock for a branch. On-hand quantity is always derived from StockMovement lines.
-model StockItem {
-  id            String    @id @default(uuid())
-  branchId      String
-  sku           String
-  name          String
-  category      String
-  unit          String    @default("ea")
-  parLevel      Decimal   @default(0) @db.Decimal(12, 4)
-  lastCountedAt DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  branch    Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  movements StockMovement[]
-
-  @@unique([branchId, sku])
-  @@index([branchId])
-}
-
-model StockMovement {
-  id          String         @id @default(uuid())
-  branchId    String
-  stockItemId String
-  direction   StockDirection
-  quantity    Decimal        @db.Decimal(12, 4)
-  reason      String
-  occurredAt  DateTime       @default(now())
-  staffId     String?
-  createdAt   DateTime       @default(now())
-
-  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
-  staff     Staff?    @relation(fields: [staffId], references: [id])
-
-  @@index([branchId, occurredAt])
-  @@index([stockItemId, occurredAt])
-}
-
-enum StockDirection {
-  IN
-  OUT
-}
-
-model Payment {
-  id            String        @id @default(uuid())
-  orderId       String
-  method        PaymentMethod
-  amount        Decimal       @db.Decimal(10, 2)
-  status        PaymentStatus @default(PENDING)
-  stripeId      String?
-  adyenId       String?
-  idempotencyKey String       @unique
-  createdAt     DateTime      @default(now())
-
-  order         Order         @relation(fields: [orderId], references: [id])
-}
-
-enum OrderStatus {
-  OPEN
-  SENT_TO_KITCHEN
-  READY
-  PAID
-  VOIDED
-  HELD
-}
-
-enum PaymentMethod {
-  CASH
-  CARD_STRIPE
-  CARD_ADYEN
-  SPLIT
-}
-
-enum PaymentStatus {
-  PENDING
-  COMPLETED
-  FAILED
-  REFUNDED
-  VOIDED
 }
 
 /// Branch-scoped end-of-day sales & expense record (terminal Daily Entry Form).
