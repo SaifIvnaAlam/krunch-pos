@@ -110,6 +110,23 @@ function parseMoneyInput(raw: string): number {
   return Math.max(0, Math.round(n));
 }
 
+/** Blank input when stored amount is zero. */
+function formatMoneyInputDisplay(amount: number): string {
+  if (!Number.isFinite(amount) || amount === 0) return "";
+  return String(Math.round(amount));
+}
+
+/** Strip leading zeros while typing (e.g. 010 → 10); empty stays empty. */
+function normalizeMoneyDraft(raw: string): string {
+  const t = raw.replace(/,/g, "").trim();
+  if (t === "") return "";
+  const digits = t.replace(/\D/g, "");
+  if (digits === "") return "";
+  const n = parseInt(digits, 10);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return String(n);
+}
+
 function parsePctInput(raw: string): number | null {
   const t = raw.trim();
   if (t === "") return null;
@@ -240,13 +257,13 @@ function SalaryPaymentsModal({
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
           <div className="min-w-0">
             <p id="salary-payments-title" className="text-[15px] font-semibold text-[var(--pos-text-1)]">
-              Pay staff
+              Record payment
             </p>
             <p className="mt-0.5 truncate text-[12px] text-[var(--pos-text-2)]">
               {row.name.trim() || "Unnamed employee"}
             </p>
             <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
-              Should pay{" "}
+              Payable{" "}
               <span className="font-mono font-medium text-[var(--pos-text-1)]">
                 ৳{formatWhole(shouldPay)}
               </span>
@@ -427,7 +444,6 @@ function PayrollSalaries() {
   );
   const [poolDraft, setPoolDraft] = useState("");
   const [paymentEditorRowId, setPaymentEditorRowId] = useState<string | null>(null);
-  const [showAdjustColumns, setShowAdjustColumns] = useState(false);
   const [showAllMonths, setShowAllMonths] = useState(false);
 
   const activeKey = bundle.selectedMonthKey;
@@ -445,6 +461,11 @@ function PayrollSalaries() {
     if (!isSignedIn) return;
     void reloadSalaryWorkspace();
   }, [isSignedIn]);
+
+  useEffect(() => {
+    const total = doc.rows.reduce((sum, row) => sum + row.serviceCharge, 0);
+    setPoolDraft(total > 0 ? String(total) : "");
+  }, [activeKey, loadState.loaded]);
 
   const flushSalaryEdits = () => {
     void flushSalaryWorkspacePersist().catch(() => {
@@ -542,16 +563,29 @@ function PayrollSalaries() {
     }));
   };
 
-  const applyPool = () => {
-    const pool = parseMoneyInput(poolDraft);
-    if (pool <= 0) return;
-    const shares = distributeServiceChargePool(doc.rows, pool);
-    patchDoc((d) => ({
-      ...d,
-      rows: d.rows.map((r) =>
-        shares.has(r.id) ? { ...r, serviceCharge: shares.get(r.id) ?? 0 } : r,
-      ),
-    }));
+  const rowsWithServiceChargePool = (rows: SalarySheetRow[], poolDraftValue: string) => {
+    const pool = parseMoneyInput(poolDraftValue);
+    if (pool <= 0) return rows;
+    const shares = distributeServiceChargePool(rows, pool);
+    return rows.map((r) => ({ ...r, serviceCharge: shares.get(r.id) ?? 0 }));
+  };
+
+  const handlePoolDraftChange = (raw: string) => {
+    const draft = normalizeMoneyDraft(raw);
+    setPoolDraft(draft);
+    patchDoc((d) => {
+      if (draft === "") {
+        return { ...d, rows: d.rows.map((r) => ({ ...r, serviceCharge: 0 })) };
+      }
+      return { ...d, rows: rowsWithServiceChargePool(d.rows, draft) };
+    });
+  };
+
+  const updateRowPct = (id: string, pct: number | null) => {
+    patchDoc((d) => {
+      const rows = d.rows.map((r) => (r.id === id ? { ...r, pct } : r));
+      return { ...d, rows: rowsWithServiceChargePool(rows, poolDraft) };
+    });
   };
 
   const thNum = "px-2 py-2.5 text-right font-semibold text-[var(--pos-text-1)]";
@@ -565,7 +599,7 @@ function PayrollSalaries() {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
         <div className="shrink-0">
-          <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Pay staff</h1>
+          <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Employee Salaries</h1>
           <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">
             Track what each person should earn and record when you pay them.
           </p>
@@ -602,7 +636,7 @@ function PayrollSalaries() {
       <div className="shrink-0">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Pay staff</h1>
+            <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Employee Salaries</h1>
             <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">
               {employees.length} active staff · manage roster in{" "}
               <button
@@ -734,7 +768,7 @@ function PayrollSalaries() {
         <div className="grid grid-cols-1 gap-px bg-[var(--pos-divider)] sm:grid-cols-3">
           <div className="bg-[var(--pos-card)] px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              Should pay
+              Payable
             </p>
             <p className="mt-1 font-mono text-[18px] font-semibold text-[var(--pos-text-1)]">
               ৳{formatWhole(totals.payable)}
@@ -758,25 +792,6 @@ function PayrollSalaries() {
               ৳{formatWhole(stillOwedTotal)}
             </p>
           </div>
-        </div>
-        <div className="flex flex-wrap items-end gap-3 border-t border-solid [border-color:var(--pos-divider)] px-4 py-3">
-          <label className="flex min-w-[140px] max-w-[200px] flex-col gap-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              Service charge pool
-            </span>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={poolDraft}
-              onChange={(e) => setPoolDraft(e.target.value)}
-              placeholder="e.g. 54681"
-              className={inputMoney}
-              aria-label="Service charge pool to split"
-            />
-          </label>
-          <GhostButton type="button" onClick={applyPool}>
-            Split by %
-          </GhostButton>
         </div>
       </div>
       {showMonthOverview ? (
@@ -804,7 +819,7 @@ function PayrollSalaries() {
                 <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
                   <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
                     <th className="px-4 py-2.5">Month</th>
-                    <th className="px-4 py-2.5 text-right">Should pay</th>
+                    <th className="px-4 py-2.5 text-right">Payable</th>
                     <th className="px-4 py-2.5 text-right">Paid</th>
                     <th className="px-4 py-2.5 text-right">Still owed</th>
                   </tr>
@@ -849,11 +864,6 @@ function PayrollSalaries() {
           ) : null}
         </div>
       ) : null}
-      {loadState.loading ? (
-        <p className="text-[12px] text-[var(--pos-text-2)]" role="status">
-          Loading salary registers...
-        </p>
-      ) : null}
       {loadState.error ? (
         <p className="text-[12px] text-red-600 dark:text-red-400" role="status">
           {loadState.error}
@@ -861,19 +871,25 @@ function PayrollSalaries() {
       ) : null}
       <div className={`shrink-0 rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
-          <div>
-            <p className="text-[12px] font-semibold text-[var(--pos-text-1)]">This month&apos;s staff</p>
-            <p className="mt-0.5 text-[11px] text-[var(--pos-text-2)]">
-              Basic salary comes from Employee Management. Adjust service charge, overtime, bonus,
-              and fines here each month.
-            </p>
-          </div>
-          <GhostButton type="button" onClick={() => setShowAdjustColumns((v) => !v)}>
-            {showAdjustColumns ? "Hide OT / bonus" : "Show OT / bonus"}
-          </GhostButton>
+          <p className="text-[12px] font-semibold text-[var(--pos-text-1)]">Salary Sheet</p>
+          <label className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+              Total Service Charge
+            </span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={poolDraft}
+              onChange={(e) => handlePoolDraftChange(e.target.value)}
+              onBlur={flushSalaryEdits}
+              placeholder="e.g. 54681"
+              className={`${inputMoney} min-w-[120px] max-w-[200px]`}
+              aria-label="Total service charge to split"
+            />
+          </label>
         </div>
         <div>
-          <table className="w-full min-w-[820px] border-collapse text-[12px]">
+          <table className="w-full min-w-[980px] border-collapse text-[12px]">
             <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)] text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--pos-text-2)]">
                 <th className="sticky left-0 z-[2] min-w-[120px] bg-[var(--pos-card)] px-3 py-2.5 text-left">
@@ -883,12 +899,12 @@ function PayrollSalaries() {
                   Basic
                 </th>
                 <th className={thNum} title="Basic + service charge + overtime + bonus minus fines">
-                  Should pay
+                  Payable
                 </th>
                 <th className={thNum} title="Total paid so far this month">
                   Paid
                 </th>
-                <th className={thNum} title="Should pay minus paid">
+                <th className={thNum} title="Payable minus paid">
                   Still owed
                 </th>
                 <th className="min-w-[88px] px-2 py-2.5 text-center">Pay</th>
@@ -901,17 +917,13 @@ function PayrollSalaries() {
                 <th className={thNum} title="Damage or policy fines deducted from pay">
                   Fines
                 </th>
-                {showAdjustColumns ? (
-                  <>
-                    <th className={thNum}>Overtime</th>
-                    <th className={thNum}>Eid bonus</th>
-                  </>
-                ) : null}
+                <th className={thNum}>Overtime</th>
+                <th className={thNum}>Eid bonus</th>
               </tr>
             </thead>
             <tbody>
               {doc.rows.map((r) => {
-                const shouldPay = totalPayableForRow(r);
+                const payable = totalPayableForRow(r);
                 const paid = sumPaymentsForRow(r);
                 const stillOwed = stillOwedForRow(r);
                 return (
@@ -928,13 +940,13 @@ function PayrollSalaries() {
                       {formatWhole(r.basic)}
                     </td>
                     <td className={`${tdNum} text-right font-mono text-[11px] font-semibold text-[var(--pos-text-1)]`}>
-                      {formatWhole(shouldPay)}
+                      {formatWhole(payable)}
                     </td>
                     <td className={`${tdNum} text-right font-mono text-[11px] text-[var(--pos-text-1)]`}>
                       {formatWhole(paid)}
                     </td>
                     <td
-                      className={`${tdNum} text-right font-mono text-[11px] font-semibold ${stillOwedTone(shouldPay, paid, stillOwed)}`}
+                      className={`${tdNum} text-right font-mono text-[11px] font-semibold ${stillOwedTone(payable, paid, stillOwed)}`}
                     >
                       {formatWhole(stillOwed)}
                     </td>
@@ -954,65 +966,66 @@ function PayrollSalaries() {
                         type="text"
                         inputMode="decimal"
                         value={r.pct === null ? "" : String(r.pct)}
-                        onChange={(e) => updateRow(r.id, { pct: parsePctInput(e.target.value) })}
+                        onChange={(e) => updateRowPct(r.id, parsePctInput(e.target.value))}
                         className={`${inputMoney} min-w-[48px]`}
                         aria-label={`Service charge percent for ${r.name || "row"}`}
                       />
                     </td>
                     <td className={tdNum}>
                       <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={r.serviceCharge}
-                        onChange={(e) =>
-                          updateRow(r.id, { serviceCharge: parseMoneyInput(e.target.value) })
-                        }
-                        onBlur={flushSalaryEdits}
-                        className={inputMoney}
+                        type="text"
+                        readOnly
+                        tabIndex={-1}
+                        value={formatMoneyInputDisplay(r.serviceCharge)}
+                        className={`${inputMoney} cursor-default`}
                         aria-label={`Service charge for ${r.name || "row"}`}
                       />
                     </td>
                     <td className={tdNum}>
                       <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={r.fines}
+                        type="text"
+                        inputMode="numeric"
+                        value={formatMoneyInputDisplay(r.fines)}
                         onChange={(e) =>
-                          updateRow(r.id, { fines: parseMoneyInput(e.target.value) })
+                          updateRow(r.id, {
+                            fines: parseMoneyInput(normalizeMoneyDraft(e.target.value)),
+                          })
                         }
                         onBlur={flushSalaryEdits}
                         className={inputMoney}
                         aria-label={`Fines for ${r.name || "row"}`}
                       />
                     </td>
-                    {showAdjustColumns ? (
-                      <>
-                        <td className={tdNum}>
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={r.overtime}
-                            onChange={(e) => updateRow(r.id, { overtime: parseMoneyInput(e.target.value) })}
-                            className={inputMoney}
-                            aria-label={`Overtime for ${r.name || "row"}`}
-                          />
-                        </td>
-                        <td className={tdNum}>
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={r.eidBonus}
-                            onChange={(e) => updateRow(r.id, { eidBonus: parseMoneyInput(e.target.value) })}
-                            className={inputMoney}
-                            aria-label={`Eid bonus for ${r.name || "row"}`}
-                          />
-                        </td>
-                      </>
-                    ) : null}
+                    <td className={tdNum}>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatMoneyInputDisplay(r.overtime)}
+                        onChange={(e) =>
+                          updateRow(r.id, {
+                            overtime: parseMoneyInput(normalizeMoneyDraft(e.target.value)),
+                          })
+                        }
+                        onBlur={flushSalaryEdits}
+                        className={inputMoney}
+                        aria-label={`Overtime for ${r.name || "row"}`}
+                      />
+                    </td>
+                    <td className={tdNum}>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatMoneyInputDisplay(r.eidBonus)}
+                        onChange={(e) =>
+                          updateRow(r.id, {
+                            eidBonus: parseMoneyInput(normalizeMoneyDraft(e.target.value)),
+                          })
+                        }
+                        onBlur={flushSalaryEdits}
+                        className={inputMoney}
+                        aria-label={`Eid bonus for ${r.name || "row"}`}
+                      />
+                    </td>
                   </tr>
                 );
               })}
@@ -1042,16 +1055,12 @@ function PayrollSalaries() {
                 <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
                   {formatWhole(totals.fines)}
                 </td>
-                {showAdjustColumns ? (
-                  <>
-                    <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                      {formatWhole(totals.ot)}
-                    </td>
-                    <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                      {formatWhole(totals.eid)}
-                    </td>
-                  </>
-                ) : null}
+                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
+                  {formatWhole(totals.ot)}
+                </td>
+                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
+                  {formatWhole(totals.eid)}
+                </td>
               </tr>
             </tbody>
           </table>
