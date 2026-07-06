@@ -3,6 +3,7 @@ export {
   getSalaryBundle,
   getSalaryWorkspaceLoadState,
   loadSalaryWorkspace,
+  reloadSalaryWorkspace,
   setSalaryBundle,
   subscribeSalaryBundle,
 } from "./salaryWorkspaceStore";

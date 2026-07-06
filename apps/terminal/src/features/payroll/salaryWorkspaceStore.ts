@@ -2,16 +2,18 @@ import { apiFetch } from "@/features/api-client";
 import { readValidAccessToken } from "@/features/auth/authSession";
 import { isDemoDataMode } from "@/shared/config/env";
 import {
-  clearLegacyLocalSalaryStorage,
   coerceSalarySheetBundle,
   emptySalarySheetBundle,
+  mergeSalarySheetBundles,
   readLegacyLocalSalaryBundle,
+  writeSalarySheetBundle,
   type SalarySheetBundle,
 } from "../../lib/salarySheetStorage";
 
 type ApiSalaryWorkspace = SalarySheetBundle & { updatedAt?: string };
 
-let bundleSnapshot: SalarySheetBundle = emptySalarySheetBundle();
+let bundleSnapshot: SalarySheetBundle =
+  readLegacyLocalSalaryBundle() ?? emptySalarySheetBundle();
 const listeners = new Set<() => void>();
 let loadPromise: Promise<void> | null = null;
 let loadedFromApi = false;
@@ -48,6 +50,11 @@ function refreshLoadStateSnapshot() {
 function emit() {
   refreshLoadStateSnapshot();
   for (const fn of listeners) fn();
+}
+
+function mirrorToLocalStorage(bundle: SalarySheetBundle) {
+  if (isDemoDataMode()) return;
+  writeSalarySheetBundle(bundle);
 }
 
 export function getSalaryBundle(): SalarySheetBundle {
@@ -97,6 +104,7 @@ async function persistBundleToApi(bundle: SalarySheetBundle): Promise<void> {
     }),
   });
   localDirty = false;
+  mirrorToLocalStorage(bundle);
 }
 
 function schedulePersist() {
@@ -104,7 +112,11 @@ function schedulePersist() {
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    if (!requireToken()) return;
+    if (!requireToken()) {
+      loadError = "Sign in to save salary registers.";
+      emit();
+      return;
+    }
     persistInFlight = persistBundleToApi(bundleSnapshot)
       .then(() => {
         loadError = null;
@@ -123,30 +135,24 @@ function schedulePersist() {
 export function setSalaryBundle(updater: (b: SalarySheetBundle) => SalarySheetBundle) {
   bundleSnapshot = updater(bundleSnapshot);
   localDirty = true;
+  mirrorToLocalStorage(bundleSnapshot);
   emit();
   schedulePersist();
 }
 
-async function maybeMigrateLegacyLocal(bundle: SalarySheetBundle): Promise<SalarySheetBundle> {
-  const legacy = readLegacyLocalSalaryBundle();
-  if (!legacy) return bundle;
+async function reconcileWithLocalCache(remote: SalarySheetBundle): Promise<SalarySheetBundle> {
+  const local = readLegacyLocalSalaryBundle();
+  if (!local) return remote;
 
-  const hasApiMonths = Object.keys(bundle.months).some((k) => {
-    const doc = bundle.months[k];
-    return doc && doc.rows.some((r) => r.name.trim() || r.basic > 0);
-  });
-  if (hasApiMonths) {
-    clearLegacyLocalSalaryStorage();
-    return bundle;
-  }
+  const merged = mergeSalarySheetBundles(remote, local);
+  mirrorToLocalStorage(merged);
 
-  const merged = legacy;
-  if (requireToken()) {
+  const localIsNewer = JSON.stringify(merged) !== JSON.stringify(remote);
+  if (localIsNewer && requireToken()) {
     try {
       await persistBundleToApi(merged);
-      clearLegacyLocalSalaryStorage();
     } catch {
-      return merged;
+      /* keep merged local snapshot; schedulePersist will retry on next edit */
     }
   }
   return merged;
@@ -167,15 +173,23 @@ export function loadSalaryWorkspace(): Promise<void> {
   loadPromise = (async () => {
     try {
       let bundle = await fetchBundleFromApi();
-      bundle = await maybeMigrateLegacyLocal(bundle);
+      bundle = await reconcileWithLocalCache(bundle);
       if (!localDirty) {
         bundleSnapshot = bundle;
+        mirrorToLocalStorage(bundle);
       }
       loadedFromApi = true;
       loadError = null;
     } catch (e) {
-      loadError =
-        e instanceof Error ? e.message : "Could not load salary workspace.";
+      const local = readLegacyLocalSalaryBundle();
+      if (local && !localDirty) {
+        bundleSnapshot = local;
+        loadError = null;
+        loadedFromApi = true;
+      } else {
+        loadError =
+          e instanceof Error ? e.message : "Could not load salary workspace.";
+      }
     } finally {
       loading = false;
       emit();
@@ -183,6 +197,13 @@ export function loadSalaryWorkspace(): Promise<void> {
   })();
 
   return loadPromise;
+}
+
+/** Force a fresh API load (e.g. after sign-in). */
+export function reloadSalaryWorkspace(): Promise<void> {
+  loadPromise = null;
+  loadedFromApi = false;
+  return loadSalaryWorkspace();
 }
 
 export async function flushSalaryWorkspacePersist(): Promise<void> {
@@ -205,4 +226,18 @@ export async function flushSalaryWorkspacePersist(): Promise<void> {
     emit();
     throw new Error(message);
   }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    mirrorToLocalStorage(bundleSnapshot);
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    if (!requireToken() || isDemoDataMode()) return;
+    void persistBundleToApi(bundleSnapshot).catch(() => {
+      /* best-effort on tab close */
+    });
+  });
 }

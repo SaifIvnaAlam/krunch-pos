@@ -42,6 +42,8 @@ export type SalarySheetRow = {
   serviceCharge: number;
   overtime: number;
   eidBonus: number;
+  /** Damage / policy fines deducted from this month's pay (whole BDT). */
+  fines: number;
   /** Individual payouts (partial pays on different days). */
   payments: SalaryPayment[];
 };
@@ -85,7 +87,9 @@ export function isMonthKey(s: string): boolean {
 }
 
 export function totalPayableForRow(r: SalarySheetRow): number {
-  return r.basic + r.serviceCharge + r.overtime + r.eidBonus;
+  const gross = r.basic + r.serviceCharge + r.overtime + r.eidBonus;
+  const fines = Number.isFinite(r.fines) ? Math.max(0, Math.round(r.fines)) : 0;
+  return Math.max(0, gross - fines);
 }
 
 export function sumPaymentsForRow(r: SalarySheetRow): number {
@@ -95,6 +99,33 @@ export function sumPaymentsForRow(r: SalarySheetRow): number {
 
 export function isSalaryPaymentPosted(p: SalaryPayment): boolean {
   return Boolean(p.dailyEntryLineId && p.dailyEntryDate);
+}
+
+function docUpdatedAtMs(doc: SalarySheetDoc): number {
+  const t = Date.parse(doc.updatedAt);
+  return Number.isFinite(t) ? t : 0;
+}
+
+/** Prefer the sheet with the latest `updatedAt` when both exist for a month. */
+export function mergeSalarySheetBundles(
+  remote: SalarySheetBundle,
+  local: SalarySheetBundle,
+): SalarySheetBundle {
+  const months: Record<string, SalarySheetDoc> = { ...remote.months };
+  for (const [monthKey, localDoc] of Object.entries(local.months)) {
+    if (!localDoc) continue;
+    const remoteDoc = months[monthKey];
+    if (!remoteDoc) {
+      months[monthKey] = localDoc;
+      continue;
+    }
+    months[monthKey] =
+      docUpdatedAtMs(localDoc) > docUpdatedAtMs(remoteDoc) ? localDoc : remoteDoc;
+  }
+  return {
+    selectedMonthKey: remote.selectedMonthKey || local.selectedMonthKey,
+    months,
+  };
 }
 
 export function summarizeSalaryDoc(doc: SalarySheetDoc): {
@@ -206,6 +237,7 @@ export function emptySalaryRow(): SalarySheetRow {
     serviceCharge: 0,
     overtime: 0,
     eidBonus: 0,
+    fines: 0,
     payments: [],
   };
 }
@@ -220,6 +252,7 @@ export function salaryRowForEmployeeRecord(emp: Employee): SalarySheetRow {
     serviceCharge: 0,
     overtime: 0,
     eidBonus: 0,
+    fines: 0,
     payments: [],
   };
 }
@@ -308,6 +341,24 @@ export function emptySalarySheetBundle(
   };
 }
 
+function coerceFinesAmount(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.max(0, Math.round(raw));
+  }
+  if (Array.isArray(raw)) {
+    let sum = 0;
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const amount = (item as Record<string, unknown>).amount;
+      if (typeof amount === "number" && Number.isFinite(amount)) {
+        sum += Math.max(0, Math.round(amount));
+      }
+    }
+    return sum;
+  }
+  return 0;
+}
+
 function coercePayment(raw: unknown): SalaryPayment | null {
   if (!raw || typeof raw !== "object") return null;
   const p = raw as Record<string, unknown>;
@@ -379,6 +430,8 @@ function coerceRow(raw: unknown, rowMonthKey?: string): SalarySheetRow | null {
         ? pctRaw
         : null;
 
+  const fines = coerceFinesAmount(o.fines);
+
   const paymentsRaw = o.payments;
   let payments: SalaryPayment[] = [];
   if (Array.isArray(paymentsRaw)) {
@@ -415,6 +468,7 @@ function coerceRow(raw: unknown, rowMonthKey?: string): SalarySheetRow | null {
     serviceCharge: num(o.serviceCharge),
     overtime: num(o.overtime),
     eidBonus: num(o.eidBonus),
+    fines,
     payments,
   };
 }

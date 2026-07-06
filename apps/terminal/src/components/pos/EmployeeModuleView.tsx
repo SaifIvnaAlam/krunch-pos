@@ -24,6 +24,7 @@ import {
   getSalaryBundle,
   getSalaryWorkspaceLoadState,
   loadSalaryWorkspace,
+  reloadSalaryWorkspace,
   flushSalaryWorkspacePersist,
   postSalaryPayoutToDailyEntry,
   setSalaryBundle,
@@ -405,7 +406,7 @@ function SalaryPaymentsModal({
 }
 
 function PayrollSalaries() {
-  const { userName } = useSession();
+  const { userName, isSignedIn } = useSession();
   const employees = useActiveEmployees();
   const employeeSyncKey = employees
     .map(
@@ -439,6 +440,17 @@ function PayrollSalaries() {
     void loadEmployeeDirectory();
     void loadSalaryWorkspace();
   }, []);
+
+  useEffect(() => {
+    if (!isSignedIn) return;
+    void reloadSalaryWorkspace();
+  }, [isSignedIn]);
+
+  const flushSalaryEdits = () => {
+    void flushSalaryWorkspacePersist().catch(() => {
+      /* loadError surfaced in UI */
+    });
+  };
 
   useEffect(() => {
     setSalaryBundle((b) => {
@@ -503,6 +515,7 @@ function PayrollSalaries() {
     let sc = 0;
     let ot = 0;
     let eid = 0;
+    let fines = 0;
     let payable = 0;
     let paid = 0;
     for (const r of doc.rows) {
@@ -510,10 +523,11 @@ function PayrollSalaries() {
       sc += r.serviceCharge;
       ot += r.overtime;
       eid += r.eidBonus;
+      fines += r.fines;
       payable += totalPayableForRow(r);
       paid += sumPaymentsForRow(r);
     }
-    return { basic, sc, ot, eid, payable, paid };
+    return { basic, sc, ot, eid, fines, payable, paid };
   }, [doc.rows]);
 
   const stillOwedTotal = Math.max(0, totals.payable - totals.paid);
@@ -850,8 +864,8 @@ function PayrollSalaries() {
           <div>
             <p className="text-[12px] font-semibold text-[var(--pos-text-1)]">This month&apos;s staff</p>
             <p className="mt-0.5 text-[11px] text-[var(--pos-text-2)]">
-              Basic salary comes from Employee Management. Adjust service charge, overtime, and bonus
-              here each month.
+              Basic salary comes from Employee Management. Adjust service charge, overtime, bonus,
+              and fines here each month.
             </p>
           </div>
           <GhostButton type="button" onClick={() => setShowAdjustColumns((v) => !v)}>
@@ -868,7 +882,7 @@ function PayrollSalaries() {
                 <th className={thNum} title="Fixed monthly basic from Employee Management">
                   Basic
                 </th>
-                <th className={thNum} title="Basic + service charge + overtime + bonus for this month">
+                <th className={thNum} title="Basic + service charge + overtime + bonus minus fines">
                   Should pay
                 </th>
                 <th className={thNum} title="Total paid so far this month">
@@ -883,6 +897,9 @@ function PayrollSalaries() {
                 </th>
                 <th className={thNum} title="Service charge share for this month">
                   Service charge
+                </th>
+                <th className={thNum} title="Damage or policy fines deducted from pay">
+                  Fines
                 </th>
                 {showAdjustColumns ? (
                   <>
@@ -951,8 +968,23 @@ function PayrollSalaries() {
                         onChange={(e) =>
                           updateRow(r.id, { serviceCharge: parseMoneyInput(e.target.value) })
                         }
+                        onBlur={flushSalaryEdits}
                         className={inputMoney}
                         aria-label={`Service charge for ${r.name || "row"}`}
+                      />
+                    </td>
+                    <td className={tdNum}>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={r.fines}
+                        onChange={(e) =>
+                          updateRow(r.id, { fines: parseMoneyInput(e.target.value) })
+                        }
+                        onBlur={flushSalaryEdits}
+                        className={inputMoney}
+                        aria-label={`Fines for ${r.name || "row"}`}
                       />
                     </td>
                     {showAdjustColumns ? (
@@ -1006,6 +1038,9 @@ function PayrollSalaries() {
                 <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)]`} />
                 <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
                   {formatWhole(totals.sc)}
+                </td>
+                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
+                  {formatWhole(totals.fines)}
                 </td>
                 {showAdjustColumns ? (
                   <>

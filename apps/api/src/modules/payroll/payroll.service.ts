@@ -33,6 +33,7 @@ function emptyBundle(monthKey = currentMonthKey()): SalaryWorkspaceDto {
             serviceCharge: 0,
             overtime: 0,
             eidBonus: 0,
+            fines: 0,
             payments: [],
           },
         ],
