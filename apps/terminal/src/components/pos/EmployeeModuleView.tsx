@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ComponentPropsWithoutRef,
@@ -19,16 +20,21 @@ import {
 } from "lucide-react";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
 import { useSession } from "@/features/auth";
-import { loadEmployeeDirectory } from "@/features/employees";
+import {
+  getEmployeeDirectoryLoadState,
+  loadEmployeeDirectory,
+  subscribeEmployeeDirectoryStore,
+} from "@/features/employees";
 import {
   getSalaryBundle,
   getSalaryWorkspaceLoadState,
-  loadSalaryWorkspace,
+  getSalaryWorkspaceSaveState,
   reloadSalaryWorkspace,
   flushSalaryWorkspacePersist,
   postSalaryPayoutToDailyEntry,
   setSalaryBundle,
   subscribeSalaryBundle,
+  syncLoadedSalaryBundleToEmployees,
 } from "@/features/payroll";
 import {
   EMPLOYEE_LEDGER_LINE_OPTIONS,
@@ -442,9 +448,20 @@ function PayrollSalaries() {
     getSalaryWorkspaceLoadState,
     getSalaryWorkspaceLoadState,
   );
+  const saveState = useSyncExternalStore(
+    subscribeSalaryBundle,
+    getSalaryWorkspaceSaveState,
+    getSalaryWorkspaceSaveState,
+  );
+  const employeeLoadState = useSyncExternalStore(
+    subscribeEmployeeDirectoryStore,
+    getEmployeeDirectoryLoadState,
+    getEmployeeDirectoryLoadState,
+  );
   const [poolDraft, setPoolDraft] = useState("");
   const [paymentEditorRowId, setPaymentEditorRowId] = useState<string | null>(null);
   const [showAllMonths, setShowAllMonths] = useState(false);
+  const wasSignedInRef = useRef(isSignedIn);
 
   const activeKey = bundle.selectedMonthKey;
   const doc = bundle.months[activeKey] ?? ensureMonthDoc(activeKey, undefined, employees);
@@ -454,12 +471,14 @@ function PayrollSalaries() {
 
   useEffect(() => {
     void loadEmployeeDirectory();
-    void loadSalaryWorkspace();
+    void reloadSalaryWorkspace();
   }, []);
 
   useEffect(() => {
-    if (!isSignedIn) return;
-    void reloadSalaryWorkspace();
+    if (isSignedIn && !wasSignedInRef.current) {
+      void reloadSalaryWorkspace();
+    }
+    wasSignedInRef.current = isSignedIn;
   }, [isSignedIn]);
 
   useEffect(() => {
@@ -474,20 +493,9 @@ function PayrollSalaries() {
   };
 
   useEffect(() => {
-    setSalaryBundle((b) => {
-      const key = b.selectedMonthKey;
-      const cur = b.months[key];
-      const next = ensureMonthDoc(key, cur, employees);
-      if (
-        cur &&
-        cur.rows.length === next.rows.length &&
-        cur.rows.every((row, i) => row.employeeId === next.rows[i]?.employeeId)
-      ) {
-        return b;
-      }
-      return { ...b, months: { ...b.months, [key]: next } };
-    });
-  }, [employeeSyncKey, activeKey, employees]);
+    if (!loadState.loaded || !employeeLoadState.loaded) return;
+    syncLoadedSalaryBundleToEmployees();
+  }, [employeeSyncKey, loadState.loaded, employeeLoadState.loaded]);
 
   const patchDoc = (updater: (d: SalarySheetDoc) => SalarySheetDoc) => {
     setSalaryBundle((b) => {
@@ -867,6 +875,19 @@ function PayrollSalaries() {
       {loadState.error ? (
         <p className="text-[12px] text-red-600 dark:text-red-400" role="status">
           {loadState.error}
+        </p>
+      ) : null}
+      {saveState.saving ? (
+        <p className="text-[12px] text-[var(--pos-text-2)]" role="status">
+          Saving…
+        </p>
+      ) : saveState.error ? (
+        <p className="text-[12px] text-red-600 dark:text-red-400" role="status">
+          {saveState.error}
+        </p>
+      ) : saveState.dirty ? (
+        <p className="text-[12px] text-amber-700 dark:text-amber-400" role="status">
+          Unsaved changes — click outside the field or wait a moment to sync.
         </p>
       ) : null}
       <div className={`shrink-0 rounded-[14px] bg-[var(--pos-card)] ${border0}`}>

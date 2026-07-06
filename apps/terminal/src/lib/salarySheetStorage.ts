@@ -7,6 +7,7 @@ import {
   getEmployeeById,
   mergeRosterNames,
 } from "./employeeDirectoryStorage";
+import { getEmployeeDirectoryLoadState } from "@/features/employees/employeeDirectoryStore";
 
 export type SalaryPaymentEmployeeLineKind =
   | "salary"
@@ -331,6 +332,25 @@ export function ensureMonthDoc(
   );
 }
 
+/** Re-align every month in the bundle to the live employee roster (preserves pay data per person). */
+export function syncSalaryBundleToEmployees(
+  bundle: SalarySheetBundle,
+  employees: Employee[],
+): SalarySheetBundle {
+  const months = { ...bundle.months };
+  let changed = false;
+  for (const k of Object.keys(months)) {
+    if (!isMonthKey(k)) continue;
+    const cur = months[k]!;
+    const next = ensureMonthDoc(k, cur, employees);
+    if (JSON.stringify(next) !== JSON.stringify(cur)) {
+      months[k] = next;
+      changed = true;
+    }
+  }
+  return changed ? { ...bundle, months } : bundle;
+}
+
 export function emptySalarySheetBundle(
   monthKey = monthKeyFromDate(),
   employees: Employee[] = getActiveEmployeesSnapshot(),
@@ -541,16 +561,17 @@ export function coerceSalarySheetBundle(raw: unknown): SalarySheetBundle | null 
     );
   }
 
-  const employees = getActiveEmployeesSnapshot();
-
   if (!months[selectedMonthKey]) {
+    const employees = getEmployeeDirectoryLoadState().loaded
+      ? getActiveEmployeesSnapshot()
+      : [];
     months[selectedMonthKey] = defaultDocForNewMonth(selectedMonthKey, employees);
   }
 
-  for (const k of Object.keys(months)) {
-    if (!isMonthKey(k)) continue;
-    months[k] = ensureMonthDoc(k, months[k], employees);
-  }
+  // Do not call ensureMonthDoc here — getActiveEmployeesSnapshot() may still be the
+  // placeholder roster (random ids) before the API employee directory loads, which
+  // would drop real rows (e.g. Mujib) and zero out fines. Row sync runs later once
+  // both workspaces have loaded (EmployeeModuleView / syncSalaryBundleToEmployees).
 
   return { selectedMonthKey, months };
 }
@@ -567,9 +588,7 @@ export function readLegacyLocalSalaryBundle(): SalarySheetBundle | null {
     const migrated = readV1SalaryDoc();
     if (migrated) {
       const key = monthKeyFromDate();
-      const employees = getActiveEmployeesSnapshot();
-      const months = { [key]: ensureMonthDoc(key, migrated, employees) };
-      return { selectedMonthKey: key, months };
+      return { selectedMonthKey: key, months: { [key]: migrated } };
     }
   } catch {
     /* ignore */

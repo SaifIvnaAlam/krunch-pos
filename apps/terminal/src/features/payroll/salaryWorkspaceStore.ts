@@ -1,19 +1,23 @@
 import { apiFetch } from "@/features/api-client";
 import { readValidAccessToken } from "@/features/auth/authSession";
+import {
+  getActiveEmployeesStoreSnapshot,
+  getEmployeeDirectoryLoadState,
+} from "@/features/employees/employeeDirectoryStore";
 import { isDemoDataMode } from "@/shared/config/env";
 import {
+  clearLegacyLocalSalaryStorage,
   coerceSalarySheetBundle,
   emptySalarySheetBundle,
-  mergeSalarySheetBundles,
-  readLegacyLocalSalaryBundle,
+  syncSalaryBundleToEmployees,
   writeSalarySheetBundle,
   type SalarySheetBundle,
 } from "../../lib/salarySheetStorage";
 
 type ApiSalaryWorkspace = SalarySheetBundle & { updatedAt?: string };
 
-let bundleSnapshot: SalarySheetBundle =
-  readLegacyLocalSalaryBundle() ?? emptySalarySheetBundle();
+/** In-memory only until the first successful API load — never seed from localStorage. */
+let bundleSnapshot: SalarySheetBundle = emptySalarySheetBundle();
 const listeners = new Set<() => void>();
 let loadPromise: Promise<void> | null = null;
 let loadedFromApi = false;
@@ -23,11 +27,18 @@ let loadError: string | null = null;
 let loading = false;
 /** True after local edits; prevents a late API load from wiping unsaved salary data. */
 let localDirty = false;
+let saving = false;
 
 let loadStateSnapshot = {
   loading: false,
   error: null as string | null,
   loaded: false,
+};
+
+let saveStateSnapshot = {
+  saving: false,
+  error: null as string | null,
+  dirty: false,
 };
 
 function refreshLoadStateSnapshot() {
@@ -47,8 +58,21 @@ function refreshLoadStateSnapshot() {
   }
 }
 
+function refreshSaveStateSnapshot() {
+  const nextSaving = saving;
+  const nextError = saveStateSnapshot.error;
+  const nextDirty = localDirty;
+  if (
+    saveStateSnapshot.saving !== nextSaving ||
+    saveStateSnapshot.dirty !== nextDirty
+  ) {
+    saveStateSnapshot = { saving: nextSaving, error: nextError, dirty: nextDirty };
+  }
+}
+
 function emit() {
   refreshLoadStateSnapshot();
+  refreshSaveStateSnapshot();
   for (const fn of listeners) fn();
 }
 
@@ -74,6 +98,14 @@ export function getSalaryWorkspaceLoadState(): {
   return loadStateSnapshot;
 }
 
+export function getSalaryWorkspaceSaveState(): {
+  saving: boolean;
+  error: string | null;
+  dirty: boolean;
+} {
+  return saveStateSnapshot;
+}
+
 function requireToken(): string | null {
   return readValidAccessToken();
 }
@@ -94,17 +126,47 @@ async function fetchBundleFromApi(): Promise<SalarySheetBundle> {
 
 async function persistBundleToApi(bundle: SalarySheetBundle): Promise<void> {
   const token = requireToken();
-  if (!token) return;
-  await apiFetch<ApiSalaryWorkspace>("/payroll/workspace", {
-    method: "PUT",
-    token,
-    body: JSON.stringify({
-      selectedMonthKey: bundle.selectedMonthKey,
-      months: bundle.months,
-    }),
-  });
-  localDirty = false;
-  mirrorToLocalStorage(bundle);
+  if (!token) {
+    throw new Error("Sign in to save salary registers.");
+  }
+  saving = true;
+  saveStateSnapshot = { saving: true, error: null, dirty: localDirty };
+  emit();
+  try {
+    await apiFetch<ApiSalaryWorkspace>("/payroll/workspace", {
+      method: "PUT",
+      token,
+      body: JSON.stringify({
+        selectedMonthKey: bundle.selectedMonthKey,
+        months: bundle.months,
+      }),
+    });
+    localDirty = false;
+    mirrorToLocalStorage(bundle);
+    saveStateSnapshot = { saving: false, error: null, dirty: false };
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Could not save salary workspace.";
+    saveStateSnapshot = { saving: false, error: message, dirty: localDirty };
+    throw e;
+  } finally {
+    saving = false;
+    emit();
+  }
+}
+
+function applyLoadedBundle(bundle: SalarySheetBundle) {
+  if (localDirty) return;
+  let next = bundle;
+  if (getEmployeeDirectoryLoadState().loaded) {
+    next = syncSalaryBundleToEmployees(
+      next,
+      getActiveEmployeesStoreSnapshot(),
+    );
+  }
+  bundleSnapshot = next;
+  mirrorToLocalStorage(next);
+  clearLegacyLocalSalaryStorage();
 }
 
 function schedulePersist() {
@@ -114,6 +176,11 @@ function schedulePersist() {
     persistTimer = null;
     if (!requireToken()) {
       loadError = "Sign in to save salary registers.";
+      saveStateSnapshot = {
+        saving: false,
+        error: "Sign in to save salary registers.",
+        dirty: localDirty,
+      };
       emit();
       return;
     }
@@ -133,29 +200,13 @@ function schedulePersist() {
 }
 
 export function setSalaryBundle(updater: (b: SalarySheetBundle) => SalarySheetBundle) {
-  bundleSnapshot = updater(bundleSnapshot);
+  const next = updater(bundleSnapshot);
+  if (next === bundleSnapshot) return;
+  bundleSnapshot = next;
   localDirty = true;
-  mirrorToLocalStorage(bundleSnapshot);
+  saveStateSnapshot = { saving: false, error: null, dirty: true };
   emit();
   schedulePersist();
-}
-
-async function reconcileWithLocalCache(remote: SalarySheetBundle): Promise<SalarySheetBundle> {
-  const local = readLegacyLocalSalaryBundle();
-  if (!local) return remote;
-
-  const merged = mergeSalarySheetBundles(remote, local);
-  mirrorToLocalStorage(merged);
-
-  const localIsNewer = JSON.stringify(merged) !== JSON.stringify(remote);
-  if (localIsNewer && requireToken()) {
-    try {
-      await persistBundleToApi(merged);
-    } catch {
-      /* keep merged local snapshot; schedulePersist will retry on next edit */
-    }
-  }
-  return merged;
 }
 
 /** Loads salary workspace from API once per session (skipped in demo mode). */
@@ -172,24 +223,14 @@ export function loadSalaryWorkspace(): Promise<void> {
 
   loadPromise = (async () => {
     try {
-      let bundle = await fetchBundleFromApi();
-      bundle = await reconcileWithLocalCache(bundle);
-      if (!localDirty) {
-        bundleSnapshot = bundle;
-        mirrorToLocalStorage(bundle);
-      }
+      const bundle = await fetchBundleFromApi();
+      applyLoadedBundle(bundle);
       loadedFromApi = true;
       loadError = null;
     } catch (e) {
-      const local = readLegacyLocalSalaryBundle();
-      if (local && !localDirty) {
-        bundleSnapshot = local;
-        loadError = null;
-        loadedFromApi = true;
-      } else {
-        loadError =
-          e instanceof Error ? e.message : "Could not load salary workspace.";
-      }
+      loadedFromApi = false;
+      loadError =
+        e instanceof Error ? e.message : "Could not load salary workspace.";
     } finally {
       loading = false;
       emit();
@@ -199,11 +240,25 @@ export function loadSalaryWorkspace(): Promise<void> {
   return loadPromise;
 }
 
-/** Force a fresh API load (e.g. after sign-in). */
+/** Force a fresh API load. Skipped while unsaved edits are pending. */
 export function reloadSalaryWorkspace(): Promise<void> {
+  if (localDirty) return Promise.resolve();
   loadPromise = null;
   loadedFromApi = false;
   return loadSalaryWorkspace();
+}
+
+/** Align loaded salary rows to the employee roster once the directory has finished loading. */
+export function syncLoadedSalaryBundleToEmployees(): void {
+  if (!loadedFromApi || !getEmployeeDirectoryLoadState().loaded || localDirty) return;
+  const synced = syncSalaryBundleToEmployees(
+    bundleSnapshot,
+    getActiveEmployeesStoreSnapshot(),
+  );
+  if (synced === bundleSnapshot) return;
+  bundleSnapshot = synced;
+  mirrorToLocalStorage(synced);
+  emit();
 }
 
 export async function flushSalaryWorkspacePersist(): Promise<void> {
@@ -229,13 +284,18 @@ export async function flushSalaryWorkspacePersist(): Promise<void> {
 }
 
 if (typeof window !== "undefined") {
+  window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (localDirty || isDemoDataMode() || !requireToken()) return;
+    void reloadSalaryWorkspace();
+  });
+
   window.addEventListener("beforeunload", () => {
-    mirrorToLocalStorage(bundleSnapshot);
     if (persistTimer) {
       clearTimeout(persistTimer);
       persistTimer = null;
     }
-    if (!requireToken() || isDemoDataMode()) return;
+    if (!requireToken() || isDemoDataMode() || !localDirty) return;
     void persistBundleToApi(bundleSnapshot).catch(() => {
       /* best-effort on tab close */
     });

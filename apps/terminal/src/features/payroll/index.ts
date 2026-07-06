@@ -2,10 +2,12 @@ export {
   flushSalaryWorkspacePersist,
   getSalaryBundle,
   getSalaryWorkspaceLoadState,
+  getSalaryWorkspaceSaveState,
   loadSalaryWorkspace,
   reloadSalaryWorkspace,
   setSalaryBundle,
   subscribeSalaryBundle,
+  syncLoadedSalaryBundleToEmployees,
 } from "./salaryWorkspaceStore";
 export {
   postSalaryPayoutToDailyEntry,
