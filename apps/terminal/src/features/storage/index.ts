@@ -1,4 +1,5 @@
-export { compressImageFile } from "./compressImage";
+export { attachmentUploadBlockedMessage } from "./attachmentUploadLimits";
+export { ATTACHMENT_IMAGE_MAX_BYTES, compressImageFile } from "./compressImage";
 export {
   STORAGE_REF_PREFIX,
   MEDIA_REF_PREFIX,

@@ -1,5 +1,6 @@
 import {
-  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   FileText,
   Lock,
@@ -25,9 +26,11 @@ import {
 import { readValidAccessToken } from "@/features/auth";
 import {
   uploadFileToStorage,
+  attachmentUploadBlockedMessage,
   fromStorageRef,
   isMediaRef,
   isPersistedMediaRef,
+  purgeStoredMediaRef,
 } from "@/features/storage";
 import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
@@ -47,6 +50,7 @@ import {
   bankNetAfterWithdrawals,
   bankSaleNetAfterServiceCharge,
   bankSaleServiceChargeAmount,
+  carriedOpeningBalanceForDate,
   deleteDailyEntry,
   listDailyEntriesDescendingFromMap,
   lockDailyEntry,
@@ -54,6 +58,7 @@ import {
   saveDailyEntry,
   savedLineKind,
   setDailyEntryNavGuard,
+  suggestedNewEntryDateKey,
   unlockDailyEntry,
   useDailyEntryMap,
   type DailyEntryRow,
@@ -80,10 +85,6 @@ type ExpenseLineDraft = {
   ledgerEmployeeLineKind: "" | EmployeeLedgerLineKind;
   ledgerNote: string;
 };
-
-const MAX_RECEIPTS_PER_LINE = 4;
-const MAX_VOID_ATTACHMENTS = 4;
-const MAX_RECEIPT_BYTES = 2_500_000;
 
 function isPdfOrImageFile(file: File): boolean {
   return file.type.startsWith("image/") || file.type === "application/pdf";
@@ -162,6 +163,58 @@ function expenseLineIdFromPasteEvent(e: ClipboardEvent): string | null {
 
 function persistedAttachmentRefs(urls: readonly string[]): string[] {
   return urls.filter((u) => isPersistedMediaRef(u));
+}
+
+function persistedAttachmentRefSetFromRow(row: DailyEntryRow | undefined): Set<string> {
+  const refs = new Set<string>();
+  if (!row) return refs;
+  for (const url of row.voidSaleAttachmentDataUrls ?? []) {
+    if (typeof url === "string" && isPersistedMediaRef(url)) refs.add(url.trim());
+  }
+  for (const line of row.expenseLines ?? []) {
+    for (const url of line.receiptDataUrls ?? []) {
+      if (typeof url === "string" && isPersistedMediaRef(url)) refs.add(url.trim());
+    }
+  }
+  return refs;
+}
+
+function persistedAttachmentRefsFromForm(
+  expenseLines: readonly ExpenseLineDraft[],
+  voidUrls: readonly string[],
+): string[] {
+  const refs: string[] = [];
+  for (const url of voidUrls) {
+    if (isPersistedMediaRef(url)) refs.push(url.trim());
+  }
+  for (const line of expenseLines) {
+    for (const url of line.receiptDataUrls) {
+      if (isPersistedMediaRef(url)) refs.push(url.trim());
+    }
+  }
+  return refs;
+}
+
+/** Delete uploads that never made it into the saved daily entry row. */
+function purgeUnsavedAttachmentRefs(
+  savedRow: DailyEntryRow | undefined,
+  expenseLines: readonly ExpenseLineDraft[],
+  voidUrls: readonly string[],
+): void {
+  const saved = persistedAttachmentRefSetFromRow(savedRow);
+  for (const ref of persistedAttachmentRefsFromForm(expenseLines, voidUrls)) {
+    if (!saved.has(ref)) purgeStoredMediaRef(ref);
+  }
+}
+
+function purgeAttachmentRefIfUnsaved(
+  savedRow: DailyEntryRow | undefined,
+  ref: string,
+): void {
+  const trimmed = ref.trim();
+  if (!isPersistedMediaRef(trimmed)) return;
+  if (persistedAttachmentRefSetFromRow(savedRow).has(trimmed)) return;
+  purgeStoredMediaRef(trimmed);
 }
 
 function hasInProgressAttachmentPreviews(
@@ -352,25 +405,15 @@ async function mergeVoidAttachmentDataUrls(
       message: "Sign in to attach files (storage requires an active session).",
     };
   }
-  const room = MAX_VOID_ATTACHMENTS - existing.length;
-  if (room <= 0) {
-    return {
-      ok: false,
-      message: `At most ${MAX_VOID_ATTACHMENTS} attachments for void sales.`,
-    };
-  }
   const next = [...existing];
-  const slice = files.slice(0, room);
   try {
-    for (const file of slice) {
+    for (const file of files) {
       if (!isReceiptAttachmentFile(file)) {
         return { ok: false, message: "Only images or PDF files can be attached." };
       }
-      if (file.size > MAX_RECEIPT_BYTES) {
-        return {
-          ok: false,
-          message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
-        };
+      const blocked = attachmentUploadBlockedMessage(file);
+      if (blocked) {
+        return { ok: false, message: blocked };
       }
       next.push(await uploadFileToStorage(file, "void-attachments", file.name));
     }
@@ -406,6 +449,11 @@ const salesChannelGridClass = "flex min-w-0 flex-col gap-2.5";
 const statsSummaryClass =
   "grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-[12px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-divider)] sm:grid-cols-5";
 const statCardClass = "flex min-w-0 flex-col gap-1 bg-[var(--pos-card)] px-3 py-3 sm:px-4";
+const statValueClass =
+  "text-[26px] font-bold tabular-nums leading-none text-[var(--pos-text-1)]";
+const statValueHighlightClass =
+  "text-[28px] font-extrabold tabular-nums leading-none text-[var(--pos-text-1)]";
+const statCardHintClass = `${statCardClass} cursor-help`;
 const expenseCardClass = "flex min-w-0 flex-col gap-1.5";
 const expenseCardRowClass = "flex min-w-0 flex-wrap items-start gap-2";
 const expensePrimaryInputClass =
@@ -419,6 +467,20 @@ const expenseMiniLabelClass =
   "text-[10px] font-medium uppercase tracking-[0.04em] text-[var(--pos-text-2)]";
 const expenseRemoveBtnClass =
   "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700";
+
+function AttachmentCountBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = count > 99 ? "99+" : String(count);
+  return (
+    <span
+      className="pointer-events-none absolute -right-1.5 -top-1.5 z-[2] flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--pos-sb-base)] px-1.5 text-[11px] font-bold leading-none text-white ring-2 ring-[var(--pos-card)]"
+      aria-hidden
+    >
+      {label}
+    </span>
+  );
+}
+
 const expenseIconBtnClass =
   "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]";
 const expenseNoteBtnActiveClass =
@@ -519,35 +581,6 @@ function formatDateKeyAsDisplay(dateKey: string): string {
   if (!mon) return dateKey;
   const dd = String(d).padStart(2, "0");
   return `${dd}-${mon}-${y}`;
-}
-
-/** Parses `DD-MMM-YYYY` (English month abbr, case-insensitive) to YYYY-MM-DD or null. */
-function parseDisplayDateToKey(raw: string): string | null {
-  const trimmed = raw.trim().replace(/\s+/g, "");
-  const match = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/.exec(trimmed);
-  if (!match) return null;
-  const day = Number.parseInt(match[1], 10);
-  const monToken = match[2].toLowerCase();
-  const year = Number.parseInt(match[3], 10);
-  const monthIndex = MONTH_ABBR.findIndex((abbr) => abbr.toLowerCase() === monToken);
-  if (
-    monthIndex === -1 ||
-    !Number.isFinite(day) ||
-    day < 1 ||
-    day > 31 ||
-    !Number.isFinite(year)
-  ) {
-    return null;
-  }
-  const dt = new Date(Date.UTC(year, monthIndex, day));
-  if (
-    dt.getUTCFullYear() !== year ||
-    dt.getUTCMonth() !== monthIndex ||
-    dt.getUTCDate() !== day
-  ) {
-    return null;
-  }
-  return dt.toISOString().slice(0, 10);
 }
 
 function parseAmount(raw: string): number {
@@ -1382,10 +1415,11 @@ export function DailyEntryFormView() {
 
   const isFormLocked = Boolean(savedRowForDate?.isLocked);
 
-  const carriedOpeningFromPrevDay = useMemo(() => {
-    const prevDayKey = dateAddDays(dateKey, -1);
-    return entryMap[prevDayKey]?.remainingBalance ?? 0;
-  }, [dateKey, entryMap, savedListVersion]);
+  const carriedOpening = useMemo(
+    () => carriedOpeningBalanceForDate(entryMap, dateKey),
+    [dateKey, entryMap, savedListVersion],
+  );
+  const carriedOpeningFromPrevDay = carriedOpening.opening;
 
   const ledgerBookNames = useSyncExternalStore(
     subscribeLedgerWorkspace,
@@ -1555,9 +1589,7 @@ export function DailyEntryFormView() {
       return;
     }
 
-    const prevDayKey = dateAddDays(dateKey, -1);
-    const prevClosing = entryMap[prevDayKey]?.remainingBalance ?? 0;
-    setOpeningBalance(String(prevClosing));
+    setOpeningBalance(String(carriedOpeningBalanceForDate(entryMap, dateKey).opening));
     setCashSale("");
     setBankSale("");
     setBkashSale("");
@@ -1710,6 +1742,11 @@ export function DailyEntryFormView() {
 
   function confirmDiscardLeave() {
     const action = pendingLeave;
+    purgeUnsavedAttachmentRefs(
+      savedRowForDate,
+      expenseLinesRef.current,
+      voidSaleAttachmentUrlsRef.current,
+    );
     setPendingLeave(null);
     action?.proceed();
   }
@@ -1801,15 +1838,7 @@ export function DailyEntryFormView() {
       });
       return;
     }
-    const room = MAX_RECEIPTS_PER_LINE - urls.length;
-    if (room <= 0) {
-      setFormNotice({
-        kind: "globalError",
-        message: `At most ${MAX_RECEIPTS_PER_LINE} attachments per expense line.`,
-      });
-      return;
-    }
-    const slice = picked.slice(0, room);
+    const slice = picked;
     for (const file of slice) {
       if (!isReceiptAttachmentFile(file)) {
         setFormNotice({
@@ -1818,11 +1847,9 @@ export function DailyEntryFormView() {
         });
         return;
       }
-      if (file.size > MAX_RECEIPT_BYTES) {
-        setFormNotice({
-          kind: "globalError",
-          message: `Each file must be under ${(MAX_RECEIPT_BYTES / 1_000_000).toFixed(1)} MB.`,
-        });
+      const blocked = attachmentUploadBlockedMessage(file);
+      if (blocked) {
+        setFormNotice({ kind: "globalError", message: blocked });
         return;
       }
     }
@@ -1959,22 +1986,10 @@ export function DailyEntryFormView() {
 
   /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
   function renderReceiptAddControl(line: ExpenseLineDraft) {
-    const urls = line.receiptDataUrls;
-    const canAddMore = urls.length < MAX_RECEIPTS_PER_LINE;
     const inputId = `daily-expense-receipt-${line.id}`;
     const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
     const busy = attachBusyLineId === line.id;
-    if (!canAddMore) {
-      return (
-        <div
-          className={`relative flex min-h-9 items-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
-        >
-          <span className="text-[9px] leading-tight text-[var(--pos-text-2)]">
-            Max {MAX_RECEIPTS_PER_LINE} files
-          </span>
-        </div>
-      );
-    }
+    const attachCount = line.receiptDataUrls.length;
     return (
       <div className="flex min-w-0 flex-col items-center gap-0.5">
       <div
@@ -1997,20 +2012,27 @@ export function DailyEntryFormView() {
         />
         <label
           htmlFor={inputId}
-          className={`inline-flex size-12 shrink-0 cursor-pointer items-center justify-center rounded-[10px] border border-solid transition-colors hover:bg-[var(--pos-nav-hover)]/30 ${
+          className={`relative inline-flex size-12 shrink-0 cursor-pointer items-center justify-center rounded-[10px] border border-solid transition-colors hover:bg-[var(--pos-nav-hover)]/30 ${
             busy ? "pointer-events-none opacity-50" : ""
           } ${
             attachErr
               ? "border-red-500/70 text-red-700"
               : "border-[var(--pos-divider)] text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
           }`}
-          aria-label="Attach receipt image or PDF"
+          aria-label={
+            attachCount > 0
+              ? `Attach receipt image or PDF (${attachCount} attached)`
+              : "Attach receipt image or PDF"
+          }
           title={
             attachErr ??
-            "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused"
+            (attachCount > 0
+              ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste (Ctrl+V / ⌘V) while this row is focused`
+              : "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused")
           }
         >
           <Paperclip className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+          <AttachmentCountBadge count={attachCount} />
         </label>
       </div>
       {busy ? (
@@ -2061,9 +2083,11 @@ export function DailyEntryFormView() {
               aria-label="Remove attachment"
               onClick={(e) => {
                 e.stopPropagation();
+                const removed = urls[idx];
                 patchLine(line.id, {
                   receiptDataUrls: urls.filter((_, j) => j !== idx),
                 });
+                purgeAttachmentRefIfUnsaved(savedRowForDate, removed);
               }}
             >
               ×
@@ -2076,20 +2100,8 @@ export function DailyEntryFormView() {
 
   function renderVoidAttachmentAddControl() {
     const urls = voidSaleAttachmentUrls;
-    const canAddMore = urls.length < MAX_VOID_ATTACHMENTS;
+    const attachCount = urls.length;
     const inputId = "daily-void-attachments";
-    if (!canAddMore) {
-      return (
-        <div
-          className={`relative flex min-h-9 items-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
-          data-field-error-anchor="void:voidAttach"
-        >
-          <span className="text-[9px] leading-tight text-[var(--pos-text-2)]">
-            Max {MAX_VOID_ATTACHMENTS} files
-          </span>
-        </div>
-      );
-    }
     return (
       <div
         className={`relative flex size-9 shrink-0 items-center justify-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
@@ -2127,11 +2139,20 @@ export function DailyEntryFormView() {
         />
         <label
           htmlFor={inputId}
-          className="inline-flex size-9 cursor-pointer items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
-          aria-label="Attach PDF or image for void sales"
-          title="Attach PDF or image, or paste an image while this section is focused"
+          className="relative inline-flex size-9 cursor-pointer items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
+          aria-label={
+            attachCount > 0
+              ? `Attach PDF or image for void sales (${attachCount} attached)`
+              : "Attach PDF or image for void sales"
+          }
+          title={
+            attachCount > 0
+              ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste while this block is focused`
+              : "Attach PDF or image, or paste an image while this section is focused"
+          }
         >
           <Paperclip className="size-4 shrink-0" strokeWidth={2.25} />
+          <AttachmentCountBadge count={attachCount} />
         </label>
       </div>
     );
@@ -2170,7 +2191,9 @@ export function DailyEntryFormView() {
               onClick={(e) => {
                 e.stopPropagation();
                 clearSalesFieldNotice();
+                const removed = urls[idx];
                 setVoidSaleAttachmentUrls(urls.filter((_, j) => j !== idx));
+                purgeAttachmentRefIfUnsaved(savedRowForDate, removed);
               }}
             >
               ×
@@ -2280,7 +2303,7 @@ export function DailyEntryFormView() {
   }
 
   function openAddEntryForm() {
-    const key = todayKey();
+    const key = suggestedNewEntryDateKey(entryMap, todayKey());
     requestLeaveIfNeeded(() => {
       setDateKey(key);
       setDateFieldText(formatDateKeyAsDisplay(key));
@@ -2288,20 +2311,13 @@ export function DailyEntryFormView() {
     });
   }
 
-  function commitDateFieldText() {
-    const parsed = parseDisplayDateToKey(dateFieldText);
-    if (!parsed) {
-      setDateFieldText(formatDateKeyAsDisplay(dateKey));
-      return;
-    }
-    if (parsed === dateKey) {
-      setDateFieldText(formatDateKeyAsDisplay(parsed));
-      return;
-    }
+  function shiftEntryDate(days: number) {
+    if (isFormLocked) return;
+    const nextKey = dateAddDays(dateKey, days);
     requestLeaveIfNeeded(
       () => {
-        setDateKey(parsed);
-        setDateFieldText(formatDateKeyAsDisplay(parsed));
+        setDateKey(nextKey);
+        setDateFieldText(formatDateKeyAsDisplay(nextKey));
       },
       () => setDateFieldText(formatDateKeyAsDisplay(dateKey)),
     );
@@ -2440,40 +2456,50 @@ export function DailyEntryFormView() {
         Daily Entry Form
       </h1>
       {activeView === "entry" ? (
-        <div className="col-start-2 flex shrink-0 items-center gap-1.5 text-[10px] text-[var(--pos-text-2)]">
-          <span className="font-medium text-[11px] text-[var(--pos-text-2)]">
-            Date
-          </span>
+        <div className="col-start-2 flex shrink-0 items-center justify-center">
           <div className="relative flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => shiftEntryDate(-1)}
+              disabled={isFormLocked}
+              className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Previous day"
+              aria-label="Previous day"
+            >
+              <ChevronLeft className="size-5" strokeWidth={2.5} />
+            </button>
             <input
               id="daily-entry-date"
               type="text"
+              readOnly
               value={dateFieldText}
               disabled={isFormLocked}
-              onChange={(e) => setDateFieldText(e.target.value)}
-              onBlur={commitDateFieldText}
+              onClick={() => {
+                if (!isFormLocked) openNativeDatePicker();
+              }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
+                if (isFormLocked) return;
+                if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  (e.target as HTMLInputElement).blur();
+                  openNativeDatePicker();
                 }
               }}
               placeholder="DD-MMM-YYYY"
-              title="Entry date (DD-MMM-YYYY)"
-              aria-label="Entry date, format DD-MMM-YYYY"
+              title="Pick entry date"
+              aria-label="Entry date — click to open calendar"
               autoComplete="off"
               spellCheck={false}
-              className={`${inputClass} !h-9 w-auto min-w-[9.25rem] py-0`}
+              className={`${inputClass} !h-9 w-auto min-w-[9.25rem] cursor-pointer py-0 text-center font-semibold read-only:cursor-pointer disabled:cursor-not-allowed`}
             />
             <button
               type="button"
-              onClick={openNativeDatePicker}
+              onClick={() => shiftEntryDate(1)}
               disabled={isFormLocked}
-              className="inline-flex shrink-0 items-center justify-center rounded-md border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] p-1.5 text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
-              title="Open calendar"
-              aria-label="Open calendar to pick date"
+              className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Next day"
+              aria-label="Next day"
             >
-              <CalendarDays className="size-3.5" strokeWidth={2.25} />
+              <ChevronRight className="size-5" strokeWidth={2.5} />
             </button>
             <input
               ref={datePickerRef}
@@ -2567,48 +2593,55 @@ export function DailyEntryFormView() {
   const editingExistingBanner =
     activeView === "entry" && savedRowForDate ? (
       <div
-        className={`shrink-0 border-b border-l-[3px] border-solid px-3 py-2 ${
+        className={`shrink-0 border-b border-solid px-3 py-2.5 sm:px-4 sm:py-3 ${
           isFormLocked
-            ? "border-amber-500/60 border-l-amber-500 bg-amber-500/5"
-            : "border-[var(--pos-divider)] border-l-[var(--pos-sb-base)] bg-[var(--pos-page)]"
+            ? "border-amber-700/40 border-l-4 border-l-amber-400 bg-amber-800 text-amber-50"
+            : "border-[color-mix(in_srgb,var(--pos-sb-base)_50%,black)] border-l-4 border-l-[color-mix(in_srgb,var(--pos-sb-base)_70%,white)] bg-[var(--pos-sb-base)] text-white"
         }`}
         role="status"
         aria-live="polite"
       >
-        <p className="text-[12px] font-semibold leading-snug text-[var(--pos-text-1)]">
-          {isFormLocked ? (
-            <>
-              <Lock className="mr-1 inline size-3.5 align-text-bottom" strokeWidth={2.25} />
-              Locked entry for {formatDateKeyAsDisplay(dateKey)}
-            </>
-          ) : (
-            <>Editing an existing entry for {formatDateKeyAsDisplay(dateKey)}</>
-          )}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <p className="text-[14px] font-bold leading-snug sm:text-[15px]">
+            {isFormLocked ? (
+              <>
+                <Lock className="mr-1.5 inline size-4 align-text-bottom" strokeWidth={2.25} />
+                Locked · {formatDateKeyAsDisplay(dateKey)}
+              </>
+            ) : (
+              <>Editing · {formatDateKeyAsDisplay(dateKey)}</>
+            )}
+          </p>
           {savedRowForDate.updatedAt ? (
-            <span className="ml-1.5 font-normal tabular-nums text-[11px] text-[var(--pos-text-2)]">
-              · Last saved{" "}
+            <p
+              className={`shrink-0 text-[12px] font-medium tabular-nums leading-snug sm:text-[13px] ${
+                isFormLocked ? "text-amber-100/90" : "text-white/80"
+              }`}
+            >
+              Saved{" "}
               {new Date(savedRowForDate.updatedAt).toLocaleString(undefined, {
                 dateStyle: "medium",
                 timeStyle: "short",
               })}
-            </span>
+            </p>
           ) : null}
-          {isFormLocked && savedRowForDate.lockedAt ? (
-            <span className="ml-1.5 font-normal tabular-nums text-[11px] text-[var(--pos-text-2)]">
-              · Locked{" "}
-              {new Date(savedRowForDate.lockedAt).toLocaleString(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              })}
-              {savedRowForDate.lockedBy ? ` by ${savedRowForDate.lockedBy}` : ""}
-            </span>
-          ) : null}
-        </p>
-        <p className="mt-0.5 text-[11px] leading-snug text-[var(--pos-text-2)]">
-          {isFormLocked
-            ? "This entry is read-only — it cannot be edited or deleted."
-            : "Saved data exists for this day — saving replaces that record (one entry per day)."}
-        </p>
+        </div>
+        {isFormLocked ? (
+          <p className="mt-1 text-[12px] font-medium leading-snug text-amber-100/85">
+            Read-only
+            {savedRowForDate.lockedAt ? (
+              <>
+                {" "}
+                · locked{" "}
+                {new Date(savedRowForDate.lockedAt).toLocaleString(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+                {savedRowForDate.lockedBy ? ` by ${savedRowForDate.lockedBy}` : ""}
+              </>
+            ) : null}
+          </p>
+        ) : null}
       </div>
     ) : null;
 
@@ -2880,8 +2913,11 @@ export function DailyEntryFormView() {
         >
         <div className="flex flex-col gap-3 px-3 pb-3 pt-3 sm:px-4 sm:pb-4">
           <div className={statsSummaryClass}>
-            <div className={statCardClass}>
-              <p className={labelClass}>Opening</p>
+            <div
+              className={statCardHintClass}
+              title="Previous day's closing balance · pencil to edit"
+            >
+              <p className={labelClass}>Opening Balance</p>
               <div className="flex min-h-[1.375rem] items-center gap-1.5">
                 {openingEdit ? (
                   <input
@@ -2901,7 +2937,7 @@ export function DailyEntryFormView() {
                   />
                 ) : (
                   <>
-                    <p className="min-w-0 flex-1 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                    <p className={`min-w-0 flex-1 ${statValueClass}`}>
                       {formatSummaryMoney(parseAmount(openingBalance))}
                     </p>
                     <button
@@ -2915,49 +2951,38 @@ export function DailyEntryFormView() {
                   </>
                 )}
               </div>
-              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
-                From previous closing — tap pencil to adjust
-              </p>
             </div>
-            <div className={statCardClass}>
-              <p className={labelClass}>Expenses</p>
-              <p className="text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-                {formatSummaryMoney(expenseSum)}
-              </p>
-              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
-                Total from expense lines below
-              </p>
-            </div>
-            <div className={statCardClass}>
+            <div
+              className={statCardHintClass}
+              title="All sales channels − void sales (bank net of 1.75% fee)"
+            >
               <p className={labelClass}>Sales</p>
-              <p className="text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+              <p className={statValueClass}>
                 {formatSummaryMoney(netSalesAfterVoid)}
               </p>
-              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
-                Channel total minus void sales
+            </div>
+            <div className={statCardHintClass} title="Sum of all expense line amounts">
+              <p className={labelClass}>Expenses</p>
+              <p className={statValueClass}>
+                {formatSummaryMoney(expenseSum)}
               </p>
             </div>
-            <div className={statCardClass}>
+            <div
+              className={statCardHintClass}
+              title="Net bank sales (after 1.75% fee) − withdrawn today"
+            >
               <p className={labelClass}>Bank balance (today)</p>
-              <p className="text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+              <p className={statValueClass}>
                 {formatSummaryMoney(bankNetBalance)}
               </p>
-              <p
-                id="daily-bank-withdrawn-hint"
-                className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]"
-              >
-                Bank sales (net after 1.75% charge) minus withdrawn amount
-              </p>
             </div>
-            <div className={`${statCardClass} relative before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,var(--pos-card))]`}>
-              <p className="text-[11px] font-semibold leading-snug text-[var(--pos-text-1)]">
-                Remaining
-              </p>
-              <p className="text-[22px] font-bold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            <div
+              className={`${statCardHintClass} relative before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,var(--pos-card))]`}
+              title="Opening balance + net sales − expenses"
+            >
+              <p className={labelClass}>Closing Balance</p>
+              <p className={statValueHighlightClass}>
                 {formatSummaryMoney(remaining)}
-              </p>
-              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
-                Opening + net sales − expenses (closing)
               </p>
             </div>
           </div>
@@ -2981,7 +3006,6 @@ export function DailyEntryFormView() {
                     className={`${amountInputClass} ${bankWithdrawnErr ? FIELD_ERR_INPUT : ""}`}
                     data-field-error-anchor="void:bankWithdrawn"
                     aria-invalid={bankWithdrawnErr ? true : undefined}
-                    aria-describedby="daily-bank-withdrawn-hint"
                   />
                   <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
                 </label>
@@ -3434,8 +3458,7 @@ export function DailyEntryFormView() {
                     <div className="flex flex-wrap items-center gap-2">
                       {renderVoidAttachmentAddControl()}
                       <span className="min-w-0 flex-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
-                        Attach PDF or image (max {MAX_VOID_ATTACHMENTS}). Paste an image with this
-                        block focused.
+                        Attach PDF or image. Paste an image with this block focused.
                       </span>
                     </div>
                     {voidAttachErr ? (
@@ -4039,20 +4062,24 @@ export function DailyEntryFormView() {
               id="opening-edit-warning-title"
               className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
             >
-              Edit opening balance?
+              Change opening balance?
             </h2>
             <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
-              Opening is usually the previous day&apos;s closing balance (
+              It&apos;s{" "}
               <span className="font-semibold tabular-nums text-[var(--pos-text-1)]">
-                {formatSummaryMoney(carriedOpeningFromPrevDay)}
-              </span>
-              {entryMap[dateAddDays(dateKey, -1)] ? (
-                <> for {formatDateKeyAsDisplay(dateAddDays(dateKey, -1))}</>
-              ) : (
-                <> — no saved entry for the prior day</>
-              )}
-              ). Change it only to fix an error or a special case — it affects remaining
-              (closing) for {formatDateKeyAsDisplay(dateKey)}.
+                {formatSummaryMoney(parseAmount(openingBalance))}
+              </span>{" "}
+              right now
+              {carriedOpening.sourceDate &&
+              parseAmount(openingBalance) === carriedOpeningFromPrevDay ? (
+                <> — from {formatDateKeyAsDisplay(carriedOpening.sourceDate)}</>
+              ) : null}
+              {!carriedOpening.sourceDate &&
+              !savedRowForDate &&
+              parseAmount(openingBalance) === carriedOpeningFromPrevDay ? (
+                <> — no earlier day saved</>
+              ) : null}
+              . Changing it also changes closing balance.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button
@@ -4067,7 +4094,7 @@ export function DailyEntryFormView() {
                 className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid border-amber-500/55 bg-amber-500/90 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 sm:flex-none"
                 onClick={confirmOpeningBalanceEdit}
               >
-                Edit opening
+                Change
               </button>
             </div>
           </div>

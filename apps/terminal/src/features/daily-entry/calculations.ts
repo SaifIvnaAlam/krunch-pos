@@ -51,6 +51,41 @@ export function dateAddDays(dateKey: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
+export type CarriedOpeningBalance = {
+  opening: number;
+  /** Prior saved entry date used as source, or null when none exists before `dateKey`. */
+  sourceDate: string | null;
+};
+
+/** Closing balance from the latest saved entry strictly before `dateKey`. */
+export function carriedOpeningBalanceForDate(
+  map: DailyEntryMap,
+  dateKey: string,
+): CarriedOpeningBalance {
+  let sourceRow: DailyEntryRow | null = null;
+  for (const row of Object.values(map)) {
+    if (row.date >= dateKey) continue;
+    if (!sourceRow || row.date > sourceRow.date) {
+      sourceRow = row;
+    }
+  }
+  return {
+    opening: sourceRow?.remainingBalance ?? 0,
+    sourceDate: sourceRow?.date ?? null,
+  };
+}
+
+/** First empty calendar day after the latest saved entry, or `today` when none exist. */
+export function suggestedNewEntryDateKey(map: DailyEntryMap, today: string): string {
+  const dates = Object.keys(map).sort();
+  if (dates.length === 0) return today;
+  let next = dateAddDays(dates[dates.length - 1]!, 1);
+  while (map[next]) {
+    next = dateAddDays(next, 1);
+  }
+  return next;
+}
+
 export function expenseTotalFromExpenseLines(
   lines: ExpenseLineSaved[] | undefined,
 ): number {

@@ -10,12 +10,15 @@ export {
   bankNetAfterWithdrawals,
   bankSaleNetAfterServiceCharge,
   bankSaleServiceChargeAmount,
+  carriedOpeningBalanceForDate,
   computeRemainingBalanceForRow,
   dateAddDays,
   roundTaka,
   expenseTotalFromExpenseLines,
   listDailyEntriesDescendingFromMap,
   savedLineKind,
+  suggestedNewEntryDateKey,
+  type CarriedOpeningBalance,
 } from "./calculations";
 export {
   DAILY_ENTRY_STORAGE_KEY,

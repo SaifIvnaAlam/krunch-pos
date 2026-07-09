@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
-import { uploadFileToStorage, resolveMediaUrl, purgeStoredMediaRef } from "@/features/storage";
+import { uploadFileToStorage, resolveMediaUrl, purgeStoredMediaRef, attachmentUploadBlockedMessage } from "@/features/storage";
 import { StorageImage } from "@/features/storage/StorageImage";
 import { isPersistedMediaRef } from "@/features/storage/storageRef";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
@@ -111,7 +111,6 @@ export const EMPLOYEE_LEDGER_LINE_OPTIONS: {
 type Supplier = LedgerSupplier;
 type Workspace = LedgerWorkspace;
 
-const LEDGER_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
 const LEDGER_ATTACHMENT_ACCEPT = "image/*,.pdf,application/pdf,.heic,.heif";
 
 function formatMoney(cents: number): string {
@@ -359,8 +358,9 @@ function LedgerEntryAttachmentField({
       const file = e.target.files?.[0];
       e.target.value = "";
       if (!file) return;
-      if (file.size > LEDGER_ATTACHMENT_MAX_BYTES) {
-        setError(`Max ${Math.round(LEDGER_ATTACHMENT_MAX_BYTES / (1024 * 1024))} MB`);
+      const blocked = attachmentUploadBlockedMessage(file);
+      if (blocked) {
+        setError(blocked);
         return;
       }
       setError(null);
@@ -427,7 +427,7 @@ function LedgerEntryAttachmentField({
         </p>
       ) : (
         <p className="mt-2 text-[10px] leading-snug text-[var(--pos-text-2)]">
-          Photo, PDF, or HEIC — up to 5 MB
+          Photo, PDF, or HEIC — images are compressed automatically
         </p>
       )}
       {attachment?.mimeType.startsWith("image/") &&

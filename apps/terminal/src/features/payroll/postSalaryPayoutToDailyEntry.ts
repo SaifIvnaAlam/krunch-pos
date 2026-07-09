@@ -1,6 +1,6 @@
 import {
+  carriedOpeningBalanceForDate,
   computeRemainingBalanceForRow,
-  dateAddDays,
   expenseTotalFromExpenseLines,
 } from "@/features/daily-entry/calculations";
 import { loadDailyEntryMap, saveDailyEntry } from "@/features/daily-entry/dailyEntryRepository";
@@ -164,8 +164,7 @@ export async function postSalaryPayoutToDailyEntry(
       enteredBy: prior.enteredBy ?? enteredBy,
     };
   } else {
-    const prevDayKey = dateAddDays(dateKey, -1);
-    const openingBalance = map[prevDayKey]?.remainingBalance ?? 0;
+    const openingBalance = carriedOpeningBalanceForDate(map, dateKey).opening;
     nextRow = emptyDailyEntryRow(dateKey, openingBalance, enteredBy);
     nextRow.expenseLines = [expenseLine];
   }
