@@ -22,7 +22,12 @@ import {
   type InputHTMLAttributes,
 } from "react";
 import { readValidAccessToken } from "@/features/auth";
-import { uploadFileToStorage, fromStorageRef, isMediaRef, purgeStoredMediaRef } from "@/features/storage";
+import {
+  uploadFileToStorage,
+  fromStorageRef,
+  isMediaRef,
+  isPersistedMediaRef,
+} from "@/features/storage";
 import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
 import {
@@ -46,6 +51,7 @@ import {
   lockDailyEntry,
   saveDailyEntry,
   savedLineKind,
+  setDailyEntryNavGuard,
   unlockDailyEntry,
   useDailyEntryMap,
   type DailyEntryRow,
@@ -149,6 +155,188 @@ function expenseLineIdFromPasteEvent(e: ClipboardEvent): string | null {
   return (
     expenseLineIdFromEventTarget(e.target) ??
     expenseLineIdFromEventTarget(document.activeElement)
+  );
+}
+
+function persistedAttachmentRefs(urls: readonly string[]): string[] {
+  return urls.filter((u) => isPersistedMediaRef(u));
+}
+
+function hasInProgressAttachmentPreviews(
+  lines: readonly ExpenseLineDraft[],
+  voidUrls: readonly string[],
+): boolean {
+  for (const line of lines) {
+    for (const url of line.receiptDataUrls) {
+      if (url.startsWith("blob:") || url.startsWith("data:")) return true;
+    }
+  }
+  for (const url of voidUrls) {
+    if (url.startsWith("blob:") || url.startsWith("data:")) return true;
+  }
+  return false;
+}
+
+function buildExpenseLinesToSaveFromDrafts(
+  expenseLines: readonly ExpenseLineDraft[],
+): ExpenseLineSaved[] {
+  const linesToSave: ExpenseLineSaved[] = [];
+  for (const line of expenseLines) {
+    const amt = parseAmount(line.amount);
+    const receiptUrls = persistedAttachmentRefs(line.receiptDataUrls);
+    const receiptField =
+      receiptUrls.length > 0 ? ({ receiptDataUrls: receiptUrls } as const) : {};
+    const lineIdField = { lineId: line.id } as const;
+    if (line.kind === "vendor") {
+      const v = line.vendor.trim();
+      if (v && amt > 0) {
+        const base = {
+          kind: "vendor" as const,
+          vendor: v,
+          amount: amt,
+          ...lineIdField,
+          ...receiptField,
+        };
+        const supplierId = resolveLedgerSupplierIdByBookName(v);
+        const isEmp = Boolean(supplierId && isEmployeesLedgerSupplierId(supplierId));
+        if (isEmp) {
+          if (line.ledgerEmployeeLineKind) {
+            linesToSave.push({
+              ...base,
+              ledgerKind: "payment",
+              ledgerEmployeeLineKind: line.ledgerEmployeeLineKind,
+              ledgerNote: line.ledgerNote.trim(),
+            });
+          } else {
+            linesToSave.push(base);
+          }
+        } else if (line.ledgerKind) {
+          linesToSave.push({
+            ...base,
+            ledgerKind: line.ledgerKind,
+            ledgerNote: line.ledgerNote.trim(),
+          });
+        } else {
+          linesToSave.push(base);
+        }
+      }
+    } else {
+      const expenseTitle = line.label.trim();
+      if (expenseTitle && amt > 0) {
+        const noteTrim = line.note.trim();
+        linesToSave.push({
+          kind: "regular",
+          label: expenseTitle,
+          amount: amt,
+          ...lineIdField,
+          ...(noteTrim ? { note: noteTrim } : {}),
+          ...receiptField,
+        });
+      }
+    }
+  }
+  return linesToSave;
+}
+
+function buildDailyEntryCandidateFromForm(args: {
+  dateKey: string;
+  openingBalance: string;
+  cashSale: string;
+  bankSale: string;
+  bkashSale: string;
+  nagadSale: string;
+  pathaoSale: string;
+  foodiSale: string;
+  foodpandaSale: string;
+  voidSale: string;
+  voidSaleRemarks: string;
+  voidSaleAttachmentUrls: readonly string[];
+  expenseLines: readonly ExpenseLineDraft[];
+  bankWithdrawn: string;
+  remaining: number;
+  enteredBy: string;
+}): DailyEntryRow {
+  const voidAmtParsed = Math.max(0, parseAmount(args.voidSale));
+  const voidRemarksTrim = args.voidSaleRemarks.trim();
+  const voidAttachmentsFiltered = persistedAttachmentRefs(args.voidSaleAttachmentUrls);
+  const voidAttachmentsToSave =
+    voidAmtParsed > 0 && voidAttachmentsFiltered.length > 0
+      ? voidAttachmentsFiltered
+      : undefined;
+  const linesToSave = buildExpenseLinesToSaveFromDrafts(args.expenseLines);
+  const expenseTotal = linesToSave.reduce((s, line) => s + line.amount, 0);
+  const bankWithdrawnToSave = Math.max(0, parseAmount(args.bankWithdrawn));
+
+  return {
+    date: args.dateKey,
+    openingBalance: parseAmount(args.openingBalance),
+    cashSale: parseAmount(args.cashSale),
+    bankSale: parseAmount(args.bankSale),
+    bkashSale: parseAmount(args.bkashSale),
+    nagadSale: parseAmount(args.nagadSale),
+    pathaoSale: parseAmount(args.pathaoSale),
+    foodiSale: parseAmount(args.foodiSale),
+    foodpandaSale: parseAmount(args.foodpandaSale),
+    voidSale: voidAmtParsed > 0 ? voidAmtParsed : undefined,
+    voidSaleRemarks:
+      voidAmtParsed > 0 && voidRemarksTrim ? voidRemarksTrim : undefined,
+    voidSaleAttachmentDataUrls: voidAttachmentsToSave,
+    expenses: expenseTotal,
+    bankWithdrawn: bankWithdrawnToSave,
+    expenseLines: linesToSave,
+    remainingBalance: args.remaining,
+    updatedAt: new Date().toISOString(),
+    enteredBy: args.enteredBy,
+  };
+}
+
+function emptyDailyEntryBaseline(
+  dateKey: string,
+  openingBalance: number,
+  enteredBy: string,
+): DailyEntryRow {
+  return {
+    date: dateKey,
+    openingBalance,
+    cashSale: 0,
+    bankSale: 0,
+    bkashSale: 0,
+    nagadSale: 0,
+    pathaoSale: 0,
+    foodiSale: 0,
+    foodpandaSale: 0,
+    expenses: 0,
+    bankWithdrawn: 0,
+    expenseLines: [],
+    remainingBalance: openingBalance,
+    updatedAt: new Date(0).toISOString(),
+    enteredBy,
+  };
+}
+
+function isDailyEntryFormDirty(args: {
+  savedRow: DailyEntryRow | undefined;
+  carriedOpeningFromPrevDay: number;
+  enteredBy: string;
+  candidate: DailyEntryRow;
+  expenseLines: readonly ExpenseLineDraft[];
+  voidSaleAttachmentUrls: readonly string[];
+  attachmentUploadBusy: boolean;
+}): boolean {
+  if (args.attachmentUploadBusy) return true;
+  if (hasInProgressAttachmentPreviews(args.expenseLines, args.voidSaleAttachmentUrls)) {
+    return true;
+  }
+  if (args.savedRow) {
+    return !savedEntryBodyEquals(args.savedRow, args.candidate);
+  }
+  return !savedEntryBodyEquals(
+    emptyDailyEntryBaseline(
+      args.candidate.date,
+      args.carriedOpeningFromPrevDay,
+      args.enteredBy,
+    ),
+    args.candidate,
   );
 }
 
@@ -1081,6 +1269,8 @@ export function DailyEntryFormView() {
   const [bankWithdrawn, setBankWithdrawn] = useState("0");
   const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
   const [attachBusyLineId, setAttachBusyLineId] = useState<string | null>(null);
+  const [voidAttachBusy, setVoidAttachBusy] = useState(false);
+  const isAttachmentUploadBusy = attachBusyLineId !== null || voidAttachBusy;
   const [openingEdit, setOpeningEdit] = useState(false);
   const [openingEditWarningOpen, setOpeningEditWarningOpen] = useState(false);
   const [historyDetailRow, setHistoryDetailRow] = useState<DailyEntryRow | null>(null);
@@ -1096,6 +1286,10 @@ export function DailyEntryFormView() {
   const [pendingUnlockDateIso, setPendingUnlockDateIso] = useState<string | null>(null);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [isUnlocking, setIsUnlocking] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<{
+    proceed: () => void;
+    cancel?: () => void;
+  } | null>(null);
   const openingInputRef = useRef<HTMLInputElement>(null);
   const datePickerRef = useRef<HTMLInputElement>(null);
   const deleteConfirmInputRef = useRef<HTMLInputElement>(null);
@@ -1208,6 +1402,74 @@ export function DailyEntryFormView() {
     ],
   );
 
+  const enteredByName = userName.trim() || "Unknown";
+
+  const dailyEntryCandidate = useMemo(
+    () =>
+      buildDailyEntryCandidateFromForm({
+        dateKey,
+        openingBalance,
+        cashSale,
+        bankSale,
+        bkashSale,
+        nagadSale,
+        pathaoSale,
+        foodiSale,
+        foodpandaSale,
+        voidSale,
+        voidSaleRemarks,
+        voidSaleAttachmentUrls,
+        expenseLines,
+        bankWithdrawn,
+        remaining,
+        enteredBy: enteredByName,
+      }),
+    [
+      dateKey,
+      openingBalance,
+      cashSale,
+      bankSale,
+      bkashSale,
+      nagadSale,
+      pathaoSale,
+      foodiSale,
+      foodpandaSale,
+      voidSale,
+      voidSaleRemarks,
+      voidSaleAttachmentUrls,
+      expenseLines,
+      bankWithdrawn,
+      remaining,
+      enteredByName,
+    ],
+  );
+
+  const formIsDirty = useMemo(
+    () =>
+      activeView === "entry" &&
+      !isFormLocked &&
+      isDailyEntryFormDirty({
+        savedRow: savedRowForDate,
+        carriedOpeningFromPrevDay,
+        enteredBy: enteredByName,
+        candidate: dailyEntryCandidate,
+        expenseLines,
+        voidSaleAttachmentUrls,
+        attachmentUploadBusy: isAttachmentUploadBusy,
+      }),
+    [
+      activeView,
+      isFormLocked,
+      savedRowForDate,
+      carriedOpeningFromPrevDay,
+      enteredByName,
+      dailyEntryCandidate,
+      expenseLines,
+      voidSaleAttachmentUrls,
+      isAttachmentUploadBusy,
+    ],
+  );
+
   const voidRemarksErr = salesFieldErrorMessage(formNotice, "voidRemarks");
   const voidAttachErr = salesFieldErrorMessage(formNotice, "voidAttach");
   const bankWithdrawnErr = salesFieldErrorMessage(formNotice, "bankWithdrawn");
@@ -1286,6 +1548,7 @@ export function DailyEntryFormView() {
 
   useEffect(() => {
     if (
+      !pendingLeave &&
       !pendingDeleteDateIso &&
       !pendingLockDateIso &&
       !pendingUnlockDateIso &&
@@ -1298,6 +1561,11 @@ export function DailyEntryFormView() {
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (pendingLeave) {
+        pendingLeave.cancel?.();
+        setPendingLeave(null);
+        return;
+      }
       if (receiptPreviewUrl) {
         setReceiptPreviewUrl(null);
         return;
@@ -1330,7 +1598,7 @@ export function DailyEntryFormView() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [historyDetailRow, receiptPreviewUrl, historyReceiptsOpen, pendingDeleteDateIso, pendingLockDateIso, pendingUnlockDateIso, openingEditWarningOpen]);
+  }, [historyDetailRow, receiptPreviewUrl, historyReceiptsOpen, pendingDeleteDateIso, pendingLockDateIso, pendingUnlockDateIso, openingEditWarningOpen, pendingLeave]);
 
   function requestOpeningBalanceEdit() {
     if (isFormLocked || openingEdit) return;
@@ -1355,6 +1623,49 @@ export function DailyEntryFormView() {
     setHistoryReceiptsOpen(false);
     setHistoryReceiptsLineIndex(null);
   }, [historyDetailRow]);
+
+  useEffect(() => {
+    if (activeView !== "entry") {
+      setDailyEntryNavGuard(null);
+      return;
+    }
+    setDailyEntryNavGuard({
+      isEditing: true,
+      hasUnsavedChanges: formIsDirty,
+      requestLeaveConfirmation: (proceed, cancel) => {
+        setPendingLeave({ proceed, cancel });
+      },
+    });
+    return () => setDailyEntryNavGuard(null);
+  }, [activeView, formIsDirty]);
+
+  useEffect(() => {
+    if (activeView !== "entry" || !formIsDirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [activeView, formIsDirty]);
+
+  function requestLeaveIfNeeded(proceed: () => void, cancel?: () => void) {
+    if (activeView !== "entry" || !formIsDirty) {
+      proceed();
+      return;
+    }
+    setPendingLeave({ proceed, cancel });
+  }
+
+  function confirmDiscardLeave() {
+    const action = pendingLeave;
+    setPendingLeave(null);
+    action?.proceed();
+  }
+
+  function cancelDiscardLeave() {
+    pendingLeave?.cancel?.();
+    setPendingLeave(null);
+  }
 
   // TEMP: Alt+X (Windows/Linux) or ⌥+X Option+X (Mac) — random fields for quick Save testing; remove when done.
   useEffect(() => {
@@ -1506,21 +1817,26 @@ export function DailyEntryFormView() {
       if (voidRoot) {
         e.preventDefault();
         void (async () => {
-          const result = await mergeVoidAttachmentDataUrls(
-            voidSaleAttachmentUrlsRef.current,
-            files,
-          );
-          if (result.ok) {
-            setFormNotice((n) =>
-              n.kind === "salesField" ? { kind: "none" } : n,
+          setVoidAttachBusy(true);
+          try {
+            const result = await mergeVoidAttachmentDataUrls(
+              voidSaleAttachmentUrlsRef.current,
+              files,
             );
-            setVoidSaleAttachmentUrls(result.urls);
-          } else {
-            setFormNotice({
-              kind: "salesField",
-              message: result.message,
-              part: "voidAttach",
-            });
+            if (result.ok) {
+              setFormNotice((n) =>
+                n.kind === "salesField" ? { kind: "none" } : n,
+              );
+              setVoidSaleAttachmentUrls(result.urls);
+            } else {
+              setFormNotice({
+                kind: "salesField",
+                message: result.message,
+                part: "voidAttach",
+              });
+            }
+          } finally {
+            setVoidAttachBusy(false);
           }
         })();
         return;
@@ -1548,12 +1864,6 @@ export function DailyEntryFormView() {
       n.kind === "field" && n.lineId === id ? { kind: "none" } : n,
     );
     setExpenseLines((lines) => {
-      const line = lines.find((l) => l.id === id);
-      if (line) {
-        for (const url of line.receiptDataUrls ?? []) {
-          purgeStoredMediaRef(url);
-        }
-      }
       return lines.filter((l) => l.id !== id);
     });
   }
@@ -1666,11 +1976,9 @@ export function DailyEntryFormView() {
               aria-label="Remove attachment"
               onClick={(e) => {
                 e.stopPropagation();
-                const removed = urls[idx];
                 patchLine(line.id, {
                   receiptDataUrls: urls.filter((_, j) => j !== idx),
                 });
-                purgeStoredMediaRef(removed);
               }}
             >
               ×
@@ -1713,16 +2021,21 @@ export function DailyEntryFormView() {
             e.target.value = "";
             if (picked.length === 0) return;
             void (async () => {
-              const result = await mergeVoidAttachmentDataUrls(urls, picked);
-              if (result.ok) {
-                clearSalesFieldNotice();
-                setVoidSaleAttachmentUrls(result.urls);
-              } else {
-                setFormNotice({
-                  kind: "salesField",
-                  message: result.message,
-                  part: "voidAttach",
-                });
+              setVoidAttachBusy(true);
+              try {
+                const result = await mergeVoidAttachmentDataUrls(urls, picked);
+                if (result.ok) {
+                  clearSalesFieldNotice();
+                  setVoidSaleAttachmentUrls(result.urls);
+                } else {
+                  setFormNotice({
+                    kind: "salesField",
+                    message: result.message,
+                    part: "voidAttach",
+                  });
+                }
+              } finally {
+                setVoidAttachBusy(false);
               }
             })();
           }}
@@ -1772,9 +2085,7 @@ export function DailyEntryFormView() {
               onClick={(e) => {
                 e.stopPropagation();
                 clearSalesFieldNotice();
-                const removed = urls[idx];
                 setVoidSaleAttachmentUrls(urls.filter((_, j) => j !== idx));
-                purgeStoredMediaRef(removed);
               }}
             >
               ×
@@ -1786,7 +2097,7 @@ export function DailyEntryFormView() {
   }
 
   async function handleSave() {
-    if (isSaving || isFormLocked) return;
+    if (isSaving || isFormLocked || isAttachmentUploadBusy) return;
 
     const validation = findFirstExpenseValidationError(expenseLines);
     if (validation) {
@@ -1810,73 +2121,11 @@ export function DailyEntryFormView() {
       return;
     }
 
-    const voidSaleToSave = voidAmtParsed;
-    const voidRemarksToSave = voidAmtParsed > 0 ? voidRemarksTrim : "";
-    const voidAttachmentsFiltered = voidSaleAttachmentUrls.filter(Boolean);
-    const voidAttachmentsToSave =
-      voidAmtParsed > 0 && voidAttachmentsFiltered.length > 0
-        ? voidAttachmentsFiltered
-        : undefined;
-
-    const linesToSave: ExpenseLineSaved[] = [];
-    for (const line of expenseLines) {
-      const amt = parseAmount(line.amount);
-      const receiptUrls = line.receiptDataUrls.filter(Boolean);
-      const receiptField =
-        receiptUrls.length > 0 ? ({ receiptDataUrls: receiptUrls } as const) : {};
-      const lineIdField = { lineId: line.id } as const;
-      if (line.kind === "vendor") {
-        const v = line.vendor.trim();
-        if (v && amt > 0) {
-          const base = {
-            kind: "vendor" as const,
-            vendor: v,
-            amount: amt,
-            ...lineIdField,
-            ...receiptField,
-          };
-          const supplierId = resolveLedgerSupplierIdByBookName(v);
-          const isEmp = Boolean(supplierId && isEmployeesLedgerSupplierId(supplierId));
-          if (isEmp) {
-            if (line.ledgerEmployeeLineKind) {
-              linesToSave.push({
-                ...base,
-                ledgerKind: "payment",
-                ledgerEmployeeLineKind: line.ledgerEmployeeLineKind,
-                ledgerNote: line.ledgerNote.trim(),
-              });
-            } else {
-              linesToSave.push(base);
-            }
-          } else if (line.ledgerKind) {
-            linesToSave.push({
-              ...base,
-              ledgerKind: line.ledgerKind,
-              ledgerNote: line.ledgerNote.trim(),
-            });
-          } else {
-            linesToSave.push(base);
-          }
-        }
-      } else {
-        const expenseTitle = line.label.trim();
-        if (expenseTitle && amt > 0) {
-          const noteTrim = line.note.trim();
-          linesToSave.push({
-            kind: "regular",
-            label: expenseTitle,
-            amount: amt,
-            ...lineIdField,
-            ...(noteTrim ? { note: noteTrim } : {}),
-            ...receiptField,
-          });
-        }
-      }
-    }
-
+    const voidAttachmentsToSave = dailyEntryCandidate.voidSaleAttachmentDataUrls;
+    const linesToSave = buildExpenseLinesToSaveFromDrafts(expenseLines);
     const expenseTotal = linesToSave.reduce((s, line) => s + line.amount, 0);
+    const bankWithdrawnToSave = dailyEntryCandidate.bankWithdrawn ?? 0;
 
-    const bankWithdrawnToSave = Math.max(0, parseAmount(bankWithdrawn));
     if (bankWithdrawnToSave > expenseTotal) {
       setFormNotice({
         kind: "salesField",
@@ -1887,27 +2136,13 @@ export function DailyEntryFormView() {
     }
 
     const prior = entryMap[dateKey];
-    const enteredBy = userName.trim() || "Unknown";
     const nextCandidate: DailyEntryRow = {
-      date: dateKey,
-      openingBalance: parseAmount(openingBalance),
-      cashSale: parseAmount(cashSale),
-      bankSale: parseAmount(bankSale),
-      bkashSale: parseAmount(bkashSale),
-      nagadSale: parseAmount(nagadSale),
-      pathaoSale: parseAmount(pathaoSale),
-      foodiSale: parseAmount(foodiSale),
-      foodpandaSale: parseAmount(foodpandaSale),
-      voidSale: voidSaleToSave > 0 ? voidSaleToSave : undefined,
-      voidSaleRemarks:
-        voidSaleToSave > 0 && voidRemarksToSave ? voidRemarksToSave : undefined,
+      ...dailyEntryCandidate,
       voidSaleAttachmentDataUrls: voidAttachmentsToSave,
       expenses: expenseTotal,
       bankWithdrawn: bankWithdrawnToSave,
       expenseLines: linesToSave,
-      remainingBalance: remaining,
-      updatedAt: new Date().toISOString(),
-      enteredBy,
+      enteredBy: enteredByName,
     };
 
     if (prior && savedEntryBodyEquals(prior, nextCandidate)) {
@@ -1961,19 +2196,42 @@ export function DailyEntryFormView() {
 
   function openAddEntryForm() {
     const key = todayKey();
-    setDateKey(key);
-    setDateFieldText(formatDateKeyAsDisplay(key));
-    setActiveView("entry");
+    requestLeaveIfNeeded(() => {
+      setDateKey(key);
+      setDateFieldText(formatDateKeyAsDisplay(key));
+      setActiveView("entry");
+    });
   }
 
   function commitDateFieldText() {
     const parsed = parseDisplayDateToKey(dateFieldText);
-    if (parsed) {
-      setDateKey(parsed);
-      setDateFieldText(formatDateKeyAsDisplay(parsed));
-    } else {
+    if (!parsed) {
       setDateFieldText(formatDateKeyAsDisplay(dateKey));
+      return;
     }
+    if (parsed === dateKey) {
+      setDateFieldText(formatDateKeyAsDisplay(parsed));
+      return;
+    }
+    requestLeaveIfNeeded(
+      () => {
+        setDateKey(parsed);
+        setDateFieldText(formatDateKeyAsDisplay(parsed));
+      },
+      () => setDateFieldText(formatDateKeyAsDisplay(dateKey)),
+    );
+  }
+
+  function openEntryForDate(dateIso: string) {
+    requestLeaveIfNeeded(() => {
+      setDateKey(dateIso);
+      setDateFieldText(formatDateKeyAsDisplay(dateIso));
+      setActiveView("entry");
+    });
+  }
+
+  function leaveEntryFormForHistory() {
+    requestLeaveIfNeeded(() => setActiveView("history"));
   }
 
   function openNativeDatePicker() {
@@ -2138,7 +2396,14 @@ export function DailyEntryFormView() {
               value={dateKey}
               onChange={(e) => {
                 const v = e.target.value;
-                if (v) setDateKey(v);
+                if (!v || v === dateKey) return;
+                requestLeaveIfNeeded(
+                  () => {
+                    setDateKey(v);
+                    setDateFieldText(formatDateKeyAsDisplay(v));
+                  },
+                  () => setDateFieldText(formatDateKeyAsDisplay(dateKey)),
+                );
               }}
               tabIndex={-1}
               aria-hidden="true"
@@ -2153,7 +2418,7 @@ export function DailyEntryFormView() {
         {activeView === "entry" ? (
           <button
             type="button"
-            onClick={() => setActiveView("history")}
+            onClick={leaveEntryFormForHistory}
             className="rounded-[7px] border border-solid [border-color:var(--pos-divider)] px-2.5 py-1 text-[11px] font-semibold text-[var(--pos-text-2)] transition-colors hover:text-[var(--pos-text-1)]"
           >
             History
@@ -2425,10 +2690,7 @@ export function DailyEntryFormView() {
                                 className={historyActionBtnClass}
                                 title="Edit in form"
                                 aria-label={`Edit entry ${formatDateKeyAsDisplay(r.date)}`}
-                                onClick={() => {
-                                  setDateKey(r.date);
-                                  setActiveView("entry");
-                                }}
+                                onClick={() => openEntryForDate(r.date)}
                               >
                                 <Pencil className="size-3.5" strokeWidth={2.25} />
                               </button>
@@ -3123,11 +3385,11 @@ export function DailyEntryFormView() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="submit"
-                  disabled={isSaving}
+                  disabled={isSaving || isAttachmentUploadBusy}
                   className="inline-flex h-9 w-fit min-w-[7.5rem] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 active:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ backgroundColor: "var(--pos-sb-base)" }}
                 >
-                  {isSaving ? "Saving…" : "Save"}
+                  {isSaving ? "Saving…" : isAttachmentUploadBusy ? "Uploading…" : "Save"}
                 </button>
                 {savedRowForDate ? (
                   <button
@@ -3507,8 +3769,8 @@ export function DailyEntryFormView() {
                 className="inline-flex h-9 min-w-[7rem] items-center justify-center rounded-[8px] px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ backgroundColor: "var(--pos-sb-base)" }}
                 onClick={() => {
-                  setDateKey(historyDetailRow.date);
-                  setActiveView("entry");
+                  if (!historyDetailRow) return;
+                  openEntryForDate(historyDetailRow.date);
                   setHistoryReceiptsOpen(false);
                   setHistoryReceiptsLineIndex(null);
                   setHistoryDetailRow(null);
@@ -3668,6 +3930,51 @@ export function DailyEntryFormView() {
           <p className="mt-3 max-w-lg text-center text-[11px] text-white/60">
             Tap outside or press Escape to close
           </p>
+        </div>
+      ) : null}
+
+      {pendingLeave ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="unsaved-daily-entry-title"
+          className="fixed inset-0 z-[140] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={cancelDiscardLeave}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="unsaved-daily-entry-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Discard unsaved changes?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              You have unsaved changes for{" "}
+              <span className="font-semibold text-[var(--pos-text-1)]">
+                {formatDateKeyAsDisplay(dateKey)}
+              </span>
+              . Leaving now will discard them. Save first if you want to keep this entry.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={cancelDiscardLeave}
+              >
+                Stay
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid border-red-500/55 bg-red-600 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 sm:flex-none"
+                onClick={confirmDiscardLeave}
+              >
+                Discard
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "@/features/auth";
 import {
@@ -8,6 +8,7 @@ import {
 import { PosSidebar } from "../components/pos/PosSidebar";
 import { PosMobileNav } from "../components/pos/PosMobileNav";
 import { PosMobileHeader } from "../components/pos/PosMobileHeader";
+import { attemptPosLeave } from "@/features/daily-entry";
 import { POS_SELECT_LEAF_EVENT } from "../lib/posNavEvents";
 import { EmployeeModuleView, HR_PAYROLL_LEAF_IDS } from "../components/pos/EmployeeModuleView";
 import {
@@ -29,22 +30,33 @@ export function PosTerminalPage() {
   const { signOut, userName, activeBranch } = useSession();
   const [activeLeafId, setActiveLeafId] = useState(resolveInitialLeafId);
 
+  const handleSelectLeaf = useCallback((leafId: string) => {
+    if (leafId === activeLeafId) return;
+    const proceed = () => setActiveLeafId(leafId);
+    if (!attemptPosLeave(proceed)) return;
+    proceed();
+  }, [activeLeafId]);
+
   useEffect(() => {
     const onNav = (ev: Event) => {
       const detail = (ev as CustomEvent<{ leafId?: string }>).detail;
-      if (detail?.leafId) setActiveLeafId(detail.leafId);
+      if (detail?.leafId) handleSelectLeaf(detail.leafId);
     };
     window.addEventListener(POS_SELECT_LEAF_EVENT, onNav);
     return () => window.removeEventListener(POS_SELECT_LEAF_EVENT, onNav);
-  }, []);
+  }, [handleSelectLeaf]);
 
   useEffect(() => {
     writeStoredLastLeafId(activeLeafId);
   }, [activeLeafId]);
 
   const handleSignOut = () => {
-    signOut();
-    navigate("/signin", { replace: true });
+    const proceed = () => {
+      signOut();
+      navigate("/signin", { replace: true });
+    };
+    if (!attemptPosLeave(proceed)) return;
+    proceed();
   };
 
   const mainContent = () => {
@@ -80,7 +92,7 @@ export function PosTerminalPage() {
       <div className="relative flex min-h-0 flex-1 pb-[calc(6.25rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
         <PosSidebar
           activeLeafId={activeLeafId}
-          onSelectLeaf={setActiveLeafId}
+          onSelectLeaf={handleSelectLeaf}
           onSignOut={handleSignOut}
           userName={userName}
           branchName={branchLabel}
@@ -96,7 +108,7 @@ export function PosTerminalPage() {
         </div>
       </div>
 
-      <PosMobileNav activeLeafId={activeLeafId} onSelectLeaf={setActiveLeafId} />
+      <PosMobileNav activeLeafId={activeLeafId} onSelectLeaf={handleSelectLeaf} />
     </div>
   );
 }

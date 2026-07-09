@@ -28,3 +28,8 @@ export {
   unlockDailyEntry,
 } from "./dailyEntryRepository";
 export { useDailyEntryMap } from "./useDailyEntryMap";
+export {
+  attemptPosLeave,
+  setDailyEntryNavGuard,
+  type DailyEntryLeaveAction,
+} from "./dailyEntryNavGuard";
