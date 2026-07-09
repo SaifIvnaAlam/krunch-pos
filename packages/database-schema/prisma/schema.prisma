@@ -172,6 +172,10 @@ model MediaAsset {
 }
 
 /// Branch-scoped cashbooks, bills/payments, and purchase moves (terminal Ledger module).
+/// JSON shapes (terminal-owned):
+/// - suppliers: LedgerSupplier[]
+/// - moves: StockMove[] (PurchaseOrder may include items: LedgerItemLine[])
+/// - ledger: LedgerEntry[] (optional items: { id, name, qty, unit, rateCents, totalCents }[])
 model BranchLedgerWorkspace {
   branchId  String   @id
   suppliers Json     @default("[]")

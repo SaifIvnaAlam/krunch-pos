@@ -29,6 +29,7 @@ export function PosTerminalPage() {
   const navigate = useNavigate();
   const { signOut, userName, activeBranch } = useSession();
   const [activeLeafId, setActiveLeafId] = useState(resolveInitialLeafId);
+  const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
 
   const handleSelectLeaf = useCallback((leafId: string) => {
     if (leafId === activeLeafId) return;
@@ -51,6 +52,15 @@ export function PosTerminalPage() {
   }, [activeLeafId]);
 
   const handleSignOut = () => {
+    setSignOutConfirmOpen(true);
+  };
+
+  const cancelSignOut = () => {
+    setSignOutConfirmOpen(false);
+  };
+
+  const confirmSignOut = () => {
+    setSignOutConfirmOpen(false);
     const proceed = () => {
       signOut();
       navigate("/signin", { replace: true });
@@ -109,6 +119,47 @@ export function PosTerminalPage() {
       </div>
 
       <PosMobileNav activeLeafId={activeLeafId} onSelectLeaf={handleSelectLeaf} />
+
+      {signOutConfirmOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sign-out-confirm-title"
+          className="fixed inset-0 z-[140] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={cancelSignOut}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="sign-out-confirm-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Sign out?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              You will need to sign in again to continue using the terminal.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={cancelSignOut}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid border-red-500/55 bg-red-600 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 sm:flex-none"
+                onClick={confirmSignOut}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -8,7 +8,6 @@ export default defineConfig(({ mode }) => {
   const apiProxyTarget =
     env.DEV_API_PROXY_TARGET?.trim() ||
     "https://steakandmarrow.inventivelab.bd";
-  const apiProxySecure = apiProxyTarget.startsWith("https://");
 
   return {
     resolve: {
@@ -21,15 +20,16 @@ export default defineConfig(({ mode }) => {
       port: 1420,
       strictPort: false,
       proxy: {
+        // secure: false — prod API uses a self-signed / private CA cert
         "/api": {
           target: apiProxyTarget,
           changeOrigin: true,
-          secure: apiProxySecure,
+          secure: false,
         },
         "/media": {
           target: apiProxyTarget,
           changeOrigin: true,
-          secure: apiProxySecure,
+          secure: false,
           rewrite: (path) => `/api/v1${path}`,
         },
       },

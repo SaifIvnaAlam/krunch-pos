@@ -27,6 +27,16 @@ export type LedgerSupplier = {
   notes: string;
 };
 
+/** Line items on a bill / purchase — name, qty, unit, rate, total. */
+export type LedgerItemLine = {
+  id: string;
+  name: string;
+  qty: number;
+  unit: string;
+  rateCents: number;
+  totalCents: number;
+};
+
 export type PurchaseOrder = {
   kind: "purchase";
   id: string;
@@ -36,6 +46,7 @@ export type PurchaseOrder = {
   status: "draft" | "sent" | "partial" | "received" | "cancelled";
   amountCents: number;
   note: string;
+  items?: LedgerItemLine[];
 };
 
 export type ReturnLine = {
@@ -70,6 +81,8 @@ export type LedgerEntry = {
   amountCents: number;
   attachment?: LedgerAttachment;
   employeeLineKind?: EmployeeLedgerLineKind;
+  /** Item breakdown (typically on bills). */
+  items?: LedgerItemLine[];
 };
 
 export type LedgerWorkspaceData = {

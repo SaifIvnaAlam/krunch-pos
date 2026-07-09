@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   Search,
+  StickyNote,
   Trash2,
   X,
 } from "lucide-react";
@@ -49,6 +50,7 @@ import {
   deleteDailyEntry,
   listDailyEntriesDescendingFromMap,
   lockDailyEntry,
+  roundTaka,
   saveDailyEntry,
   savedLineKind,
   setDailyEntryNavGuard,
@@ -385,21 +387,58 @@ async function mergeVoidAttachmentDataUrls(
 const VENDOR_OTHER_VALUE = "__vendor_other__";
 
 const inputClass =
-  "h-8 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-[12px] tabular-nums text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
+  "h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] tabular-nums text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
+const amountInputClass =
+  "h-[3.125rem] w-full rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[22px] font-semibold tabular-nums text-right text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
 const textInputClass =
-  "h-8 w-full min-w-0 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
+  "h-9 w-full min-w-0 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
 const selectClass =
-  "h-8 w-full min-w-0 cursor-pointer rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
-const labelClass =
-  "flex min-w-0 flex-col gap-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--pos-text-2)]";
-const sectionTitleClass =
-  "text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--pos-text-2)]";
+  "h-9 w-full min-w-0 cursor-pointer rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
+const labelClass = "text-[12px] font-medium leading-snug text-[var(--pos-text-1)]";
+const fieldGroupClass = "flex min-w-0 flex-col gap-1.5";
+const salesFieldGroupClass = `${fieldGroupClass} min-w-0 w-full`;
+const sectionTitleClass = "text-[13px] font-semibold leading-tight text-[var(--pos-text-1)]";
 const columnShellClass =
-  "flex min-h-0 min-w-0 flex-col gap-2 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-2";
-const statCardClass =
-  "flex min-w-0 flex-col gap-0.5 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-2.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] sm:p-3";
+  "flex min-h-0 min-w-0 flex-col gap-3.5 rounded-[12px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-3 sm:p-4";
+const entrySectionsGridClass =
+  "flex min-w-0 flex-col-reverse items-stretch gap-3 sm:flex-row-reverse sm:items-start sm:gap-4";
+const salesChannelGridClass = "flex min-w-0 flex-col gap-2.5";
+const statsSummaryClass =
+  "grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-[12px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-divider)] sm:grid-cols-5";
+const statCardClass = "flex min-w-0 flex-col gap-1 bg-[var(--pos-card)] px-3 py-3 sm:px-4";
+const expenseCardClass = "flex min-w-0 flex-col gap-1.5";
+const expenseCardRowClass = "flex min-w-0 flex-wrap items-start gap-2";
+const expensePrimaryInputClass =
+  "h-[3.125rem] w-full min-w-0 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[14px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
+const expenseTitleInputClass = `${expensePrimaryInputClass} text-[16px] font-semibold`;
+const expensePrimarySelectClass = `${expensePrimaryInputClass} cursor-pointer`;
+/** Regular-line memo: reads as quiet placeholder text until focused. */
+const expenseQuietInputClass =
+  "h-8 w-full min-w-0 rounded-[6px] border border-solid border-transparent bg-transparent px-2 text-[12px] text-[var(--pos-text-1)] transition-[border-color,background-color,box-shadow] placeholder:text-[var(--pos-text-2)]/70 focus:border-[var(--pos-input-border)] focus:bg-[var(--pos-input-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
+const expenseMiniLabelClass =
+  "text-[10px] font-medium uppercase tracking-[0.04em] text-[var(--pos-text-2)]";
+const expenseRemoveBtnClass =
+  "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700";
+const expenseIconBtnClass =
+  "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]";
+const expenseNoteBtnActiveClass =
+  "border-[var(--pos-sb-base)] bg-[var(--pos-nav-hover)]/20 text-[var(--pos-text-1)]";
+const expenseAddBtnClass =
+  "inline-flex w-full flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-dashed [border-color:var(--pos-border-medium,var(--pos-divider))] bg-transparent px-3 py-2.5 text-[12px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30";
 const editOpeningBtnClass =
   "inline-flex shrink-0 items-center justify-center rounded-md p-1 text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]";
+
+const headerSaveBtnClass =
+  "inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-[7px] px-2.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+
+const headerLockBtnClass =
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-amber-500/50 bg-amber-500/10 px-2.5 text-[11px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+
+const headerUnlockBtnClass =
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-2.5 text-[11px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+
+const headerHistoryBtnClass =
+  "inline-flex h-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-divider)] px-2.5 text-[11px] font-semibold text-[var(--pos-text-2)] transition-colors hover:text-[var(--pos-text-1)]";
 
 const historyActionBtnClass =
   "inline-flex shrink-0 items-center justify-center rounded-md border border-solid [border-color:var(--pos-divider)] p-1.5 text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--pos-sb-base)]";
@@ -513,6 +552,12 @@ function parseDisplayDateToKey(raw: string): string | null {
 
 function parseAmount(raw: string): number {
   return parseNonNegativeAmount(raw);
+}
+
+/** Amount fields show blank instead of 0 so untouched fields are easy to scan. */
+function amountFieldText(value: number | undefined): string {
+  const amount = value ?? 0;
+  return amount === 0 ? "" : String(amount);
 }
 
 function linkNonNegativeAmount(setter: (value: string) => void) {
@@ -639,7 +684,6 @@ function findFirstExpenseValidationError(
 
 const FIELD_ERR_INPUT =
   "!border-red-500/90 ring-2 ring-red-500/35 focus:!border-red-500 focus:ring-red-500/45";
-const FIELD_ERR_VENDOR_COL = "rounded-[8px] ring-2 ring-red-500/35 ring-offset-0";
 const FIELD_ERR_ATTACH_WRAP = "rounded-[8px] ring-2 ring-red-500/35";
 
 function ExpenseFieldErrorBubble({ message }: { message: string | null }) {
@@ -659,6 +703,14 @@ function formatMoney(value: number) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+/** Summary totals and closing balance — whole taka only. */
+function formatSummaryMoney(value: number) {
+  return new Intl.NumberFormat("en-BD", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(roundTaka(value));
 }
 
 function expenseTotalFromRow(r: DailyEntryRow): number {
@@ -935,7 +987,7 @@ function computeRemainingFromParts(
     parseAmount(sales.foodpandaSale);
   const voidAmt = Math.max(0, parseAmount(sales.voidSale));
   const expenseSum = expenseLineDrafts.reduce((s, line) => s + parseAmount(line.amount), 0);
-  return parseAmount(openingBalance) + salesSum - voidAmt - expenseSum;
+  return roundTaka(parseAmount(openingBalance) + salesSum - voidAmt - expenseSum);
 }
 
 function buildVendorOptions(
@@ -966,7 +1018,7 @@ function salesTotal(r: DailyEntryRow): number {
 function netSalesTotal(r: DailyEntryRow): number {
   const gross = salesTotal(r);
   const voidAmt = Math.max(0, r.voidSale ?? 0);
-  return gross - voidAmt;
+  return roundTaka(gross - voidAmt);
 }
 
 /** Lowercase text slice for matching formatted + raw amounts. */
@@ -1255,20 +1307,23 @@ export function DailyEntryFormView() {
   const [dateKey, setDateKey] = useState(todayKey);
   const [dateFieldText, setDateFieldText] = useState(() => formatDateKeyAsDisplay(todayKey()));
   const [openingBalance, setOpeningBalance] = useState("0");
-  const [cashSale, setCashSale] = useState("0");
-  const [bankSale, setBankSale] = useState("0");
-  const [bkashSale, setBkashSale] = useState("0");
-  const [nagadSale, setNagadSale] = useState("0");
-  const [pathaoSale, setPathaoSale] = useState("0");
-  const [foodiSale, setFoodiSale] = useState("0");
-  const [foodpandaSale, setFoodpandaSale] = useState("0");
-  const [voidSale, setVoidSale] = useState("0");
+  const [cashSale, setCashSale] = useState("");
+  const [bankSale, setBankSale] = useState("");
+  const [bkashSale, setBkashSale] = useState("");
+  const [nagadSale, setNagadSale] = useState("");
+  const [pathaoSale, setPathaoSale] = useState("");
+  const [foodiSale, setFoodiSale] = useState("");
+  const [foodpandaSale, setFoodpandaSale] = useState("");
+  const [voidSale, setVoidSale] = useState("");
   const [voidSaleRemarks, setVoidSaleRemarks] = useState("");
   const [voidSaleAttachmentUrls, setVoidSaleAttachmentUrls] = useState<string[]>([]);
   const [expenseLines, setExpenseLines] = useState<ExpenseLineDraft[]>(() => []);
-  const [bankWithdrawn, setBankWithdrawn] = useState("0");
+  const [bankWithdrawn, setBankWithdrawn] = useState("");
   const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
   const [attachBusyLineId, setAttachBusyLineId] = useState<string | null>(null);
+  const [openExpenseNoteLineIds, setOpenExpenseNoteLineIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [voidAttachBusy, setVoidAttachBusy] = useState(false);
   const isAttachmentUploadBusy = attachBusyLineId !== null || voidAttachBusy;
   const [openingEdit, setOpeningEdit] = useState(false);
@@ -1368,7 +1423,8 @@ export function DailyEntryFormView() {
   );
 
   const netSalesAfterVoid = useMemo(
-    () => channelSalesGross - Math.max(0, parseAmount(voidSale)),
+    () =>
+      roundTaka(channelSalesGross - Math.max(0, parseAmount(voidSale))),
     [channelSalesGross, voidSale],
   );
 
@@ -1483,22 +1539,18 @@ export function DailyEntryFormView() {
     const existing = entryMap[dateKey];
     if (existing) {
       setOpeningBalance(String(existing.openingBalance));
-      setCashSale(String(existing.cashSale));
-      setBankSale(String(existing.bankSale));
-      setBkashSale(String(existing.bkashSale));
-      setNagadSale(String(existing.nagadSale));
-      setPathaoSale(String(existing.pathaoSale));
-      setFoodiSale(String(existing.foodiSale));
-      setFoodpandaSale(String(existing.foodpandaSale));
-      setVoidSale(
-        (existing.voidSale ?? 0) === 0 ? "0" : String(existing.voidSale ?? 0),
-      );
+      setCashSale(amountFieldText(existing.cashSale));
+      setBankSale(amountFieldText(existing.bankSale));
+      setBkashSale(amountFieldText(existing.bkashSale));
+      setNagadSale(amountFieldText(existing.nagadSale));
+      setPathaoSale(amountFieldText(existing.pathaoSale));
+      setFoodiSale(amountFieldText(existing.foodiSale));
+      setFoodpandaSale(amountFieldText(existing.foodpandaSale));
+      setVoidSale(amountFieldText(existing.voidSale));
       setVoidSaleRemarks(existing.voidSaleRemarks ?? "");
       setVoidSaleAttachmentUrls([...(existing.voidSaleAttachmentDataUrls ?? [])]);
       setExpenseLines(draftsFromRow(existing));
-      setBankWithdrawn(
-        (existing.bankWithdrawn ?? 0) === 0 ? "0" : String(existing.bankWithdrawn ?? 0),
-      );
+      setBankWithdrawn(amountFieldText(existing.bankWithdrawn));
       setFormNotice({ kind: "none" });
       return;
     }
@@ -1506,18 +1558,18 @@ export function DailyEntryFormView() {
     const prevDayKey = dateAddDays(dateKey, -1);
     const prevClosing = entryMap[prevDayKey]?.remainingBalance ?? 0;
     setOpeningBalance(String(prevClosing));
-    setCashSale("0");
-    setBankSale("0");
-    setBkashSale("0");
-    setNagadSale("0");
-    setPathaoSale("0");
-    setFoodiSale("0");
-    setFoodpandaSale("0");
-    setVoidSale("0");
+    setCashSale("");
+    setBankSale("");
+    setBkashSale("");
+    setNagadSale("");
+    setPathaoSale("");
+    setFoodiSale("");
+    setFoodpandaSale("");
+    setVoidSale("");
     setVoidSaleRemarks("");
     setVoidSaleAttachmentUrls([]);
     setExpenseLines([]);
-    setBankWithdrawn("0");
+    setBankWithdrawn("");
     setFormNotice({ kind: "none" });
   }, [dateKey, entryMap, savedListVersion]);
 
@@ -1872,6 +1924,39 @@ export function DailyEntryFormView() {
     setFormNotice((n) => (n.kind === "salesField" ? { kind: "none" } : n));
   }
 
+  function toggleExpenseNoteLine(lineId: string) {
+    setOpenExpenseNoteLineIds((prev) => {
+      const next = new Set(prev);
+      const willOpen = !next.has(lineId);
+      if (willOpen) {
+        next.add(lineId);
+        requestAnimationFrame(() => {
+          document.getElementById(`expense-note-${lineId}`)?.focus();
+        });
+      } else {
+        next.delete(lineId);
+      }
+      return next;
+    });
+  }
+
+  function renderExpenseNoteToggle(line: ExpenseLineDraft) {
+    const hasNote = line.note.trim().length > 0;
+    const noteOpen = openExpenseNoteLineIds.has(line.id);
+    return (
+      <button
+        type="button"
+        onClick={() => toggleExpenseNoteLine(line.id)}
+        className={`${expenseIconBtnClass} ${hasNote || noteOpen ? expenseNoteBtnActiveClass : ""}`}
+        aria-label={noteOpen ? "Hide note" : hasNote ? "Edit note" : "Add note"}
+        aria-expanded={noteOpen}
+        title={noteOpen ? "Hide note" : hasNote ? "Edit note" : "Add note"}
+      >
+        <StickyNote className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+      </button>
+    );
+  }
+
   /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
   function renderReceiptAddControl(line: ExpenseLineDraft) {
     const urls = line.receiptDataUrls;
@@ -1882,9 +1967,9 @@ export function DailyEntryFormView() {
     if (!canAddMore) {
       return (
         <div
-          className={`relative flex min-h-8 items-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+          className={`relative flex min-h-9 items-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
         >
-          <span className="text-[8px] leading-tight text-[var(--pos-text-2)]">
+          <span className="text-[9px] leading-tight text-[var(--pos-text-2)]">
             Max {MAX_RECEIPTS_PER_LINE} files
           </span>
         </div>
@@ -1893,7 +1978,7 @@ export function DailyEntryFormView() {
     return (
       <div className="flex min-w-0 flex-col items-center gap-0.5">
       <div
-        className={`relative flex h-8 w-full min-w-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+        className={`relative flex h-[3.125rem] w-full min-w-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
       >
         <input
           id={inputId}
@@ -1912,7 +1997,7 @@ export function DailyEntryFormView() {
         />
         <label
           htmlFor={inputId}
-          className={`inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[6px] border border-solid transition-colors hover:bg-[var(--pos-nav-hover)]/30 ${
+          className={`inline-flex size-12 shrink-0 cursor-pointer items-center justify-center rounded-[10px] border border-solid transition-colors hover:bg-[var(--pos-nav-hover)]/30 ${
             busy ? "pointer-events-none opacity-50" : ""
           } ${
             attachErr
@@ -1996,10 +2081,10 @@ export function DailyEntryFormView() {
     if (!canAddMore) {
       return (
         <div
-          className={`relative flex min-h-8 items-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+          className={`relative flex min-h-9 items-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
           data-field-error-anchor="void:voidAttach"
         >
-          <span className="text-[8px] leading-tight text-[var(--pos-text-2)]">
+          <span className="text-[9px] leading-tight text-[var(--pos-text-2)]">
             Max {MAX_VOID_ATTACHMENTS} files
           </span>
         </div>
@@ -2007,7 +2092,7 @@ export function DailyEntryFormView() {
     }
     return (
       <div
-        className={`relative flex h-8 w-8 shrink-0 items-center justify-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+        className={`relative flex size-9 shrink-0 items-center justify-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
         data-field-error-anchor="void:voidAttach"
       >
         <input
@@ -2042,7 +2127,7 @@ export function DailyEntryFormView() {
         />
         <label
           htmlFor={inputId}
-          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
+          className="inline-flex size-9 cursor-pointer items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
           aria-label="Attach PDF or image for void sales"
           title="Attach PDF or image, or paste an image while this section is focused"
         >
@@ -2356,7 +2441,7 @@ export function DailyEntryFormView() {
       </h1>
       {activeView === "entry" ? (
         <div className="col-start-2 flex shrink-0 items-center gap-1.5 text-[10px] text-[var(--pos-text-2)]">
-          <span className="font-medium uppercase tracking-[0.06em] text-[var(--pos-text-2)]/80">
+          <span className="font-medium text-[11px] text-[var(--pos-text-2)]">
             Date
           </span>
           <div className="relative flex items-center gap-0.5">
@@ -2378,7 +2463,7 @@ export function DailyEntryFormView() {
               aria-label="Entry date, format DD-MMM-YYYY"
               autoComplete="off"
               spellCheck={false}
-              className={`${inputClass} !h-7 w-auto min-w-[9.25rem] py-0 text-[11px]`}
+              className={`${inputClass} !h-9 w-auto min-w-[9.25rem] py-0`}
             />
             <button
               type="button"
@@ -2416,13 +2501,49 @@ export function DailyEntryFormView() {
       )}
       <div className="col-start-3 flex justify-end gap-1.5 justify-self-end">
         {activeView === "entry" ? (
-          <button
-            type="button"
-            onClick={leaveEntryFormForHistory}
-            className="rounded-[7px] border border-solid [border-color:var(--pos-divider)] px-2.5 py-1 text-[11px] font-semibold text-[var(--pos-text-2)] transition-colors hover:text-[var(--pos-text-1)]"
-          >
-            History
-          </button>
+          <>
+            {isFormLocked ? (
+              <button
+                type="button"
+                disabled={isUnlocking}
+                onClick={() => openUnlockEntryModal(dateKey)}
+                className={headerUnlockBtnClass}
+              >
+                <LockOpen className="size-3" strokeWidth={2.25} aria-hidden />
+                {isUnlocking ? "Unlocking…" : "Unlock entry"}
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={isSaving || isAttachmentUploadBusy}
+                  onClick={() => void handleSave()}
+                  className={headerSaveBtnClass}
+                  style={{ backgroundColor: "var(--pos-sb-base)" }}
+                >
+                  {isSaving ? "Saving…" : isAttachmentUploadBusy ? "Uploading…" : "Save"}
+                </button>
+                {savedRowForDate ? (
+                  <button
+                    type="button"
+                    disabled={isLocking}
+                    onClick={() => openLockEntryModal(dateKey)}
+                    className={headerLockBtnClass}
+                  >
+                    <Lock className="size-3" strokeWidth={2.25} aria-hidden />
+                    {isLocking ? "Locking…" : "Lock entry"}
+                  </button>
+                ) : null}
+              </>
+            )}
+            <button
+              type="button"
+              onClick={leaveEntryFormForHistory}
+              className={headerHistoryBtnClass}
+            >
+              History
+            </button>
+          </>
         ) : (
           <span
             className="self-center text-[11px] tabular-nums text-[var(--pos-text-2)]"
@@ -2446,15 +2567,15 @@ export function DailyEntryFormView() {
   const editingExistingBanner =
     activeView === "entry" && savedRowForDate ? (
       <div
-        className={`shrink-0 border-b border-solid px-3 py-1.5 ${
+        className={`shrink-0 border-b border-l-[3px] border-solid px-3 py-2 ${
           isFormLocked
-            ? "border-amber-500/50 bg-amber-500/10"
-            : "[border-color:var(--pos-sb-base)] bg-[var(--pos-sb-base)]/15"
+            ? "border-amber-500/60 border-l-amber-500 bg-amber-500/5"
+            : "border-[var(--pos-divider)] border-l-[var(--pos-sb-base)] bg-[var(--pos-page)]"
         }`}
         role="status"
         aria-live="polite"
       >
-        <p className="text-[12px] font-bold leading-tight text-[var(--pos-text-1)]">
+        <p className="text-[12px] font-semibold leading-snug text-[var(--pos-text-1)]">
           {isFormLocked ? (
             <>
               <Lock className="mr-1 inline size-3.5 align-text-bottom" strokeWidth={2.25} />
@@ -2464,7 +2585,7 @@ export function DailyEntryFormView() {
             <>Editing an existing entry for {formatDateKeyAsDisplay(dateKey)}</>
           )}
           {savedRowForDate.updatedAt ? (
-            <span className="ml-1.5 font-normal tabular-nums text-[9px] text-[var(--pos-text-2)]">
+            <span className="ml-1.5 font-normal tabular-nums text-[11px] text-[var(--pos-text-2)]">
               · Last saved{" "}
               {new Date(savedRowForDate.updatedAt).toLocaleString(undefined, {
                 dateStyle: "medium",
@@ -2473,7 +2594,7 @@ export function DailyEntryFormView() {
             </span>
           ) : null}
           {isFormLocked && savedRowForDate.lockedAt ? (
-            <span className="ml-1.5 font-normal tabular-nums text-[9px] text-[var(--pos-text-2)]">
+            <span className="ml-1.5 font-normal tabular-nums text-[11px] text-[var(--pos-text-2)]">
               · Locked{" "}
               {new Date(savedRowForDate.lockedAt).toLocaleString(undefined, {
                 dateStyle: "medium",
@@ -2483,7 +2604,7 @@ export function DailyEntryFormView() {
             </span>
           ) : null}
         </p>
-        <p className="mt-0.5 text-[10px] leading-tight text-[var(--pos-text-2)]">
+        <p className="mt-0.5 text-[11px] leading-snug text-[var(--pos-text-2)]">
           {isFormLocked
             ? "This entry is read-only — it cannot be edited or deleted."
             : "Saved data exists for this day — saving replaces that record (one entry per day)."}
@@ -2656,16 +2777,16 @@ export function DailyEntryFormView() {
                           </span>
                         </td>
                         <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                          {formatMoney(r.openingBalance)}
+                          {formatSummaryMoney(r.openingBalance)}
                         </td>
                         <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                          {formatMoney(netSalesTotal(r))}
+                          {formatSummaryMoney(netSalesTotal(r))}
                         </td>
                         <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                          {formatMoney(expenseTotalFromRow(r))}
+                          {formatSummaryMoney(expenseTotalFromRow(r))}
                         </td>
                         <td className="px-3 py-2 font-semibold tabular-nums text-[var(--pos-text-1)]">
-                          {formatMoney(r.remainingBalance)}
+                          {formatSummaryMoney(r.remainingBalance)}
                         </td>
                         <td
                           className="max-w-[140px] truncate px-3 py-2 text-[var(--pos-text-1)]"
@@ -2757,11 +2878,11 @@ export function DailyEntryFormView() {
           disabled={isFormLocked}
           className="m-0 min-w-0 border-0 p-0 disabled:opacity-100"
         >
-        <div className="flex flex-col gap-2 px-3 py-2">
-          <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="flex flex-col gap-3 px-3 pb-3 pt-3 sm:px-4 sm:pb-4">
+          <div className={statsSummaryClass}>
             <div className={statCardClass}>
               <p className={labelClass}>Opening</p>
-              <div className="flex min-h-[1.25rem] items-center gap-1.5">
+              <div className="flex min-h-[1.375rem] items-center gap-1.5">
                 {openingEdit ? (
                   <input
                     ref={openingInputRef}
@@ -2775,13 +2896,13 @@ export function DailyEntryFormView() {
                         setOpeningEdit(false);
                       }
                     }}
-                    className={`${inputClass} !h-9 flex-1 text-[15px] font-semibold`}
+                    className={`${amountInputClass} flex-1`}
                     aria-label="Opening balance"
                   />
                 ) : (
                   <>
-                    <p className="min-w-0 flex-1 text-[15px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-                      {formatMoney(parseAmount(openingBalance))}
+                    <p className="min-w-0 flex-1 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                      {formatSummaryMoney(parseAmount(openingBalance))}
                     </p>
                     <button
                       type="button"
@@ -2794,191 +2915,61 @@ export function DailyEntryFormView() {
                   </>
                 )}
               </div>
-              <p className="text-[9px] normal-case font-normal leading-snug tracking-normal text-[var(--pos-text-2)]">
+              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
                 From previous closing — tap pencil to adjust
               </p>
             </div>
             <div className={statCardClass}>
               <p className={labelClass}>Expenses</p>
-              <p className="text-[15px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-                {formatMoney(expenseSum)}
+              <p className="text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                {formatSummaryMoney(expenseSum)}
               </p>
-              <p className="text-[9px] normal-case font-normal leading-snug tracking-normal text-[var(--pos-text-2)]">
+              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
                 Total from expense lines below
               </p>
             </div>
             <div className={statCardClass}>
               <p className={labelClass}>Sales</p>
-              <p className="text-[15px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-                {formatMoney(netSalesAfterVoid)}
+              <p className="text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                {formatSummaryMoney(netSalesAfterVoid)}
               </p>
-              <p className="text-[9px] normal-case font-normal leading-snug tracking-normal text-[var(--pos-text-2)]">
+              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
                 Channel total minus void sales
               </p>
             </div>
             <div className={statCardClass}>
-              <p className={labelClass}>Remaining</p>
-              <p className="text-[15px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-                {formatMoney(remaining)}
+              <p className={labelClass}>Bank balance (today)</p>
+              <p className="text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                {formatSummaryMoney(bankNetBalance)}
               </p>
-              <p className="text-[9px] normal-case font-normal leading-snug tracking-normal text-[var(--pos-text-2)]">
+              <p
+                id="daily-bank-withdrawn-hint"
+                className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]"
+              >
+                Bank sales (net after 1.75% charge) minus withdrawn amount
+              </p>
+            </div>
+            <div className={`${statCardClass} relative before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,var(--pos-card))]`}>
+              <p className="text-[11px] font-semibold leading-snug text-[var(--pos-text-1)]">
+                Remaining
+              </p>
+              <p className="text-[22px] font-bold tabular-nums leading-tight text-[var(--pos-text-1)]">
+                {formatSummaryMoney(remaining)}
+              </p>
+              <p className="text-[10px] font-normal leading-snug text-[var(--pos-text-2)]">
                 Opening + net sales − expenses (closing)
               </p>
             </div>
           </div>
 
-          <div className="flex min-w-0 flex-col gap-2">
-            <div className={`${columnShellClass} min-w-0`}>
-                <p className="border-b border-solid [border-color:var(--pos-divider)] pb-1 text-[11px] font-semibold text-[var(--pos-text-1)]">
-                  Sales
-                </p>
-                <div
-                  className="flex min-w-0 flex-col gap-2"
-                  data-void-attachment-anchor
-                >
-                <div className="grid min-w-0 grid-cols-4 gap-x-2 gap-y-1.5">
-                  <label className={labelClass} htmlFor="daily-cash">
-                    Cash
-                    <input
-                      id="daily-cash"
-                      {...amountFieldProps("next")}
-                      value={cashSale}
-                      onChange={linkNonNegativeAmount(setCashSale)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className={labelClass} htmlFor="daily-bank">
-                    <span className="flex min-w-0 w-full items-baseline justify-between gap-1">
-                      <span>Bank</span>
-                      {parseAmount(bankSale) > 0 ? (
-                        <span
-                          className="shrink-0 text-right text-[9px] font-normal normal-case tracking-normal text-[var(--pos-text-2)] tabular-nums"
-                          title={`Net in totals: ${formatMoney(bankSaleNetAfterServiceCharge(parseAmount(bankSale)))}`}
-                        >
-                          {`-1.75% charge = ${formatMoney(bankSaleServiceChargeAmount(parseAmount(bankSale)))}`}
-                        </span>
-                      ) : null}
-                    </span>
-                    <input
-                      id="daily-bank"
-                      {...amountFieldProps("next")}
-                      value={bankSale}
-                      onChange={linkNonNegativeAmount(setBankSale)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className={labelClass} htmlFor="daily-bkash">
-                    bKash
-                    <input
-                      id="daily-bkash"
-                      {...amountFieldProps("next")}
-                      value={bkashSale}
-                      onChange={linkNonNegativeAmount(setBkashSale)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className={labelClass} htmlFor="daily-nagad">
-                    Nagad
-                    <input
-                      id="daily-nagad"
-                      {...amountFieldProps("next")}
-                      value={nagadSale}
-                      onChange={linkNonNegativeAmount(setNagadSale)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className={labelClass} htmlFor="daily-pathao">
-                    Pathao
-                    <input
-                      id="daily-pathao"
-                      {...amountFieldProps("next")}
-                      value={pathaoSale}
-                      onChange={linkNonNegativeAmount(setPathaoSale)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className={labelClass} htmlFor="daily-foodi">
-                    Foodi
-                    <input
-                      id="daily-foodi"
-                      {...amountFieldProps("next")}
-                      value={foodiSale}
-                      onChange={linkNonNegativeAmount(setFoodiSale)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className={labelClass} htmlFor="daily-foodpanda">
-                    Foodpanda
-                    <input
-                      id="daily-foodpanda"
-                      {...amountFieldProps("next")}
-                      value={foodpandaSale}
-                      onChange={linkNonNegativeAmount(setFoodpandaSale)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className={labelClass} htmlFor="daily-void-sale">
-                    Void sales
-                    <input
-                      id="daily-void-sale"
-                      {...amountFieldProps("next")}
-                      value={voidSale}
-                      onChange={(e) => {
-                        clearSalesFieldNotice();
-                        setVoidSale(sanitizeNonNegativeDecimalInput(e.target.value));
-                      }}
-                      className={inputClass}
-                    />
-                  </label>
-                </div>
-                {parseAmount(voidSale) > 0 ? (
-                  <div className="space-y-2 border-t border-solid [border-color:var(--pos-divider)] pt-2">
-                    <div className="flex min-w-0 flex-col gap-0.5">
-                      <label className={labelClass} htmlFor="daily-void-remarks">
-                        Remarks
-                        <span className="text-red-600/90"> *</span>
-                      </label>
-                      <input
-                        id="daily-void-remarks"
-                        type="text"
-                        value={voidSaleRemarks}
-                        onChange={(e) => {
-                          clearSalesFieldNotice();
-                          setVoidSaleRemarks(e.target.value);
-                        }}
-                        placeholder="Describe the voided sale"
-                        className={`${textInputClass} ${voidRemarksErr ? FIELD_ERR_INPUT : ""}`}
-                        data-field-error-anchor="void:voidRemarks"
-                        aria-invalid={voidRemarksErr ? true : undefined}
-                        aria-required
-                      />
-                      <ExpenseFieldErrorBubble message={voidRemarksErr} />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {renderVoidAttachmentAddControl()}
-                      <span className="min-w-0 flex-1 text-[9px] leading-snug text-[var(--pos-text-2)]">
-                        Attach PDF or image (max {MAX_VOID_ATTACHMENTS}). Paste an image with this
-                        block focused.
-                      </span>
-                    </div>
-                    {voidAttachErr ? (
-                      <div data-field-error-anchor="void:voidAttach">
-                        <ExpenseFieldErrorBubble message={voidAttachErr} />
-                      </div>
-                    ) : null}
-                    {renderVoidAttachmentThumbnails()}
-                  </div>
-                ) : null}
-                </div>
-              </div>
-
-            <div className={`${columnShellClass} w-full min-w-0`}>
-              <p className="border-b border-solid [border-color:var(--pos-divider)] pb-1 text-[11px] font-semibold text-[var(--pos-text-1)]">
-                Expenses
-              </p>
-              <div className="grid min-w-0 grid-cols-2 gap-x-2 gap-y-1.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                <label className={labelClass} htmlFor="daily-bank-withdrawn">
-                  Withdrawn from bank
+          <div className={entrySectionsGridClass}>
+            <div
+              className={`${columnShellClass} min-w-0 flex-1 !bg-red-50/65 ![border-color:rgba(220,38,38,0.28)]`}
+            >
+              <p className={`${sectionTitleClass} !text-red-800`}>Expenses</p>
+              <div className="max-w-[11.5rem]">
+                <label className={salesFieldGroupClass} htmlFor="daily-bank-withdrawn">
+                  <span className={labelClass}>Withdrawn from bank</span>
                   <input
                     id="daily-bank-withdrawn"
                     {...amountFieldProps("next")}
@@ -2987,57 +2978,20 @@ export function DailyEntryFormView() {
                       clearSalesFieldNotice();
                       setBankWithdrawn(sanitizeNonNegativeDecimalInput(e.target.value));
                     }}
-                    className={`${inputClass} ${bankWithdrawnErr ? FIELD_ERR_INPUT : ""}`}
+                    className={`${amountInputClass} ${bankWithdrawnErr ? FIELD_ERR_INPUT : ""}`}
                     data-field-error-anchor="void:bankWithdrawn"
                     aria-invalid={bankWithdrawnErr ? true : undefined}
                     aria-describedby="daily-bank-withdrawn-hint"
                   />
                   <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
                 </label>
-                <div className="flex min-w-0 flex-col justify-end gap-0.5">
-                  <p className={labelClass}>Bank balance (today)</p>
-                  <p className="text-[15px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-                    {formatMoney(bankNetBalance)}
-                  </p>
-                  <p
-                    id="daily-bank-withdrawn-hint"
-                    className="text-[9px] normal-case font-normal leading-snug tracking-normal text-[var(--pos-text-2)]"
-                  >
-                    Bank sales (net after 1.75% charge) minus withdrawn amount
-                  </p>
-                </div>
               </div>
-              {expenseLines.length > 0 ? (
-                <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(4.75rem,0.55fr)_minmax(0,0.45fr)_minmax(0,1fr)_2.25rem_2.25rem] items-center gap-x-1.5 border-b border-solid [border-color:var(--pos-divider)] pb-1.5 text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-[var(--pos-text-2)]">
-                  <span className="flex min-h-8 min-w-0 items-center pl-0.5">Book / title</span>
-                  <span className="flex h-8 items-center justify-center text-center">Type</span>
-                  <span className="flex h-8 items-center justify-center text-center">Amt</span>
-                  <span className="flex min-h-8 min-w-0 items-center">Note</span>
-                  <span
-                    className="flex h-8 w-full items-center justify-center"
-                    title="Attachment"
-                  >
-                    <Paperclip
-                      className="size-3.5 shrink-0 text-[var(--pos-text-2)]"
-                      strokeWidth={2.25}
-                      aria-hidden
-                    />
-                    <span className="sr-only">Attachment</span>
-                  </span>
-                  <span
-                    className="flex h-8 w-full items-center justify-center"
-                    title="Remove line"
-                  >
-                    <Trash2
-                      className="size-3.5 shrink-0 text-[var(--pos-text-2)]"
-                      strokeWidth={2.25}
-                      aria-hidden
-                    />
-                    <span className="sr-only">Remove</span>
-                  </span>
-                </div>
+              {expenseLines.length === 0 ? (
+                <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
+                  No expenses for this day yet — add one below.
+                </p>
               ) : null}
-              <div className="space-y-1.5 pr-0.5">
+              <div className="flex flex-col gap-4">
                 {expenseLines.map((line) => {
                   if (line.kind === "regular") {
                     const labelErr = fieldErrorMessage(formNotice, line.id, "label");
@@ -3045,85 +2999,76 @@ export function DailyEntryFormView() {
                     const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
                     return (
                       <div
-                          key={line.id}
-                          data-expense-line-id={line.id}
-                          className="space-y-1 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/30 p-1"
-                        >
-                          <div className="grid min-w-0 max-w-full grid-cols-[minmax(0,1.1fr)_minmax(4.75rem,0.55fr)_minmax(0,0.45fr)_minmax(0,1fr)_2.25rem_2.25rem] items-center gap-x-1.5 gap-y-0 overflow-x-auto">
-                            <div
-                              className={`flex min-h-8 min-w-0 items-center ${labelErr ? FIELD_ERR_VENDOR_COL : ""}`}
-                              data-field-error-anchor={`${line.id}:label`}
-                            >
-                              <input
-                                type="text"
-                                value={line.label}
-                                onChange={(e) => patchLine(line.id, { label: e.target.value })}
-                                placeholder="Expense title"
-                                className={`${textInputClass} min-h-8 w-full py-0 text-[12px] ${labelErr ? FIELD_ERR_INPUT : ""}`}
-                                autoComplete="off"
-                                aria-label="Expense title"
-                                aria-invalid={labelErr ? true : undefined}
-                                aria-required
-                              />
-                            </div>
-                            <div className="min-w-0">
-                              <select
-                                disabled
-                                className={`${selectClass} h-8 w-full min-w-0 cursor-not-allowed py-0 text-[10px] leading-tight opacity-70`}
-                                value="regular"
-                                aria-label="Type (regular expense, not posted to ledger)"
-                              >
-                                <option value="regular">Regular</option>
-                              </select>
-                            </div>
-                            <div className="min-w-0">
-                              <input
-                                {...amountFieldProps("next")}
-                                value={line.amount}
-                                onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                                className={`${inputClass} h-8 py-0 text-[12px] ${amountErr ? FIELD_ERR_INPUT : ""}`}
-                                aria-label="Expense amount"
-                                aria-invalid={amountErr ? true : undefined}
-                                data-field-error-anchor={`${line.id}:amount`}
-                              />
-                            </div>
-                            <div className="min-w-0">
-                              <input
-                                type="text"
-                                value={line.note}
-                                onChange={(e) => patchLine(line.id, { note: e.target.value })}
-                                placeholder="Optional memo"
-                                className={`${textInputClass} h-8 min-w-0 py-0 text-[12px]`}
-                                autoComplete="off"
-                                aria-label="Note"
-                                data-field-error-anchor={`${line.id}:note`}
-                              />
-                            </div>
-                            <div className="flex h-8 w-full min-w-0 items-center justify-center">
-                              {renderReceiptAddControl(line)}
-                            </div>
-                            <div className="flex h-8 w-full items-center justify-center">
-                              <button
-                                type="button"
-                                onClick={() => removeExpenseLine(line.id)}
-                                className="inline-flex size-8 shrink-0 items-center justify-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                                aria-label="Remove expense line"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
+                        key={line.id}
+                        data-expense-line-id={line.id}
+                        className={expenseCardClass}
+                      >
+                        <div className={expenseCardRowClass}>
+                          <div
+                            className="flex min-w-0 flex-1 basis-44 flex-col gap-1"
+                            data-field-error-anchor={`${line.id}:label`}
+                          >
+                            <input
+                              type="text"
+                              value={line.label}
+                              onChange={(e) => patchLine(line.id, { label: e.target.value })}
+                              placeholder="Expense title"
+                              className={`${expenseTitleInputClass} ${labelErr ? FIELD_ERR_INPUT : ""}`}
+                              autoComplete="off"
+                              aria-label="Expense title"
+                              aria-invalid={labelErr ? true : undefined}
+                              aria-required
+                            />
                             <ExpenseFieldErrorBubble message={labelErr} />
+                          </div>
+                          <div
+                            className="flex w-[8.5rem] shrink-0 flex-col gap-1"
+                            data-field-error-anchor={`${line.id}:amount`}
+                          >
+                            <input
+                              {...amountFieldProps("next")}
+                              value={line.amount}
+                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
+                              placeholder="0"
+                              className={`${amountInputClass} ${amountErr ? FIELD_ERR_INPUT : ""}`}
+                              aria-label="Expense amount"
+                              aria-invalid={amountErr ? true : undefined}
+                            />
                             <ExpenseFieldErrorBubble message={amountErr} />
                           </div>
-                          {attachErr ? (
-                            <div data-field-error-anchor={`${line.id}:attach`}>
-                              <ExpenseFieldErrorBubble message={attachErr} />
-                            </div>
-                          ) : null}
-                          {renderReceiptThumbnails(line)}
+                          <div className="flex shrink-0 items-start gap-1">
+                            {renderExpenseNoteToggle(line)}
+                            {renderReceiptAddControl(line)}
+                            <button
+                              type="button"
+                              onClick={() => removeExpenseLine(line.id)}
+                              className={expenseRemoveBtnClass}
+                              aria-label="Remove expense line"
+                            >
+                              <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                            </button>
+                          </div>
                         </div>
+                        {openExpenseNoteLineIds.has(line.id) ? (
+                          <input
+                            id={`expense-note-${line.id}`}
+                            type="text"
+                            value={line.note}
+                            onChange={(e) => patchLine(line.id, { note: e.target.value })}
+                            placeholder="Add a note (optional)"
+                            className={expenseQuietInputClass}
+                            autoComplete="off"
+                            aria-label="Note"
+                            data-field-error-anchor={`${line.id}:note`}
+                          />
+                        ) : null}
+                        {attachErr ? (
+                          <div data-field-error-anchor={`${line.id}:attach`}>
+                            <ExpenseFieldErrorBubble message={attachErr} />
+                          </div>
+                        ) : null}
+                        {renderReceiptThumbnails(line)}
+                      </div>
                     );
                   }
                     const trimmed = line.vendor.trim();
@@ -3149,15 +3094,16 @@ export function DailyEntryFormView() {
                       <div
                         key={line.id}
                         data-expense-line-id={line.id}
-                        className="space-y-1 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]/30 p-1"
+                        className={expenseCardClass}
                       >
-                        <div className="grid min-w-0 max-w-full grid-cols-[minmax(0,1.1fr)_minmax(4.75rem,0.55fr)_minmax(0,0.45fr)_minmax(0,1fr)_2.25rem_2.25rem] items-center gap-x-1.5 gap-y-0 overflow-x-auto">
+                        <div className={expenseCardRowClass}>
                           <div
-                            className={`flex min-h-8 min-w-0 items-center gap-1 ${vendorErr ? FIELD_ERR_VENDOR_COL : ""}`}
+                            className="flex min-w-0 flex-1 basis-44 flex-col gap-1"
                             data-field-error-anchor={`${line.id}:vendor`}
                           >
+                            <div className="flex min-w-0 items-center gap-1.5">
                             <select
-                              className={`${selectClass} min-h-8 min-w-0 flex-1 py-0 text-[11px] leading-tight`}
+                              className={`${expensePrimarySelectClass} flex-1 ${vendorErr ? FIELD_ERR_INPUT : ""}`}
                               value={selectValue}
                               onChange={(e) => {
                                 const val = e.target.value;
@@ -3192,7 +3138,7 @@ export function DailyEntryFormView() {
                               aria-label="Cashbook"
                               aria-invalid={vendorErr ? true : undefined}
                             >
-                              <option value="">Book…</option>
+                              <option value="">Cashbook…</option>
                               {vendorOptions.map((name) => (
                                 <option key={name} value={name}>
                                   {name}
@@ -3206,112 +3152,118 @@ export function DailyEntryFormView() {
                                 value={line.vendor}
                                 onChange={(e) => patchLine(line.id, { vendor: e.target.value })}
                                 placeholder="Name"
-                                className={`${textInputClass} min-h-8 min-w-[4.5rem] shrink-0 flex-1 py-0 text-[11px]`}
+                                className={`${expensePrimaryInputClass} min-w-[4.5rem] shrink-0 flex-1`}
                                 autoComplete="off"
                                 aria-label="Custom cashbook name"
                               />
                             ) : null}
+                            </div>
+                            <ExpenseFieldErrorBubble message={vendorErr} />
                           </div>
                           <div
-                            className={`min-w-0 ${!ledgerSupplierForLine ? "opacity-60" : ""}`}
-                            data-field-error-anchor={`${line.id}:ledgerKind`}
+                            className="flex w-[8.5rem] shrink-0 flex-col gap-1"
+                            data-field-error-anchor={`${line.id}:amount`}
                           >
-                            {isEmployeeLedgerRow ? (
-                              <select
-                                name="ledger-employee-line-kind"
-                                value={line.ledgerEmployeeLineKind}
-                                disabled={!ledgerSupplierForLine}
-                                onChange={(e) =>
-                                  patchLine(line.id, {
-                                    ledgerEmployeeLineKind: (e.target.value ||
-                                      "") as "" | EmployeeLedgerLineKind,
-                                  })
-                                }
-                                className={`${selectClass} h-8 w-full min-w-0 py-0 text-[10px] leading-tight ${ledgerKindErr ? FIELD_ERR_INPUT : ""}`}
-                                aria-label="Payment type for this staff book"
-                              >
-                                <option value="">None</option>
-                                {EMPLOYEE_LEDGER_LINE_OPTIONS.map((opt) => (
-                                  <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <select
-                                name="ledger-type"
-                                value={
-                                  line.ledgerKind === "invoice" || line.ledgerKind === "payment"
-                                    ? line.ledgerKind
-                                    : line.ledgerKind === "return_credit" ||
-                                        line.ledgerKind === "adjustment"
-                                      ? "payment"
-                                      : ""
-                                }
-                                disabled={!ledgerSupplierForLine}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  patchLine(line.id, {
-                                    ledgerKind: (v || "") as ExpenseLineDraft["ledgerKind"],
-                                  });
-                                }}
-                                className={`${selectClass} h-8 w-full min-w-0 py-0 text-[11px] leading-tight ${ledgerKindErr ? FIELD_ERR_INPUT : ""}`}
-                                aria-label="Ledger entry type for this book"
-                              >
-                                <option value="">None</option>
-                                {LEDGER_DRAWER_KINDS.map((opt) => (
-                                  <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-                          </div>
-                          <div className="min-w-0">
                             <input
                               {...amountFieldProps("next")}
                               value={line.amount}
                               onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                              className={`${inputClass} h-8 py-0 text-[12px] ${vendorAmountErr ? FIELD_ERR_INPUT : ""}`}
+                              placeholder="0"
+                              className={`${amountInputClass} ${vendorAmountErr ? FIELD_ERR_INPUT : ""}`}
                               aria-label="Expense amount"
                               aria-invalid={vendorAmountErr ? true : undefined}
-                              data-field-error-anchor={`${line.id}:amount`}
                             />
+                            <ExpenseFieldErrorBubble message={vendorAmountErr} />
                           </div>
-                          <div
-                            className={`min-w-0 ${!ledgerSupplierForLine ? "opacity-60" : ""}`}
-                            data-field-error-anchor={`${line.id}:ledgerNote`}
-                          >
-                            <input
-                              name="ledger-note"
-                              type="text"
-                              value={line.ledgerNote}
-                              disabled={!ledgerSupplierForLine}
-                              onChange={(e) => patchLine(line.id, { ledgerNote: e.target.value })}
-                              placeholder={
-                                ledgerSupplierForLine ? "Memo" : "Book first"
-                              }
-                              className={`${textInputClass} h-8 min-w-0 py-0 text-[12px] disabled:opacity-60`}
-                              autoComplete="off"
-                              aria-label="Ledger note for this expense line"
-                            />
-                          </div>
-                          <div className="flex h-8 w-full min-w-0 items-center justify-center">
+                          <div className="flex w-12 shrink-0 flex-col items-center">
                             {renderReceiptAddControl(line)}
                           </div>
-                          <div className="flex h-8 w-full items-center justify-center">
-                            <button
-                              type="button"
-                              onClick={() => removeExpenseLine(line.id)}
-                              className="inline-flex size-8 shrink-0 items-center justify-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[16px] leading-none text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                              aria-label="Remove expense line"
-                            >
-                              ×
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeExpenseLine(line.id)}
+                            className={expenseRemoveBtnClass}
+                            aria-label="Remove expense line"
+                          >
+                            <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                          </button>
                         </div>
-                        {!ledgerSupplierForLine ? (
-                          <p className="text-[9px] leading-snug text-[var(--pos-text-2)]">
+                        {ledgerSupplierForLine ? (
+                          <div className="flex min-w-0 flex-wrap items-start gap-2">
+                            <span className={`${expenseMiniLabelClass} self-center`}>
+                              Ledger
+                            </span>
+                            <div
+                              className="flex w-[10rem] min-w-0 flex-col gap-1"
+                              data-field-error-anchor={`${line.id}:ledgerKind`}
+                            >
+                              {isEmployeeLedgerRow ? (
+                                <select
+                                  name="ledger-employee-line-kind"
+                                  value={line.ledgerEmployeeLineKind}
+                                  onChange={(e) =>
+                                    patchLine(line.id, {
+                                      ledgerEmployeeLineKind: (e.target.value ||
+                                        "") as "" | EmployeeLedgerLineKind,
+                                    })
+                                  }
+                                  className={`${selectClass} h-8 w-full min-w-0 ${ledgerKindErr ? FIELD_ERR_INPUT : ""}`}
+                                  aria-label="Payment type for this staff book"
+                                >
+                                  <option value="">None</option>
+                                  {EMPLOYEE_LEDGER_LINE_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <select
+                                  name="ledger-type"
+                                  value={
+                                    line.ledgerKind === "invoice" || line.ledgerKind === "payment"
+                                      ? line.ledgerKind
+                                      : line.ledgerKind === "return_credit" ||
+                                          line.ledgerKind === "adjustment"
+                                        ? "payment"
+                                        : ""
+                                  }
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    patchLine(line.id, {
+                                      ledgerKind: (v || "") as ExpenseLineDraft["ledgerKind"],
+                                    });
+                                  }}
+                                  className={`${selectClass} h-8 w-full min-w-0 ${ledgerKindErr ? FIELD_ERR_INPUT : ""}`}
+                                  aria-label="Ledger entry type for this book"
+                                >
+                                  <option value="">None</option>
+                                  {LEDGER_DRAWER_KINDS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              <ExpenseFieldErrorBubble message={ledgerKindErr} />
+                            </div>
+                            <div
+                              className="min-w-0 flex-1 basis-36"
+                              data-field-error-anchor={`${line.id}:ledgerNote`}
+                            >
+                              <input
+                                name="ledger-note"
+                                type="text"
+                                value={line.ledgerNote}
+                                onChange={(e) => patchLine(line.id, { ledgerNote: e.target.value })}
+                                placeholder="Memo (optional)"
+                                className={`${textInputClass} h-8 min-w-0 py-0`}
+                                autoComplete="off"
+                                aria-label="Ledger note for this expense line"
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
                             Match a book from{" "}
                             <button
                               type="button"
@@ -3320,14 +3272,9 @@ export function DailyEntryFormView() {
                             >
                               cashbooks
                             </button>{" "}
-                            to enable type and note.
+                            to post this line to the ledger.
                           </p>
-                        ) : null}
-                        <div className="flex flex-col gap-0.5">
-                          <ExpenseFieldErrorBubble message={vendorErr} />
-                          <ExpenseFieldErrorBubble message={vendorAmountErr} />
-                          <ExpenseFieldErrorBubble message={ledgerKindErr} />
-                        </div>
+                        )}
                         {attachErr ? (
                           <div data-field-error-anchor={`${line.id}:attach`}>
                             <ExpenseFieldErrorBubble message={attachErr} />
@@ -3338,74 +3285,172 @@ export function DailyEntryFormView() {
                     );
                 })}
                 </div>
-                <div className="shrink-0 border-t border-solid [border-color:var(--pos-divider)] pt-2 flex flex-col gap-1.5 sm:flex-row">
+                <div className="flex shrink-0 flex-col gap-2 pt-1">
                   <button
                     type="button"
                     onClick={addRegularExpenseLine}
-                    className="w-full flex-1 rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30"
+                    className={expenseAddBtnClass}
                   >
-                    Add regular expense
+                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                    Add expense
                   </button>
                   <button
                     type="button"
                     onClick={addVendorExpenseLine}
-                    className="w-full flex-1 rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-center text-[10px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30"
+                    className={expenseAddBtnClass}
                   >
-                    Add cashbook line
+                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                    Add cashbook expense
                   </button>
                 </div>
-              </div>
             </div>
-          </div>
-        </fieldset>
 
-        <div className="flex flex-col gap-1.5 border-t border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2">
-          {isFormLocked ? (
-            <>
-              <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                This entry is locked and cannot be changed.
-              </p>
-              <button
-                type="button"
-                disabled={isUnlocking}
-                onClick={() => openUnlockEntryModal(dateKey)}
-                className="inline-flex h-9 w-fit min-w-[7.5rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-4 text-[12px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <LockOpen className="size-3.5" strokeWidth={2.25} />
-                {isUnlocking ? "Unlocking…" : "Unlock entry"}
-              </button>
-            </>
-          ) : (
-            <>
-              <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                {savedRowForDate
-                  ? "Save updates the one record for this day (see banner above)."
-                  : "No entry for this date yet. Save creates it (one record per calendar day)."}
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={isSaving || isAttachmentUploadBusy}
-                  className="inline-flex h-9 w-fit min-w-[7.5rem] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 active:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{ backgroundColor: "var(--pos-sb-base)" }}
+            <div
+              className={`${columnShellClass} min-w-0 w-full shrink-0 sm:w-[11.5rem] !bg-emerald-50/65 ![border-color:rgba(5,150,105,0.28)]`}
+            >
+                <p className={`${sectionTitleClass} !text-emerald-800`}>Sales</p>
+                <div
+                  className="flex min-w-0 flex-col gap-3"
+                  data-void-attachment-anchor
                 >
-                  {isSaving ? "Saving…" : isAttachmentUploadBusy ? "Uploading…" : "Save"}
-                </button>
-                {savedRowForDate ? (
-                  <button
-                    type="button"
-                    disabled={isLocking}
-                    onClick={() => openLockEntryModal(dateKey)}
-                    className="inline-flex h-9 w-fit min-w-[7.5rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-4 text-[12px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Lock className="size-3.5" strokeWidth={2.25} />
-                    {isLocking ? "Locking…" : "Lock entry"}
-                  </button>
+                <div className={salesChannelGridClass}>
+                  <label className={salesFieldGroupClass} htmlFor="daily-cash">
+                    <span className={labelClass}>Cash</span>
+                    <input
+                      id="daily-cash"
+                      {...amountFieldProps("next")}
+                      value={cashSale}
+                      onChange={linkNonNegativeAmount(setCashSale)}
+                      className={amountInputClass}
+                    />
+                  </label>
+                  <label className={salesFieldGroupClass} htmlFor="daily-bank">
+                    <span className="flex min-w-0 w-full items-baseline justify-between gap-1">
+                      <span className={labelClass}>Bank</span>
+                      {parseAmount(bankSale) > 0 ? (
+                        <span
+                          className="shrink-0 text-right text-[10px] font-normal text-[var(--pos-text-2)] tabular-nums"
+                          title={`Net in totals: ${formatSummaryMoney(bankSaleNetAfterServiceCharge(parseAmount(bankSale)))}`}
+                        >
+                          {`-1.75% = ${formatSummaryMoney(bankSaleServiceChargeAmount(parseAmount(bankSale)))}`}
+                        </span>
+                      ) : null}
+                    </span>
+                    <input
+                      id="daily-bank"
+                      {...amountFieldProps("next")}
+                      value={bankSale}
+                      onChange={linkNonNegativeAmount(setBankSale)}
+                      className={amountInputClass}
+                    />
+                  </label>
+                  <label className={salesFieldGroupClass} htmlFor="daily-bkash">
+                    <span className={labelClass}>bKash</span>
+                    <input
+                      id="daily-bkash"
+                      {...amountFieldProps("next")}
+                      value={bkashSale}
+                      onChange={linkNonNegativeAmount(setBkashSale)}
+                      className={amountInputClass}
+                    />
+                  </label>
+                  <label className={salesFieldGroupClass} htmlFor="daily-nagad">
+                    <span className={labelClass}>Nagad</span>
+                    <input
+                      id="daily-nagad"
+                      {...amountFieldProps("next")}
+                      value={nagadSale}
+                      onChange={linkNonNegativeAmount(setNagadSale)}
+                      className={amountInputClass}
+                    />
+                  </label>
+                  <label className={salesFieldGroupClass} htmlFor="daily-pathao">
+                    <span className={labelClass}>Pathao</span>
+                    <input
+                      id="daily-pathao"
+                      {...amountFieldProps("next")}
+                      value={pathaoSale}
+                      onChange={linkNonNegativeAmount(setPathaoSale)}
+                      className={amountInputClass}
+                    />
+                  </label>
+                  <label className={salesFieldGroupClass} htmlFor="daily-foodi">
+                    <span className={labelClass}>Foodi</span>
+                    <input
+                      id="daily-foodi"
+                      {...amountFieldProps("next")}
+                      value={foodiSale}
+                      onChange={linkNonNegativeAmount(setFoodiSale)}
+                      className={amountInputClass}
+                    />
+                  </label>
+                  <label className={salesFieldGroupClass} htmlFor="daily-foodpanda">
+                    <span className={labelClass}>Foodpanda</span>
+                    <input
+                      id="daily-foodpanda"
+                      {...amountFieldProps("next")}
+                      value={foodpandaSale}
+                      onChange={linkNonNegativeAmount(setFoodpandaSale)}
+                      className={amountInputClass}
+                    />
+                  </label>
+                  <label className={salesFieldGroupClass} htmlFor="daily-void-sale">
+                    <span className={labelClass}>Void sales</span>
+                    <input
+                      id="daily-void-sale"
+                      {...amountFieldProps("next")}
+                      value={voidSale}
+                      onChange={(e) => {
+                        clearSalesFieldNotice();
+                        setVoidSale(sanitizeNonNegativeDecimalInput(e.target.value));
+                      }}
+                      className={amountInputClass}
+                    />
+                  </label>
+                </div>
+                {parseAmount(voidSale) > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <label className={labelClass} htmlFor="daily-void-remarks">
+                        Remarks
+                        <span className="text-red-600/90"> *</span>
+                      </label>
+                      <input
+                        id="daily-void-remarks"
+                        type="text"
+                        value={voidSaleRemarks}
+                        onChange={(e) => {
+                          clearSalesFieldNotice();
+                          setVoidSaleRemarks(e.target.value);
+                        }}
+                        placeholder="Describe the voided sale"
+                        className={`${textInputClass} ${voidRemarksErr ? FIELD_ERR_INPUT : ""}`}
+                        data-field-error-anchor="void:voidRemarks"
+                        aria-invalid={voidRemarksErr ? true : undefined}
+                        aria-required
+                      />
+                      <ExpenseFieldErrorBubble message={voidRemarksErr} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {renderVoidAttachmentAddControl()}
+                      <span className="min-w-0 flex-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
+                        Attach PDF or image (max {MAX_VOID_ATTACHMENTS}). Paste an image with this
+                        block focused.
+                      </span>
+                    </div>
+                    {voidAttachErr ? (
+                      <div data-field-error-anchor="void:voidAttach">
+                        <ExpenseFieldErrorBubble message={voidAttachErr} />
+                      </div>
+                    ) : null}
+                    {renderVoidAttachmentThumbnails()}
+                  </div>
                 ) : null}
+                </div>
               </div>
-            </>
-          )}
+          </div>
         </div>
+        </fieldset>
             </form>
           </div>
         </div>
@@ -3502,7 +3547,7 @@ export function DailyEntryFormView() {
                       {label}
                     </p>
                     <p className="text-[13px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-                      {formatMoney(amt)}
+                      {formatSummaryMoney(amt)}
                     </p>
                   </div>
                 ))}
@@ -3616,7 +3661,7 @@ export function DailyEntryFormView() {
                             Expenses total
                           </td>
                           <td className="px-2 py-1.5 text-right text-[12px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-                            {formatMoney(expenseTotalFromRow(historyDetailRow))}
+                            {formatSummaryMoney(expenseTotalFromRow(historyDetailRow))}
                           </td>
                           <td className="px-2 py-1.5 text-right text-[var(--pos-text-2)]">—</td>
                         </tr>
@@ -3682,7 +3727,7 @@ export function DailyEntryFormView() {
                         >
                           <td className="px-2 py-1.5 text-[var(--pos-text-2)]">{label}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums text-[var(--pos-text-1)]">
-                            {formatMoney(amt)}
+                            {formatSummaryMoney(amt)}
                           </td>
                         </tr>
                       ))}
@@ -3693,7 +3738,7 @@ export function DailyEntryFormView() {
                           Net sales
                         </td>
                         <td className="px-2 py-1.5 text-right text-[12px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-                          {formatMoney(netSalesTotal(historyDetailRow))}
+                          {formatSummaryMoney(netSalesTotal(historyDetailRow))}
                         </td>
                       </tr>
                     </tfoot>
@@ -3999,7 +4044,7 @@ export function DailyEntryFormView() {
             <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
               Opening is usually the previous day&apos;s closing balance (
               <span className="font-semibold tabular-nums text-[var(--pos-text-1)]">
-                {formatMoney(carriedOpeningFromPrevDay)}
+                {formatSummaryMoney(carriedOpeningFromPrevDay)}
               </span>
               {entryMap[dateAddDays(dateKey, -1)] ? (
                 <> for {formatDateKeyAsDisplay(dateAddDays(dateKey, -1))}</>

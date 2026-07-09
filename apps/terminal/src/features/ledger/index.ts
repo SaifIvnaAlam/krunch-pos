@@ -3,6 +3,7 @@ export type {
   LedgerAttachment,
   LedgerBookPurpose,
   LedgerEntry,
+  LedgerItemLine,
   LedgerSupplier,
   LedgerWorkspace,
   LedgerWorkspaceData,

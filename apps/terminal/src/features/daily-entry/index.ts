@@ -12,6 +12,7 @@ export {
   bankSaleServiceChargeAmount,
   computeRemainingBalanceForRow,
   dateAddDays,
+  roundTaka,
   expenseTotalFromExpenseLines,
   listDailyEntriesDescendingFromMap,
   savedLineKind,

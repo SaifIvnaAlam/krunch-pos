@@ -3,16 +3,23 @@ import type { DailyEntryMap, DailyEntryRow, ExpenseLineSaved } from "./types";
 /** Applied to `bankSale` (gross) when summing sales and closing balance. */
 export const BANK_SALE_SERVICE_CHARGE_RATE = 0.0175;
 
+/** Whole-taka rounding for POS totals and bank net after service charge. */
+export function roundTaka(amount: number): number {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+}
+
 export function bankSaleNetAfterServiceCharge(gross: number): number {
   const g = Number(gross);
   if (!Number.isFinite(g) || g <= 0) return 0;
-  return g * (1 - BANK_SALE_SERVICE_CHARGE_RATE);
+  return roundTaka(g * (1 - BANK_SALE_SERVICE_CHARGE_RATE));
 }
 
 export function bankSaleServiceChargeAmount(gross: number): number {
   const g = Number(gross);
   if (!Number.isFinite(g) || g <= 0) return 0;
-  return g * BANK_SALE_SERVICE_CHARGE_RATE;
+  return Math.max(0, g - bankSaleNetAfterServiceCharge(g));
 }
 
 /** Net bank sales (after service charge) minus expenses withdrawn from the bank. */
@@ -20,9 +27,9 @@ export function bankNetAfterWithdrawals(
   bankSaleGross: number,
   bankWithdrawn: number,
 ): number {
-  return (
+  return roundTaka(
     bankSaleNetAfterServiceCharge(bankSaleGross) -
-    Math.max(0, Number(bankWithdrawn) || 0)
+      Math.max(0, Number(bankWithdrawn) || 0),
   );
 }
 
@@ -62,5 +69,5 @@ export function computeRemainingBalanceForRow(row: DailyEntryRow): number {
     row.foodpandaSale;
   const voidAmt = Math.max(0, row.voidSale ?? 0);
   const expenseSum = expenseTotalFromExpenseLines(row.expenseLines);
-  return row.openingBalance + salesSum - voidAmt - expenseSum;
+  return roundTaka(row.openingBalance + salesSum - voidAmt - expenseSum);
 }
