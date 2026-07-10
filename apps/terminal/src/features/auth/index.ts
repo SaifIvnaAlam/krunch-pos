@@ -16,3 +16,4 @@ export {
   clearApiTokens,
 } from "./tokenStorage";
 export { loginWithEmail, logout, lookupRestaurantsForEmail } from "./authApi";
+export { verifySessionPassword } from "./verifySessionPassword";

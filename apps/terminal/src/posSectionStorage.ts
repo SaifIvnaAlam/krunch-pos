@@ -9,6 +9,8 @@ export const POS_DEFAULT_LEAF_ID = "exp-daily";
 /** Legacy ids removed from the sidebar tree but still restorable via map. */
 const EXTRA_RESTORE_LEAF_IDS = new Set([
   "lm-suppliers",
+  "lm-management",
+  "lm-ledger",
   "rep-expenses",
   "hr-directory",
   "hr-roster",
@@ -46,7 +48,9 @@ const LEGACY_LEAF_ID_MAP: Record<string, string> = {
   "fd-cat": POS_DEFAULT_LEAF_ID,
   "fd-items": POS_DEFAULT_LEAF_ID,
   "fd-addon": POS_DEFAULT_LEAF_ID,
-  "lm-suppliers": "lm-management",
+  "lm-suppliers": "lm-cashbooks",
+  "lm-management": "lm-cashbooks",
+  "lm-ledger": "lm-cashbooks",
   "hr-directory": "hr-employees",
   "hr-roster": "hr-employees",
   "hr-leave": "hr-employees",

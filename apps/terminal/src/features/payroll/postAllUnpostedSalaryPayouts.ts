@@ -1,4 +1,4 @@
-import type { EmployeeLedgerLineKind } from "../../components/pos/LedgerModuleView";
+import type { StaffLineKind } from "./staffLineKinds";
 import {
   isSalaryPaymentPosted,
   type SalaryPayment,
@@ -18,7 +18,7 @@ export type PostAllUnpostedResult = {
 export async function postAllUnpostedSalaryPayouts(params: {
   row: SalarySheetRow;
   employeePhone?: string;
-  lineKindForPayment: (payment: SalaryPayment) => EmployeeLedgerLineKind;
+  lineKindForPayment: (payment: SalaryPayment) => StaffLineKind;
   enteredBy?: string;
 }): Promise<PostAllUnpostedResult> {
   const posted: SalaryPayment[] = [];
@@ -29,10 +29,10 @@ export async function postAllUnpostedSalaryPayouts(params: {
 
   for (const payment of pending) {
     const res: PostSalaryPayoutResult = await postSalaryPayoutToDailyEntry({
+      employeeId: currentRow.employeeId,
       employeeName: currentRow.name,
-      employeePhone: params.employeePhone,
       payment,
-      employeeLineKind: params.lineKindForPayment(payment),
+      staffLineKind: params.lineKindForPayment(payment),
       enteredBy: params.enteredBy,
     });
     if (!res.ok) {

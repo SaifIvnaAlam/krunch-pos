@@ -9,16 +9,33 @@ import {
 } from "react";
 import {
   ArrowRight,
-  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Lock,
+  LockOpen,
   Plus,
   Users,
-  Wallet,
-  X,
 } from "lucide-react";
-import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
+import {
+  dispatchPosSelectLeaf,
+  POS_OPEN_EMPLOYEE_SALARY_HISTORY_EVENT,
+} from "../../lib/posNavEvents";
+import { EmployeeSalaryHistoryView } from "./EmployeeSalaryHistoryView";
+import { SalarySheetPanel } from "./SalarySheetPanel";
+import {
+  formatWhole,
+  salaryHead,
+  salaryShell,
+  salaryStatCell,
+  salaryStatLabel,
+  salaryStatValue,
+  salaryStats,
+  salarySubtitle,
+  salaryTitle,
+  stillOwedTone,
+} from "./salaryUiShared";
 import { useSession } from "@/features/auth";
 import {
   getEmployeeDirectoryLoadState,
@@ -27,39 +44,30 @@ import {
 } from "@/features/employees";
 import {
   getSalaryBundle,
+  getEmployeeMonthBalance,
   getSalaryWorkspaceLoadState,
   getSalaryWorkspaceSaveState,
   reloadSalaryWorkspace,
+  reconcileSalaryMonthFromDailyEntries,
   flushSalaryWorkspacePersist,
-  postSalaryPayoutToDailyEntry,
   setSalaryBundle,
   subscribeSalaryBundle,
   syncLoadedSalaryBundleToEmployees,
 } from "@/features/payroll";
 import {
-  EMPLOYEE_LEDGER_LINE_OPTIONS,
-  type EmployeeLedgerLineKind,
-} from "./LedgerModuleView";
-import {
-  createSalaryPayment,
-  defaultDocForNewMonth,
   distributeServiceChargePool,
   ensureMonthDoc,
   isMonthKey,
-  isSalaryPaymentPosted,
+  isSalarySheetLocked,
   labelFromMonthKey,
   monthKeyFromDate,
   summarizeSalaryDocWithPosting,
   sumPaymentsForRow,
   totalPayableForRow,
-  type SalaryPaymentEmployeeLineKind,
   type SalarySheetDoc,
   type SalarySheetRow,
 } from "../../lib/salarySheetStorage";
-import { getEmployeeById, useActiveEmployees } from "../../lib/employeeDirectoryStorage";
-
-const border0 =
-  "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
+import { useActiveEmployees } from "../../lib/employeeDirectoryStorage";
 
 export const HR_PAYROLL_LEAF_IDS = new Set(["hr-payroll"]);
 
@@ -87,27 +95,6 @@ function PrimaryButton({
   );
 }
 
-function GhostButton({
-  children,
-  className = "",
-  type = "button",
-  ...rest
-}: ComponentPropsWithoutRef<"button"> & { children: ReactNode }) {
-  return (
-    <button
-      type={type}
-      className={`rounded-[8px] border border-solid [border-color:var(--pos-border-medium)] bg-[var(--pos-card)] px-3 py-2 text-[12px] font-medium text-[var(--pos-text-1)] transition-colors hover:bg-[var(--pos-sidebar)] ${className}`}
-      {...rest}
-    >
-      {children}
-    </button>
-  );
-}
-
-function formatWhole(n: number): string {
-  return n.toLocaleString("en-BD");
-}
-
 function parseMoneyInput(raw: string): number {
   const t = raw.replace(/,/g, "").trim();
   if (t === "") return 0;
@@ -116,13 +103,6 @@ function parseMoneyInput(raw: string): number {
   return Math.max(0, Math.round(n));
 }
 
-/** Blank input when stored amount is zero. */
-function formatMoneyInputDisplay(amount: number): string {
-  if (!Number.isFinite(amount) || amount === 0) return "";
-  return String(Math.round(amount));
-}
-
-/** Strip leading zeros while typing (e.g. 010 → 10); empty stays empty. */
 function normalizeMoneyDraft(raw: string): string {
   const t = raw.replace(/,/g, "").trim();
   if (t === "") return "";
@@ -133,19 +113,6 @@ function normalizeMoneyDraft(raw: string): string {
   return String(n);
 }
 
-function parsePctInput(raw: string): number | null {
-  const t = raw.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.min(100, Math.round(n * 100) / 100);
-}
-
-function employeeLineKindLabel(kind: SalaryPaymentEmployeeLineKind | undefined): string {
-  if (!kind) return "Salary";
-  return EMPLOYEE_LEDGER_LINE_OPTIONS.find((o) => o.value === kind)?.label ?? kind;
-}
-
 function shiftMonthKey(monthKey: string, delta: number): string {
   const [ys, ms] = monthKey.split("-");
   const y = Number(ys);
@@ -154,282 +121,36 @@ function shiftMonthKey(monthKey: string, delta: number): string {
   return monthKeyFromDate(new Date(y, mo - 1 + delta, 1));
 }
 
-function stillOwedForRow(row: SalarySheetRow): number {
-  return Math.max(0, totalPayableForRow(row) - sumPaymentsForRow(row));
+type EmployeeHistoryTarget = {
+  employeeId: string;
+  employeeName: string;
+};
+
+function resolveHistoryTarget(
+  row: SalarySheetRow,
+  employees: { id: string; name: string }[],
+): EmployeeHistoryTarget {
+  if (row.employeeId) {
+    return { employeeId: row.employeeId, employeeName: row.name };
+  }
+  const norm = row.name.trim().toLowerCase();
+  const hit = employees.find((e) => e.name.trim().toLowerCase() === norm);
+  if (hit) return { employeeId: hit.id, employeeName: hit.name };
+  return { employeeId: "", employeeName: row.name };
 }
 
-function stillOwedTone(shouldPay: number, paid: number, stillOwed: number): string {
-  if (shouldPay <= 0) return "text-[var(--pos-text-2)]";
-  if (stillOwed <= 0) return "text-emerald-700 dark:text-emerald-400";
-  if (paid > 0) return "text-amber-700 dark:text-amber-400";
-  return "text-[var(--pos-text-1)]";
-}
-
-function SalaryPaymentsModal({
-  row,
-  open,
-  onClose,
-  onRecordPayout,
+function PayrollSalaries({
+  initialEmployeeHistoryId = null,
+  profileReturnLeafId = null,
+  onEmployeeHistoryConsumed,
+  onProfileReturn,
 }: {
-  row: SalarySheetRow | null;
-  open: boolean;
-  onClose: () => void;
-  onRecordPayout: (draft: {
-    amount: number;
-    date: string;
-    note?: string;
-    lineKind: EmployeeLedgerLineKind;
-  }) => Promise<void>;
+  initialEmployeeHistoryId?: string | null;
+  profileReturnLeafId?: string | null;
+  onEmployeeHistoryConsumed?: () => void;
+  onProfileReturn?: (leafId: string) => void;
 }) {
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [amount, setAmount] = useState("");
-  const [note, setNote] = useState("");
-  const [lineKind, setLineKind] = useState<EmployeeLedgerLineKind>("salary");
-  const [recording, setRecording] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
-  const shouldPay = row ? totalPayableForRow(row) : 0;
-  const paidSoFar = row ? sumPaymentsForRow(row) : 0;
-  const stillOwed = row ? stillOwedForRow(row) : 0;
-
-  useEffect(() => {
-    if (!open || !row) return;
-    setDate(new Date().toISOString().slice(0, 10));
-    setAmount(stillOwedForRow(row) > 0 ? String(stillOwedForRow(row)) : "");
-    setNote("");
-    setLineKind("salary");
-    setFormError(null);
-    setSuccessMessage(null);
-  }, [open, row?.id]);
-
-  const history = useMemo(
-    () =>
-      [...(row?.payments ?? [])].sort(
-        (a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id),
-      ),
-    [row?.payments],
-  );
-
-  if (!open || !row) return null;
-
-  const handleRecord = () => {
-    void (async () => {
-      const parsedAmount = parseMoneyInput(amount);
-      if (parsedAmount <= 0) {
-        setFormError("Enter an amount greater than zero.");
-        return;
-      }
-      setRecording(true);
-      setFormError(null);
-      setSuccessMessage(null);
-      try {
-        await onRecordPayout({
-          amount: parsedAmount,
-          date,
-          note: note.trim() || undefined,
-          lineKind,
-        });
-        setSuccessMessage(
-          `Paid ৳${formatWhole(parsedAmount)} on ${date}. Added to your cash book for that day.`,
-        );
-        setAmount("");
-        setNote("");
-      } catch (e) {
-        setFormError(e instanceof Error ? e.message : "Could not record payment.");
-      } finally {
-        setRecording(false);
-      }
-    })();
-  };
-
-  const inputClass =
-    "h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/45"
-        aria-label="Dismiss"
-        onClick={onClose}
-      />
-      <div
-        className={`relative z-[1] flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0} shadow-lg`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="salary-payments-title"
-      >
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
-          <div className="min-w-0">
-            <p id="salary-payments-title" className="text-[15px] font-semibold text-[var(--pos-text-1)]">
-              Record payment
-            </p>
-            <p className="mt-0.5 truncate text-[12px] text-[var(--pos-text-2)]">
-              {row.name.trim() || "Unnamed employee"}
-            </p>
-            <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
-              Payable{" "}
-              <span className="font-mono font-medium text-[var(--pos-text-1)]">
-                ৳{formatWhole(shouldPay)}
-              </span>
-              {" · "}
-              Paid{" "}
-              <span className="font-mono font-medium text-[var(--pos-text-1)]">
-                ৳{formatWhole(paidSoFar)}
-              </span>
-              {stillOwed > 0 ? (
-                <>
-                  {" · "}
-                  Still owed{" "}
-                  <span className="font-mono font-medium text-amber-700 dark:text-amber-400">
-                    ৳{formatWhole(stillOwed)}
-                  </span>
-                </>
-              ) : null}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
-            aria-label="Close"
-          >
-            <X className="size-4" strokeWidth={2} />
-          </button>
-        </div>
-
-        <div className="shrink-0 border-b border-solid [border-color:var(--pos-divider)] px-4 py-4">
-          <div className="grid grid-cols-2 gap-2">
-            <label className="col-span-1 flex flex-col gap-1">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-                Date
-              </span>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className={`${inputClass} font-mono`}
-              />
-            </label>
-            <label className="col-span-1 flex flex-col gap-1">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-                Amount (BDT)
-              </span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="0"
-                className={`${inputClass} text-right font-mono`}
-                autoFocus
-              />
-            </label>
-            <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-                Expense type
-              </span>
-              <select
-                value={lineKind}
-                onChange={(e) => setLineKind(e.target.value as EmployeeLedgerLineKind)}
-                className={inputClass}
-              >
-                {EMPLOYEE_LEDGER_LINE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-                Note (optional)
-              </span>
-              <input
-                type="text"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Cash, bank transfer…"
-                className={inputClass}
-              />
-            </label>
-          </div>
-          {formError ? (
-            <p className="mt-3 text-[11px] leading-snug text-red-600 dark:text-red-400" role="alert">
-              {formError}
-            </p>
-          ) : null}
-          {successMessage ? (
-            <p
-              className="mt-3 flex items-start gap-1.5 text-[11px] leading-snug text-emerald-700 dark:text-emerald-400"
-              role="status"
-            >
-              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} aria-hidden />
-              {successMessage}
-            </p>
-          ) : null}
-          <PrimaryButton
-            type="button"
-            showPlus={false}
-            disabled={recording}
-            className="mt-3 w-full justify-center py-2.5"
-            onClick={handleRecord}
-          >
-            {recording ? "Saving…" : "Pay"}
-          </PrimaryButton>
-          <p className="mt-2 text-center text-[10px] leading-snug text-[var(--pos-text-2)]">
-            Updates this month&apos;s register and adds the expense to Daily Entry for the date you pick.
-          </p>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-            Payment history
-          </p>
-          {history.length === 0 ? (
-            <p className="py-4 text-center text-[12px] text-[var(--pos-text-2)]">No payments yet.</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {history.map((p) => (
-                <li
-                  key={p.id}
-                  className={`rounded-[10px] bg-[var(--pos-sidebar)]/70 px-3 py-2.5 ${border0}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-mono text-[12px] font-semibold text-[var(--pos-text-1)]">
-                        {formatWhole(p.amount)}
-                      </p>
-                      <p className="mt-0.5 text-[11px] text-[var(--pos-text-2)]">{p.date}</p>
-                      {p.note ? (
-                        <p className="mt-1 text-[11px] leading-snug text-[var(--pos-text-2)]">{p.note}</p>
-                      ) : null}
-                    </div>
-                    {isSalaryPaymentPosted(p) ? (
-                      <span className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
-                        <CheckCircle2 className="size-3" strokeWidth={2} aria-hidden />
-                        Daily Entry
-                      </span>
-                    ) : null}
-                  </div>
-                  {isSalaryPaymentPosted(p) ? (
-                    <p className="mt-1.5 text-[10px] text-[var(--pos-text-2)]">
-                      {employeeLineKindLabel(p.postedEmployeeLineKind)} · {p.dailyEntryDate}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PayrollSalaries() {
-  const { userName, isSignedIn } = useSession();
+  const { isSignedIn, userName } = useSession();
   const employees = useActiveEmployees();
   const employeeSyncKey = employees
     .map(
@@ -459,15 +180,43 @@ function PayrollSalaries() {
     getEmployeeDirectoryLoadState,
   );
   const [poolDraft, setPoolDraft] = useState("");
-  const [paymentEditorRowId, setPaymentEditorRowId] = useState<string | null>(null);
-  const [showAllMonths, setShowAllMonths] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<EmployeeHistoryTarget | null>(null);
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [salaryLockModalOpen, setSalaryLockModalOpen] = useState(false);
+  const [salaryUnlockModalOpen, setSalaryUnlockModalOpen] = useState(false);
+  const [salaryLockBusy, setSalaryLockBusy] = useState(false);
+  const [salarySheetNotice, setSalarySheetNotice] = useState<string | null>(null);
   const wasSignedInRef = useRef(isSignedIn);
+  const monthPickerRef = useRef<HTMLDivElement>(null);
 
   const activeKey = bundle.selectedMonthKey;
   const doc = bundle.months[activeKey] ?? ensureMonthDoc(activeKey, undefined, employees);
-  const paymentEditorRow = paymentEditorRowId
-    ? doc.rows.find((x) => x.id === paymentEditorRowId) ?? null
-    : null;
+  const isSheetLocked = isSalarySheetLocked(doc);
+
+  useEffect(() => {
+    if (!initialEmployeeHistoryId) return;
+    const emp = employees.find((e) => e.id === initialEmployeeHistoryId);
+    setHistoryTarget({
+      employeeId: initialEmployeeHistoryId,
+      employeeName: emp?.name ?? "",
+    });
+    onEmployeeHistoryConsumed?.();
+  }, [initialEmployeeHistoryId, onEmployeeHistoryConsumed, employees]);
+
+  useEffect(() => {
+    const onOpenHistory = (ev: Event) => {
+      const employeeId = (ev as CustomEvent<{ employeeId?: string }>).detail?.employeeId?.trim();
+      if (!employeeId) return;
+      const emp = employees.find((e) => e.id === employeeId);
+      setHistoryTarget({
+        employeeId,
+        employeeName: emp?.name ?? "",
+      });
+    };
+    window.addEventListener(POS_OPEN_EMPLOYEE_SALARY_HISTORY_EVENT, onOpenHistory);
+    return () =>
+      window.removeEventListener(POS_OPEN_EMPLOYEE_SALARY_HISTORY_EVENT, onOpenHistory);
+  }, [employees]);
 
   useEffect(() => {
     void loadEmployeeDirectory();
@@ -482,9 +231,39 @@ function PayrollSalaries() {
   }, [isSignedIn]);
 
   useEffect(() => {
-    const total = doc.rows.reduce((sum, row) => sum + row.serviceCharge, 0);
+    if (!loadState.loaded) return;
+    void reconcileSalaryMonthFromDailyEntries(activeKey);
+  }, [activeKey, loadState.loaded]);
+
+  useEffect(() => {
+    setSalarySheetNotice(null);
+  }, [activeKey]);
+
+  useEffect(() => {
+    if (!loadState.loaded) return;
+    const monthDoc = getSalaryBundle().months[activeKey];
+    if (!monthDoc) {
+      setPoolDraft("");
+      return;
+    }
+    if (monthDoc.serviceChargePool != null && monthDoc.serviceChargePool > 0) {
+      setPoolDraft(String(monthDoc.serviceChargePool));
+      return;
+    }
+    const total = monthDoc.rows.reduce((sum, row) => sum + row.serviceCharge, 0);
     setPoolDraft(total > 0 ? String(total) : "");
   }, [activeKey, loadState.loaded]);
+
+  useEffect(() => {
+    if (!monthPickerOpen) return;
+    function onPointerDown(ev: MouseEvent) {
+      if (monthPickerRef.current && !monthPickerRef.current.contains(ev.target as Node)) {
+        setMonthPickerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [monthPickerOpen]);
 
   const flushSalaryEdits = () => {
     void flushSalaryWorkspacePersist().catch(() => {
@@ -501,6 +280,7 @@ function PayrollSalaries() {
     setSalaryBundle((b) => {
       const key = b.selectedMonthKey;
       const cur = ensureMonthDoc(key, b.months[key], employees);
+      if (isSalarySheetLocked(cur)) return b;
       const nextDoc = updater(cur);
       return {
         ...b,
@@ -516,8 +296,72 @@ function PayrollSalaries() {
     });
   };
 
+  const setMonthLockState = (locked: boolean) => {
+    setSalaryBundle((b) => {
+      const key = b.selectedMonthKey;
+      const cur = ensureMonthDoc(key, b.months[key], employees);
+      if (locked && isSalarySheetLocked(cur)) return b;
+      if (!locked && !isSalarySheetLocked(cur)) return b;
+      const now = new Date().toISOString();
+      return {
+        ...b,
+        months: {
+          ...b.months,
+          [key]: locked
+            ? {
+                ...cur,
+                isLocked: true,
+                lockedAt: now,
+                lockedBy: userName.trim() || "Unknown",
+                updatedAt: now,
+              }
+            : {
+                ...cur,
+                isLocked: false,
+                lockedAt: undefined,
+                lockedBy: undefined,
+                updatedAt: now,
+              },
+        },
+      };
+    });
+  };
+
+  async function executeLockSalarySheet() {
+    setSalaryLockBusy(true);
+    try {
+      setMonthLockState(true);
+      await flushSalaryWorkspacePersist();
+      setSalaryLockModalOpen(false);
+      setSalarySheetNotice(
+        `${labelFromMonthKey(activeKey)} is locked — earnings can no longer be edited.`,
+      );
+    } catch {
+      setSalarySheetNotice("Could not save lock state. Try again.");
+    } finally {
+      setSalaryLockBusy(false);
+    }
+  }
+
+  async function executeUnlockSalarySheet() {
+    setSalaryLockBusy(true);
+    try {
+      setMonthLockState(false);
+      await flushSalaryWorkspacePersist();
+      setSalaryUnlockModalOpen(false);
+      setSalarySheetNotice(
+        `${labelFromMonthKey(activeKey)} is unlocked — you can edit earnings again.`,
+      );
+    } catch {
+      setSalarySheetNotice("Could not save unlock state. Try again.");
+    } finally {
+      setSalaryLockBusy(false);
+    }
+  }
+
   const selectMonth = (monthKey: string) => {
     if (!isMonthKey(monthKey)) return;
+    setMonthPickerOpen(false);
     setSalaryBundle((b) => ({
       ...b,
       selectedMonthKey: monthKey,
@@ -547,6 +391,8 @@ function PayrollSalaries() {
     let fines = 0;
     let payable = 0;
     let paid = 0;
+    let stillOwed = 0;
+    let unpaidCount = 0;
     for (const r of doc.rows) {
       basic += r.basic;
       sc += r.serviceCharge;
@@ -555,14 +401,15 @@ function PayrollSalaries() {
       fines += r.fines;
       payable += totalPayableForRow(r);
       paid += sumPaymentsForRow(r);
+      const owed = getEmployeeMonthBalance(bundle, activeKey, r.employeeId)?.stillOwed ?? 0;
+      stillOwed += owed;
+      if (owed > 0) unpaidCount += 1;
     }
-    return { basic, sc, ot, eid, fines, payable, paid };
-  }, [doc.rows]);
+    return { basic, sc, ot, eid, fines, payable, paid, stillOwed, unpaidCount };
+  }, [doc.rows, bundle, activeKey]);
 
-  const stillOwedTotal = Math.max(0, totals.payable - totals.paid);
   const monthLabel = labelFromMonthKey(activeKey);
   const needsTeamSetup = employees.length === 0;
-  const showMonthOverview = monthOverviewRows.length > 1;
 
   const updateRow = (id: string, patch: Partial<SalarySheetRow>) => {
     patchDoc((d) => ({
@@ -583,38 +430,64 @@ function PayrollSalaries() {
     setPoolDraft(draft);
     patchDoc((d) => {
       if (draft === "") {
-        return { ...d, rows: d.rows.map((r) => ({ ...r, serviceCharge: 0 })) };
+        return {
+          ...d,
+          serviceChargePool: undefined,
+          rows: d.rows.map((r) => ({ ...r, serviceCharge: 0 })),
+        };
       }
-      return { ...d, rows: rowsWithServiceChargePool(d.rows, draft) };
+      const pool = parseMoneyInput(draft);
+      return {
+        ...d,
+        serviceChargePool: pool,
+        rows: rowsWithServiceChargePool(d.rows, draft),
+      };
     });
   };
 
-  const updateRowPct = (id: string, pct: number | null) => {
-    patchDoc((d) => {
-      const rows = d.rows.map((r) => (r.id === id ? { ...r, pct } : r));
-      return { ...d, rows: rowsWithServiceChargePool(rows, poolDraft) };
-    });
-  };
+  function openEmployeeHistory(row: SalarySheetRow) {
+    setHistoryTarget(resolveHistoryTarget(row, employees));
+  }
 
-  const thNum = "px-2 py-2.5 text-right font-semibold text-[var(--pos-text-1)]";
-  const tdNum = "px-2 py-1.5 align-middle";
-  const inputMoney =
-    "h-8 w-full min-w-[72px] rounded-[6px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-right font-mono text-[11px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
-  const inputName =
-    "h-8 w-full min-w-[100px] rounded-[6px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-left text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none";
+  function closeEmployeeProfile() {
+    if (profileReturnLeafId && profileReturnLeafId !== "hr-payroll") {
+      onProfileReturn?.(profileReturnLeafId);
+      return;
+    }
+    setHistoryTarget(null);
+  }
+
+  function handleEmployeeRemovedFromProfile() {
+    if (profileReturnLeafId && profileReturnLeafId !== "hr-payroll") {
+      onProfileReturn?.(profileReturnLeafId);
+      return;
+    }
+    setHistoryTarget(null);
+  }
+
+  const profileBackLabel =
+    profileReturnLeafId === "hr-employees" ? "Employee Management" : "Employee Salaries";
+
+  if (historyTarget) {
+    return (
+      <EmployeeSalaryHistoryView
+        employeeId={historyTarget.employeeId}
+        employeeName={historyTarget.employeeName}
+        backLabel={profileBackLabel}
+        onBack={closeEmployeeProfile}
+        onSelectMonth={(monthKey) => {
+          selectMonth(monthKey);
+          setHistoryTarget(null);
+        }}
+        onEmployeeRemoved={handleEmployeeRemovedFromProfile}
+      />
+    );
+  }
 
   if (needsTeamSetup && !loadState.loading) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
-        <div className="shrink-0">
-          <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Employee Salaries</h1>
-          <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">
-            Track what each person should earn and record when you pay them.
-          </p>
-        </div>
-        <div
-          className={`flex flex-1 flex-col items-center justify-center rounded-[14px] bg-[var(--pos-card)] px-6 py-12 text-center ${border0}`}
-        >
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className={`${salaryShell} items-center justify-center px-6 py-12 text-center`}>
           <div className="flex size-12 items-center justify-center rounded-full bg-[var(--pos-sidebar)]">
             <Users className="size-6 text-[var(--pos-text-2)]" strokeWidth={1.75} aria-hidden />
           </div>
@@ -622,8 +495,8 @@ function PayrollSalaries() {
             Add your team first
           </h2>
           <p className="mt-2 max-w-[360px] text-[13px] leading-relaxed text-[var(--pos-text-2)]">
-            Employee Salaries pulls names from Employee Management. Add your staff there, then come
-            back to set monthly amounts and record payments.
+            Employee Salaries uses your roster from Employee Management. Add staff there, then set
+            monthly earnings here and record payouts from Daily Entry.
           </p>
           <PrimaryButton
             type="button"
@@ -639,458 +512,314 @@ function PayrollSalaries() {
     );
   }
 
+  const lockBtnClass = isSheetLocked
+    ? "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-3 text-[13px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+    : "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-3 text-[13px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
-      <div className="shrink-0">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Employee Salaries</h1>
-            <p className="mt-1 text-[12px] text-[var(--pos-text-2)]">
-              {employees.length} active staff · manage roster in{" "}
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className={salaryShell}>
+        {/* Header */}
+        <div className={salaryHead}>
+          <div className="min-w-0">
+            <h1 className={salaryTitle}>Employee Salaries</h1>
+            <p className={`mt-0.5 ${salarySubtitle}`}>
+              {employees.length} staff · Set earnings here · Pay from{" "}
               <button
                 type="button"
-                onClick={() => dispatchPosSelectLeaf("hr-employees")}
+                onClick={() => dispatchPosSelectLeaf("exp-daily")}
                 className="font-medium text-[var(--pos-text-1)] underline-offset-2 hover:underline"
               >
-                Employee Management
+                Daily Entry
               </button>
             </p>
           </div>
-        </div>
-      </div>
-      <SalaryPaymentsModal
-        row={paymentEditorRow}
-        open={paymentEditorRowId != null && paymentEditorRow != null}
-        onClose={() => setPaymentEditorRowId(null)}
-        onRecordPayout={async ({ amount, date, note, lineKind }) => {
-          if (!paymentEditorRowId || !paymentEditorRow) return;
 
-          const payment = createSalaryPayment(amount, date, note);
-          const priorPayments = paymentEditorRow.payments;
-          const withNew = [...priorPayments, payment];
-
-          patchDoc((d) => ({
-            ...d,
-            rows: d.rows.map((row) =>
-              row.id === paymentEditorRowId ? { ...row, payments: withNew } : row,
-            ),
-          }));
-          await flushSalaryWorkspacePersist();
-
-          const postResult = await postSalaryPayoutToDailyEntry({
-            employeeName: paymentEditorRow.name,
-            employeePhone: paymentEditorRow.employeeId
-              ? getEmployeeById(paymentEditorRow.employeeId)?.phone
-              : undefined,
-            payment,
-            employeeLineKind: lineKind,
-            enteredBy: userName.trim() || "Unknown",
-          });
-
-          if (!postResult.ok) {
-            patchDoc((d) => ({
-              ...d,
-              rows: d.rows.map((row) =>
-                row.id === paymentEditorRowId ? { ...row, payments: priorPayments } : row,
-              ),
-            }));
-            await flushSalaryWorkspacePersist();
-            throw new Error(postResult.message);
-          }
-
-          patchDoc((d) => ({
-            ...d,
-            rows: d.rows.map((row) =>
-              row.id === paymentEditorRowId
-                ? {
-                    ...row,
-                    payments: withNew.map((p) =>
-                      p.id === payment.id ? postResult.payment : p,
-                    ),
-                  }
-                : row,
-            ),
-          }));
-          await flushSalaryWorkspacePersist();
-        }}
-      />
-      <div className={`shrink-0 rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => selectMonth(shiftMonthKey(activeKey, -1))}
-              className="inline-flex size-8 items-center justify-center rounded-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
-              aria-label="Previous month"
-            >
-              <ChevronLeft className="size-4" strokeWidth={2} />
-            </button>
-            <div className="px-1">
-              <p className="text-[14px] font-semibold text-[var(--pos-text-1)]">{monthLabel}</p>
-              <p className="text-[10px] text-[var(--pos-text-2)]">Editing this month&apos;s payroll</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => selectMonth(shiftMonthKey(activeKey, 1))}
-              className="inline-flex size-8 items-center justify-center rounded-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
-              aria-label="Next month"
-            >
-              <ChevronRight className="size-4" strokeWidth={2} />
-            </button>
-          </div>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="sr-only" htmlFor="salary-month-picker">
-              Jump to month
-            </label>
-            <input
-              id="salary-month-picker"
-              type="month"
-              value={activeKey}
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v) selectMonth(v);
-              }}
-              className={`${inputName} h-9 max-w-[148px] font-mono text-[11px]`}
-              aria-label="Jump to month"
-            />
-            <GhostButton
+            {/* Month navigation */}
+            <div className="flex items-center rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-sidebar)]/30">
+              <button
+                type="button"
+                onClick={() => selectMonth(shiftMonthKey(activeKey, -1))}
+                className="inline-flex size-8 items-center justify-center rounded-l-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
+                aria-label="Previous month"
+              >
+                <ChevronLeft className="size-4" strokeWidth={2} />
+              </button>
+              <div ref={monthPickerRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMonthPickerOpen((v) => !v)}
+                  className="inline-flex h-9 min-w-[120px] items-center justify-center gap-1 border-x border-solid [border-color:var(--pos-divider)] px-3 text-[14px] font-semibold text-[var(--pos-text-1)] transition-colors hover:bg-[var(--pos-sidebar)]/60"
+                  aria-expanded={monthPickerOpen}
+                  aria-haspopup="listbox"
+                >
+                  {monthLabel}
+                  <ChevronDown
+                    className={`size-3.5 text-[var(--pos-text-2)] transition-transform ${monthPickerOpen ? "rotate-180" : ""}`}
+                    strokeWidth={2}
+                  />
+                </button>
+                {monthPickerOpen ? (
+                  <ul
+                    role="listbox"
+                    aria-label="Select month"
+                    className="absolute right-0 top-full z-20 mt-1 max-h-[240px] min-w-[200px] overflow-y-auto rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] py-1 shadow-lg"
+                  >
+                    {monthOverviewRows.map((row) => (
+                      <li key={row.monthKey} role="option" aria-selected={row.monthKey === activeKey}>
+                        <button
+                          type="button"
+                          onClick={() => selectMonth(row.monthKey)}
+                          className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-[var(--pos-sidebar)]/60 ${
+                            row.monthKey === activeKey
+                              ? "bg-[var(--pos-nav-active-bg)]/12 font-semibold text-[var(--pos-text-1)]"
+                              : "text-[var(--pos-text-2)]"
+                          }`}
+                        >
+                          <span>{row.label}</span>
+                          {row.outstanding > 0 ? (
+                            <span className="font-mono text-[11px] text-red-600 dark:text-red-400">
+                              ৳{formatWhole(row.outstanding)} due
+                            </span>
+                          ) : (
+                            <span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-400">
+                              Settled
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => selectMonth(shiftMonthKey(activeKey, 1))}
+                className="inline-flex size-8 items-center justify-center rounded-r-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
+                aria-label="Next month"
+              >
+                <ChevronRight className="size-4" strokeWidth={2} />
+              </button>
+            </div>
+
+            <button
               type="button"
-              onClick={() => {
-                const msg =
-                  "Reset all amounts and payments for this month? This cannot be undone.";
-                if (!window.confirm(msg)) return;
-                setSalaryBundle((b) => ({
-                  ...b,
-                  months: {
-                    ...b.months,
-                    [b.selectedMonthKey]: defaultDocForNewMonth(b.selectedMonthKey, employees),
-                  },
-                }));
-                setPoolDraft("");
-              }}
+              disabled={salaryLockBusy}
+              onClick={() => (isSheetLocked ? setSalaryUnlockModalOpen(true) : setSalaryLockModalOpen(true))}
+              className={lockBtnClass}
             >
-              Reset month
-            </GhostButton>
+              {isSheetLocked ? (
+                <>
+                  <LockOpen className="size-3.5" strokeWidth={2.25} aria-hidden />
+                  Unlock
+                </>
+              ) : (
+                <>
+                  <Lock className="size-3.5" strokeWidth={2.25} aria-hidden />
+                  Lock month
+                </>
+              )}
+            </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-px bg-[var(--pos-divider)] sm:grid-cols-3">
-          <div className="bg-[var(--pos-card)] px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              Payable
-            </p>
-            <p className="mt-1 font-mono text-[18px] font-semibold text-[var(--pos-text-1)]">
+
+        {/* Stats strip */}
+        <div className={salaryStats}>
+          <div className={salaryStatCell}>
+            <p className={salaryStatLabel}>Payable</p>
+            <p className={`mt-0.5 ${salaryStatValue}`}>
               ৳{formatWhole(totals.payable)}
             </p>
           </div>
-          <div className="bg-[var(--pos-card)] px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              Already paid
-            </p>
-            <p className="mt-1 font-mono text-[18px] font-semibold text-[var(--pos-text-1)]">
+          <div className={salaryStatCell}>
+            <p className={salaryStatLabel}>Paid</p>
+            <p className={`mt-0.5 ${salaryStatValue}`}>
               ৳{formatWhole(totals.paid)}
             </p>
           </div>
-          <div className="bg-[var(--pos-card)] px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              Still owed
-            </p>
+          <div className={salaryStatCell}>
+            <p className={salaryStatLabel}>Due</p>
             <p
-              className={`mt-1 font-mono text-[18px] font-semibold ${stillOwedTone(totals.payable, totals.paid, stillOwedTotal)}`}
+              className={`mt-0.5 ${salaryStatValue} ${stillOwedTone(totals.payable, totals.paid, totals.stillOwed)}`}
             >
-              ৳{formatWhole(stillOwedTotal)}
+              ৳{formatWhole(totals.stillOwed)}
+            </p>
+          </div>
+          <div className={salaryStatCell}>
+            <p className={salaryStatLabel}>Unpaid staff</p>
+            <p className={`mt-0.5 ${salaryStatValue}`}>
+              {totals.unpaidCount}
+              <span className="ml-1 text-[12px] font-normal text-[var(--pos-text-2)]">
+                / {doc.rows.length}
+              </span>
             </p>
           </div>
         </div>
-      </div>
-      {showMonthOverview ? (
-        <div className={`shrink-0 overflow-hidden rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
-          <button
-            type="button"
-            onClick={() => setShowAllMonths((v) => !v)}
-            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--pos-sidebar)]/40"
+
+        {/* Status notices */}
+        {loadState.error ? (
+          <p className="border-b border-solid [border-color:var(--pos-divider)] px-4 py-2 text-[13px] text-red-600 dark:text-red-400" role="alert">
+            {loadState.error}
+          </p>
+        ) : null}
+        {salarySheetNotice ? (
+          <div className="flex items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-sidebar)]/30 px-4 py-2">
+            <p className="text-[13px] text-[var(--pos-text-1)]" role="status">
+              {salarySheetNotice}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSalarySheetNotice(null)}
+              className="shrink-0 text-[12px] font-medium text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+
+        {isSheetLocked ? (
+          <div
+            className="border-b border-solid border-l-4 border-l-amber-400 [border-color:var(--pos-divider)] bg-amber-500/10 px-4 py-2"
+            role="status"
           >
-            <div>
-              <p className="text-[12px] font-semibold text-[var(--pos-text-1)]">All months</p>
-              <p className="mt-0.5 text-[11px] text-[var(--pos-text-2)]">
-                {monthOverviewRows.length} months with saved data
-              </p>
-            </div>
-            <ChevronDown
-              className={`size-4 shrink-0 text-[var(--pos-text-2)] transition-transform ${showAllMonths ? "rotate-180" : ""}`}
-              strokeWidth={2}
-              aria-hidden
-            />
-          </button>
-          {showAllMonths ? (
-            <div className="border-t border-solid [border-color:var(--pos-divider)]">
-              <table className="w-full min-w-[480px] text-left text-[12px]">
-                <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
-                  <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-                    <th className="px-4 py-2.5">Month</th>
-                    <th className="px-4 py-2.5 text-right">Payable</th>
-                    <th className="px-4 py-2.5 text-right">Paid</th>
-                    <th className="px-4 py-2.5 text-right">Still owed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthOverviewRows.map((row) => {
-                    const active = row.monthKey === activeKey;
-                    return (
-                      <tr
-                        key={row.monthKey}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => selectMonth(row.monthKey)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            selectMonth(row.monthKey);
-                          }
-                        }}
-                        className={`cursor-pointer border-b border-solid [border-color:var(--pos-border-hairline)] transition-colors hover:bg-[var(--pos-sidebar)]/60 ${
-                          active ? "bg-[var(--pos-nav-active-bg)]/12" : ""
-                        }`}
-                      >
-                        <td className="px-4 py-2.5">
-                          <span className="font-medium text-[var(--pos-text-1)]">{row.label}</span>
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-[11px] text-[var(--pos-text-1)]">
-                          {formatWhole(row.totalPayable)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-[11px] text-[var(--pos-text-1)]">
-                          {formatWhole(row.totalPaidRecorded)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right font-mono text-[11px] text-[var(--pos-text-1)]">
-                          {formatWhole(row.outstanding)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {loadState.error ? (
-        <p className="text-[12px] text-red-600 dark:text-red-400" role="status">
-          {loadState.error}
-        </p>
-      ) : null}
-      {saveState.saving ? (
-        <p className="text-[12px] text-[var(--pos-text-2)]" role="status">
-          Saving…
-        </p>
-      ) : saveState.error ? (
-        <p className="text-[12px] text-red-600 dark:text-red-400" role="status">
-          {saveState.error}
-        </p>
-      ) : saveState.dirty ? (
-        <p className="text-[12px] text-amber-700 dark:text-amber-400" role="status">
-          Unsaved changes — click outside the field or wait a moment to sync.
-        </p>
-      ) : null}
-      <div className={`shrink-0 rounded-[14px] bg-[var(--pos-card)] ${border0}`}>
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
-          <p className="text-[12px] font-semibold text-[var(--pos-text-1)]">Salary Sheet</p>
-          <label className="flex items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-              Total Service Charge
-            </span>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={poolDraft}
-              onChange={(e) => handlePoolDraftChange(e.target.value)}
-              onBlur={flushSalaryEdits}
-              placeholder="e.g. 54681"
-              className={`${inputMoney} min-w-[120px] max-w-[200px]`}
-              aria-label="Total service charge to split"
-            />
-          </label>
-        </div>
-        <div>
-          <table className="w-full min-w-[980px] border-collapse text-[12px]">
-            <thead className="sticky top-0 z-[1] bg-[var(--pos-card)] shadow-[inset_0_-1px_0_var(--pos-border-hairline)]">
-              <tr className="border-b border-solid [border-color:var(--pos-divider)] text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--pos-text-2)]">
-                <th className="sticky left-0 z-[2] min-w-[120px] bg-[var(--pos-card)] px-3 py-2.5 text-left">
-                  Name
-                </th>
-                <th className={thNum} title="Fixed monthly basic from Employee Management">
-                  Basic
-                </th>
-                <th className={thNum} title="Basic + service charge + overtime + bonus minus fines">
-                  Payable
-                </th>
-                <th className={thNum} title="Total paid so far this month">
-                  Paid
-                </th>
-                <th className={thNum} title="Payable minus paid">
-                  Still owed
-                </th>
-                <th className="min-w-[88px] px-2 py-2.5 text-center">Pay</th>
-                <th className={`${thNum} w-[56px]`} title="Weight for splitting the service charge pool">
-                  %
-                </th>
-                <th className={thNum} title="Service charge share for this month">
-                  Service charge
-                </th>
-                <th className={thNum} title="Damage or policy fines deducted from pay">
-                  Fines
-                </th>
-                <th className={thNum}>Overtime</th>
-                <th className={thNum}>Eid bonus</th>
-              </tr>
-            </thead>
-            <tbody>
-              {doc.rows.map((r) => {
-                const payable = totalPayableForRow(r);
-                const paid = sumPaymentsForRow(r);
-                const stillOwed = stillOwedForRow(r);
-                return (
-                  <tr
-                    key={r.id}
-                    className="border-b border-solid [border-color:var(--pos-border-hairline)] transition-colors hover:bg-[var(--pos-sidebar)]/50"
-                  >
-                    <td className="sticky left-0 z-[1] bg-[var(--pos-card)] px-3 py-1.5 align-middle">
-                      <span className="text-[12px] font-medium text-[var(--pos-text-1)]">
-                        {r.name.trim() || "—"}
-                      </span>
-                    </td>
-                    <td className={`${tdNum} text-right font-mono text-[11px] text-[var(--pos-text-1)]`}>
-                      {formatWhole(r.basic)}
-                    </td>
-                    <td className={`${tdNum} text-right font-mono text-[11px] font-semibold text-[var(--pos-text-1)]`}>
-                      {formatWhole(payable)}
-                    </td>
-                    <td className={`${tdNum} text-right font-mono text-[11px] text-[var(--pos-text-1)]`}>
-                      {formatWhole(paid)}
-                    </td>
-                    <td
-                      className={`${tdNum} text-right font-mono text-[11px] font-semibold ${stillOwedTone(payable, paid, stillOwed)}`}
-                    >
-                      {formatWhole(stillOwed)}
-                    </td>
-                    <td className={`${tdNum} text-center`}>
-                      <button
-                        type="button"
-                        onClick={() => setPaymentEditorRowId(r.id)}
-                        className="inline-flex items-center gap-1 rounded-[8px] bg-[var(--pos-text-1)] px-2.5 py-1.5 text-[10px] font-medium text-[var(--pos-page)] transition-opacity hover:opacity-90"
-                        aria-label={`Pay ${r.name || "employee"}`}
-                      >
-                        <Wallet className="size-3" strokeWidth={2} />
-                        Pay
-                      </button>
-                    </td>
-                    <td className={tdNum}>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={r.pct === null ? "" : String(r.pct)}
-                        onChange={(e) => updateRowPct(r.id, parsePctInput(e.target.value))}
-                        className={`${inputMoney} min-w-[48px]`}
-                        aria-label={`Service charge percent for ${r.name || "row"}`}
-                      />
-                    </td>
-                    <td className={tdNum}>
-                      <input
-                        type="text"
-                        readOnly
-                        tabIndex={-1}
-                        value={formatMoneyInputDisplay(r.serviceCharge)}
-                        className={`${inputMoney} cursor-default`}
-                        aria-label={`Service charge for ${r.name || "row"}`}
-                      />
-                    </td>
-                    <td className={tdNum}>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={formatMoneyInputDisplay(r.fines)}
-                        onChange={(e) =>
-                          updateRow(r.id, {
-                            fines: parseMoneyInput(normalizeMoneyDraft(e.target.value)),
-                          })
-                        }
-                        onBlur={flushSalaryEdits}
-                        className={inputMoney}
-                        aria-label={`Fines for ${r.name || "row"}`}
-                      />
-                    </td>
-                    <td className={tdNum}>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={formatMoneyInputDisplay(r.overtime)}
-                        onChange={(e) =>
-                          updateRow(r.id, {
-                            overtime: parseMoneyInput(normalizeMoneyDraft(e.target.value)),
-                          })
-                        }
-                        onBlur={flushSalaryEdits}
-                        className={inputMoney}
-                        aria-label={`Overtime for ${r.name || "row"}`}
-                      />
-                    </td>
-                    <td className={tdNum}>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={formatMoneyInputDisplay(r.eidBonus)}
-                        onChange={(e) =>
-                          updateRow(r.id, {
-                            eidBonus: parseMoneyInput(normalizeMoneyDraft(e.target.value)),
-                          })
-                        }
-                        onBlur={flushSalaryEdits}
-                        className={inputMoney}
-                        aria-label={`Eid bonus for ${r.name || "row"}`}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-              <tr className="bg-[var(--pos-sidebar)]/80 font-semibold text-[var(--pos-text-1)]">
-                <td className="sticky left-0 z-[1] border-t border-solid [border-color:var(--pos-divider)] bg-[var(--pos-sidebar)] px-3 py-2.5 text-left text-[11px] uppercase tracking-[0.06em]">
-                  Total
-                </td>
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                  {formatWhole(totals.basic)}
-                </td>
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                  {formatWhole(totals.payable)}
-                </td>
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                  {formatWhole(totals.paid)}
-                </td>
-                <td
-                  className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px] ${stillOwedTone(totals.payable, totals.paid, stillOwedTotal)}`}
-                >
-                  {formatWhole(stillOwedTotal)}
-                </td>
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)]`} />
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)]`} />
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                  {formatWhole(totals.sc)}
-                </td>
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                  {formatWhole(totals.fines)}
-                </td>
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                  {formatWhole(totals.ot)}
-                </td>
-                <td className={`${tdNum} border-t border-solid [border-color:var(--pos-divider)] text-right font-mono text-[11px]`}>
-                  {formatWhole(totals.eid)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+            <p className="text-[13px] font-medium text-amber-900 dark:text-amber-100">
+              {monthLabel} is locked
+              {doc.lockedBy ? ` by ${doc.lockedBy}` : ""} — earnings cannot be edited.
+            </p>
+          </div>
+        ) : null}
+
+        {/* Sheet body */}
+        <SalarySheetPanel
+          doc={doc}
+          bundle={bundle}
+          activeKey={activeKey}
+          monthLabel={monthLabel}
+          totals={totals}
+          poolDraft={poolDraft}
+          employees={employees}
+          isSheetLocked={isSheetLocked}
+          saveState={saveState}
+          onPoolDraftChange={handlePoolDraftChange}
+          onUpdateRow={updateRow}
+          onFlushEdits={flushSalaryEdits}
+          onOpenHistory={openEmployeeHistory}
+          onPayoutSaved={(result) =>
+            setSalarySheetNotice(
+              `Recorded ৳${formatWhole(result.amount)} for ${result.employeeName} on ${formatDateKeyAsDisplay(result.dailyEntryDate)}.`,
+            )
+          }
+        />
       </div>
+
+      {salaryLockModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lock-salary-sheet-title"
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => setSalaryLockModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="lock-salary-sheet-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Lock {monthLabel}?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Locked months cannot have earnings edited. Payouts can still be recorded from Daily
+              Entry or the Pay button.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={() => setSalaryLockModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={salaryLockBusy}
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/55 bg-amber-500/90 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
+                onClick={() => void executeLockSalarySheet()}
+              >
+                <Lock className="size-3.5" strokeWidth={2.25} />
+                {salaryLockBusy ? "Locking…" : "Lock month"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {salaryUnlockModalOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="unlock-salary-sheet-title"
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => setSalaryUnlockModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="unlock-salary-sheet-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Unlock {monthLabel}?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              You will be able to edit fines, overtime, bonus, and service charge again.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={() => setSalaryUnlockModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={salaryLockBusy}
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/55 bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
+                onClick={() => void executeUnlockSalarySheet()}
+              >
+                <LockOpen className="size-3.5" strokeWidth={2.25} />
+                {salaryLockBusy ? "Unlocking…" : "Unlock month"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-export function EmployeeModuleView() {
-  return <PayrollSalaries />;
+export function EmployeeModuleView({
+  initialEmployeeHistoryId = null,
+  profileReturnLeafId = null,
+  onEmployeeHistoryConsumed,
+  onProfileReturn,
+}: {
+  initialEmployeeHistoryId?: string | null;
+  profileReturnLeafId?: string | null;
+  onEmployeeHistoryConsumed?: () => void;
+  onProfileReturn?: (leafId: string) => void;
+} = {}) {
+  return (
+    <PayrollSalaries
+      initialEmployeeHistoryId={initialEmployeeHistoryId}
+      profileReturnLeafId={profileReturnLeafId}
+      onEmployeeHistoryConsumed={onEmployeeHistoryConsumed}
+      onProfileReturn={onProfileReturn}
+    />
+  );
 }

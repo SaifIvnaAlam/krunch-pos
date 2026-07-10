@@ -7,31 +7,7 @@ import {
   useDailyEntryMap,
   type DailyEntryRow,
 } from "@/features/daily-entry";
-
-const MONTH_ABBR = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
-
-function formatDateKeyAsDisplay(dateKey: string): string {
-  const parts = dateKey.split("-").map((x) => Number.parseInt(x, 10));
-  const [y, m, d] = parts;
-  if (!y || !m || m < 1 || m > 12 || !d || d < 1 || d > 31) return dateKey;
-  const mon = MONTH_ABBR[m - 1];
-  if (!mon) return dateKey;
-  const dd = String(d).padStart(2, "0");
-  return `${dd}-${mon}-${y}`;
-}
+import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-BD", {

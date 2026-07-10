@@ -2,7 +2,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   BookMarked,
-  BookOpen,
   LineChart,
   NotebookPen,
   Package,
@@ -40,17 +39,8 @@ export type NavSection = {
 
 const OFFICE_NAV_NODES: NavNode[] = [
   { kind: "leaf", id: "exp-daily", label: "Daily Entry Form", icon: NotebookPen },
-  {
-    kind: "branch",
-    id: "lm-branch",
-    label: "Cashbooks",
-    icon: BookMarked,
-    children: [
-      { kind: "leaf", id: "lm-management", label: "Manage books", icon: BookOpen },
-      { kind: "leaf", id: "lm-ledger", label: "Bills & payments", icon: Receipt },
-      { kind: "leaf", id: "lm-items", label: "Items purchased", icon: Package },
-    ],
-  },
+  { kind: "leaf", id: "lm-cashbooks", label: "Cashbooks", icon: BookMarked },
+  { kind: "leaf", id: "lm-items", label: "Items purchased", icon: Package },
   {
     kind: "branch",
     id: "rep-branch",

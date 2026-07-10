@@ -1,5 +1,4 @@
 export type {
-  EmployeeLedgerLineKind,
   LedgerAttachment,
   LedgerBookPurpose,
   LedgerEntry,
@@ -16,6 +15,7 @@ export {
   flushLedgerWorkspacePersist,
   getLedgerWorkspaceLoadState,
   getWorkspace,
+  isLedgerEntryLocked,
   loadLedgerWorkspace,
   setWorkspace,
   subscribeWorkspace,

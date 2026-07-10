@@ -33,9 +33,7 @@ export function bankNetAfterWithdrawals(
   );
 }
 
-export function savedLineKind(line: { kind?: string }): "vendor" | "regular" {
-  return line.kind === "regular" ? "regular" : "vendor";
-}
+export { savedLineKind, type SavedExpenseLineKind } from "./staffExpenseLine";
 
 export function listDailyEntriesDescendingFromMap(
   map: DailyEntryMap,
@@ -89,7 +87,12 @@ export function suggestedNewEntryDateKey(map: DailyEntryMap, today: string): str
 export function expenseTotalFromExpenseLines(
   lines: ExpenseLineSaved[] | undefined,
 ): number {
-  return (lines ?? []).reduce((sum, line) => sum + line.amount, 0);
+  return (lines ?? []).reduce((sum, line) => {
+    // Fines live on the salary sheet; purchase bills are payables, not cash out.
+    if (line.kind === "staff" && line.staffLineKind === "fine") return sum;
+    if (line.kind === "purchase") return sum;
+    return sum + line.amount;
+  }, 0);
 }
 
 /** Closing balance from a saved daily entry row (matches Daily Entry Form). */

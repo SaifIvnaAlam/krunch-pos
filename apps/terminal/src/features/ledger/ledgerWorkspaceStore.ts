@@ -2,13 +2,7 @@ import { apiFetch } from "@/features/api-client";
 import { readValidAccessToken } from "@/features/auth/authSession";
 import { isDemoDataMode } from "@/shared/config/env";
 
-export type LedgerBookPurpose = "vendor" | "owners" | "employees";
-
-export type EmployeeLedgerLineKind =
-  | "salary"
-  | "service_charge"
-  | "bonus"
-  | "overtime";
+export type LedgerBookPurpose = "vendor" | "owners";
 
 export type LedgerAttachment = {
   fileName: string;
@@ -79,11 +73,18 @@ export type LedgerEntry = {
   ref: string;
   memo: string;
   amountCents: number;
-  attachment?: LedgerAttachment;
-  employeeLineKind?: EmployeeLedgerLineKind;
+  /** Receipts / files on this bill or payment. */
+  attachments?: LedgerAttachment[];
   /** Item breakdown (typically on bills). */
   items?: LedgerItemLine[];
+  /** When true, entry cannot be edited or removed until unlocked. */
+  isLocked?: boolean;
+  lockedAt?: string;
 };
+
+export function isLedgerEntryLocked(entry: LedgerEntry | undefined | null): boolean {
+  return Boolean(entry?.isLocked);
+}
 
 export type LedgerWorkspaceData = {
   suppliers: LedgerSupplier[];
@@ -170,17 +171,75 @@ function requireToken(): string | null {
   return readValidAccessToken();
 }
 
-async function fetchWorkspaceFromApi(): Promise<LedgerWorkspaceData> {
+/** Drop retired “employees” cashbooks and any bills/payments tied to them. */
+function stripEmployeeCashbooks(data: LedgerWorkspaceData): {
+  data: LedgerWorkspaceData;
+  removed: boolean;
+} {
+  const employeeIds = new Set(
+    data.suppliers
+      .filter((s) => (s as { bookPurpose?: string }).bookPurpose === "employees")
+      .map((s) => s.id),
+  );
+  const suppliers = data.suppliers
+    .filter((s) => !employeeIds.has(s.id))
+    .map((s) => ({
+      ...s,
+      bookPurpose: (s.bookPurpose === "owners" ? "owners" : "vendor") as LedgerBookPurpose,
+    }));
+  const moves = data.moves.filter((m) => !employeeIds.has(m.supplierId));
+  const ledger = data.ledger
+    .filter((e) => !employeeIds.has(e.supplierId))
+    .map(normalizeLedgerEntryAttachments);
+  const removed =
+    employeeIds.size > 0 ||
+    suppliers.length !== data.suppliers.length ||
+    moves.length !== data.moves.length ||
+    ledger.length !== data.ledger.length;
+  return { data: { suppliers, moves, ledger }, removed };
+}
+
+/** Migrate legacy single `attachment` → `attachments[]`. */
+function normalizeLedgerEntryAttachments(
+  entry: LedgerEntry & { attachment?: LedgerAttachment },
+): LedgerEntry {
+  const legacy = entry.attachment;
+  const fromArray = Array.isArray(entry.attachments) ? entry.attachments : [];
+  const attachments =
+    fromArray.length > 0 ? fromArray : legacy ? [legacy] : undefined;
+  const { attachment: _legacy, ...rest } = entry;
+  if (!attachments?.length) {
+    const { attachments: _drop, ...without } = rest;
+    return without;
+  }
+  return { ...rest, attachments };
+}
+
+async function fetchWorkspaceFromApi(): Promise<{
+  data: LedgerWorkspaceData;
+  strippedEmployees: boolean;
+}> {
   const token = requireToken();
   if (!token) throw new Error("Sign in to load cashbooks.");
   const data = await apiFetch<ApiLedgerWorkspace>("/ledger/workspace", {
     method: "GET",
     token,
   });
-  return {
+  const raw: LedgerWorkspaceData = {
     suppliers: Array.isArray(data.suppliers) ? (data.suppliers as LedgerSupplier[]) : [],
     moves: Array.isArray(data.moves) ? (data.moves as StockMove[]) : [],
-    ledger: Array.isArray(data.ledger) ? (data.ledger as LedgerEntry[]) : [],
+    ledger: Array.isArray(data.ledger)
+      ? (data.ledger as LedgerEntry[]).map(normalizeLedgerEntryAttachments)
+      : [],
+  };
+  const { data: cleaned, removed } = stripEmployeeCashbooks(raw);
+  // Persist when legacy single-attachment rows were migrated to attachments[].
+  const migratedAttachments = (data.ledger as { attachment?: unknown }[] | undefined)?.some(
+    (e) => e && typeof e === "object" && "attachment" in e && e.attachment != null,
+  );
+  return {
+    data: cleaned,
+    strippedEmployees: removed || Boolean(migratedAttachments),
   };
 }
 
@@ -240,15 +299,22 @@ export function loadLedgerWorkspace(): Promise<void> {
 
   loadPromise = (async () => {
     try {
-      const data = await fetchWorkspaceFromApi();
+      const { data, strippedEmployees } = await fetchWorkspaceFromApi();
+      const filterStillValid = data.suppliers.some(
+        (s) => s.id === workspaceSnapshot.ledgerSupplierFilter,
+      );
       workspaceSnapshot = {
         ...workspaceSnapshot,
         suppliers: data.suppliers,
         moves: data.moves,
         ledger: data.ledger,
+        ledgerSupplierFilter: filterStillValid
+          ? workspaceSnapshot.ledgerSupplierFilter
+          : "",
       };
       loadedFromApi = true;
       loadError = null;
+      if (strippedEmployees) schedulePersist();
     } catch (e) {
       loadError =
         e instanceof Error ? e.message : "Could not load ledger workspace.";

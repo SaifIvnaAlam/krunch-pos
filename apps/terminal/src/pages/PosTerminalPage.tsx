@@ -9,7 +9,12 @@ import { PosSidebar } from "../components/pos/PosSidebar";
 import { PosMobileNav } from "../components/pos/PosMobileNav";
 import { PosMobileHeader } from "../components/pos/PosMobileHeader";
 import { attemptPosLeave } from "@/features/daily-entry";
-import { POS_SELECT_LEAF_EVENT } from "../lib/posNavEvents";
+import {
+  POS_OPEN_DAILY_ENTRY_EVENT,
+  POS_OPEN_EMPLOYEE_SALARY_HISTORY_EVENT,
+  POS_SELECT_LEAF_EVENT,
+} from "../lib/posNavEvents";
+import { todayDateKey } from "../lib/dateDisplay";
 import { EmployeeModuleView, HR_PAYROLL_LEAF_IDS } from "../components/pos/EmployeeModuleView";
 import {
   EmployeeDirectoryView,
@@ -30,6 +35,12 @@ export function PosTerminalPage() {
   const { signOut, userName, activeBranch } = useSession();
   const [activeLeafId, setActiveLeafId] = useState(resolveInitialLeafId);
   const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
+  const [dailyEntryOpenDateKey, setDailyEntryOpenDateKey] = useState<string | null>(null);
+  const [dailyEntryStaffPayoutEmployeeId, setDailyEntryStaffPayoutEmployeeId] = useState<
+    string | null
+  >(null);
+  const [employeeSalaryHistoryId, setEmployeeSalaryHistoryId] = useState<string | null>(null);
+  const [employeeProfileReturnLeafId, setEmployeeProfileReturnLeafId] = useState<string | null>(null);
 
   const handleSelectLeaf = useCallback((leafId: string) => {
     if (leafId === activeLeafId) return;
@@ -46,6 +57,56 @@ export function PosTerminalPage() {
     window.addEventListener(POS_SELECT_LEAF_EVENT, onNav);
     return () => window.removeEventListener(POS_SELECT_LEAF_EVENT, onNav);
   }, [handleSelectLeaf]);
+
+  useEffect(() => {
+    const onOpenDailyEntry = (ev: Event) => {
+      const detail = (ev as CustomEvent<{
+        dateKey?: string;
+        leafId?: string;
+        staffPayoutEmployeeId?: string;
+      }>).detail;
+      const staffPayoutEmployeeId = detail?.staffPayoutEmployeeId?.trim() || undefined;
+      let dateKey = detail?.dateKey;
+      if (dateKey && !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) dateKey = undefined;
+      if (!dateKey) dateKey = todayDateKey();
+      const open = () => {
+        setActiveLeafId("exp-daily");
+        setDailyEntryOpenDateKey(dateKey);
+        setDailyEntryStaffPayoutEmployeeId(staffPayoutEmployeeId ?? null);
+        setEmployeeSalaryHistoryId(null);
+      };
+      if (activeLeafId === "exp-daily") {
+        open();
+        return;
+      }
+      if (!attemptPosLeave(open)) return;
+      open();
+    };
+    window.addEventListener(POS_OPEN_DAILY_ENTRY_EVENT, onOpenDailyEntry);
+    return () => window.removeEventListener(POS_OPEN_DAILY_ENTRY_EVENT, onOpenDailyEntry);
+  }, [activeLeafId]);
+
+  useEffect(() => {
+    const onOpenEmployeeHistory = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ employeeId?: string; leafId?: string }>).detail;
+      const employeeId = detail?.employeeId?.trim();
+      if (!employeeId) return;
+      const open = () => {
+        setEmployeeProfileReturnLeafId(activeLeafId);
+        setActiveLeafId("hr-payroll");
+        setEmployeeSalaryHistoryId(employeeId);
+      };
+      if (activeLeafId === "hr-payroll") {
+        open();
+        return;
+      }
+      if (!attemptPosLeave(open)) return;
+      open();
+    };
+    window.addEventListener(POS_OPEN_EMPLOYEE_SALARY_HISTORY_EVENT, onOpenEmployeeHistory);
+    return () =>
+      window.removeEventListener(POS_OPEN_EMPLOYEE_SALARY_HISTORY_EVENT, onOpenEmployeeHistory);
+  }, [activeLeafId]);
 
   useEffect(() => {
     writeStoredLastLeafId(activeLeafId);
@@ -71,21 +132,47 @@ export function PosTerminalPage() {
 
   const mainContent = () => {
     if (LEDGER_LEAF_IDS.has(activeLeafId)) {
-      return <LedgerModuleView key={activeLeafId} leafId={activeLeafId} />;
+      const ledgerKey = activeLeafId === "lm-items" ? "lm-items" : "lm-cashbooks";
+      return <LedgerModuleView key={ledgerKey} leafId={activeLeafId} />;
     }
     if (HR_DIRECTORY_LEAF_IDS.has(activeLeafId)) {
       return <EmployeeDirectoryView />;
     }
     if (HR_PAYROLL_LEAF_IDS.has(activeLeafId)) {
-      return <EmployeeModuleView />;
+      return (
+        <EmployeeModuleView
+          initialEmployeeHistoryId={employeeSalaryHistoryId}
+          profileReturnLeafId={employeeProfileReturnLeafId}
+          onEmployeeHistoryConsumed={() => setEmployeeSalaryHistoryId(null)}
+          onProfileReturn={(leafId) => {
+            setEmployeeSalaryHistoryId(null);
+            setEmployeeProfileReturnLeafId(null);
+            setActiveLeafId(leafId);
+          }}
+        />
+      );
     }
     if (activeLeafId === "exp-daily") {
-      return <DailyEntryFormView />;
+      return (
+        <DailyEntryFormView
+          openDateKey={dailyEntryOpenDateKey}
+          openStaffPayoutEmployeeId={dailyEntryStaffPayoutEmployeeId}
+          onOpenDateKeyConsumed={() => setDailyEntryOpenDateKey(null)}
+          onOpenStaffPayoutEmployeeIdConsumed={() => setDailyEntryStaffPayoutEmployeeId(null)}
+        />
+      );
     }
     if (REPORT_LEAF_IDS.has(activeLeafId)) {
       return <ReportsModuleView leafId={activeLeafId} />;
     }
-    return <DailyEntryFormView />;
+    return (
+      <DailyEntryFormView
+        openDateKey={dailyEntryOpenDateKey}
+        openStaffPayoutEmployeeId={dailyEntryStaffPayoutEmployeeId}
+        onOpenDateKeyConsumed={() => setDailyEntryOpenDateKey(null)}
+        onOpenStaffPayoutEmployeeIdConsumed={() => setDailyEntryStaffPayoutEmployeeId(null)}
+      />
+    );
   };
 
   const branchLabel = activeBranch?.name ?? "Restaurant";

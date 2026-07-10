@@ -3,35 +3,14 @@ import { useMemo, useState } from "react";
 import {
   listDailyEntriesDescendingFromMap,
   savedLineKind,
+  staffExpenseLineNote,
+  staffExpenseLineTitle,
   useDailyEntryMap,
   type DailyEntryRow,
 } from "@/features/daily-entry";
+import { isStaffFineExpenseLine } from "@/features/daily-entry/staffExpenseLine";
+import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
 import { expenseSavedLineLedgerReportLabel } from "../../lib/ledgerLineReportLabels";
-
-const MONTH_ABBR = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
-
-function formatDateKeyAsDisplay(dateKey: string): string {
-  const parts = dateKey.split("-").map((x) => Number.parseInt(x, 10));
-  const [y, m, d] = parts;
-  if (!y || !m || m < 1 || m > 12 || !d || d < 1 || d > 31) return dateKey;
-  const mon = MONTH_ABBR[m - 1];
-  if (!mon) return dateKey;
-  const dd = String(d).padStart(2, "0");
-  return `${dd}-${mon}-${y}`;
-}
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-BD", {
@@ -41,7 +20,7 @@ function formatMoney(value: number) {
 }
 
 type FlatLine = {
-  kind: "vendor" | "regular";
+  kind: "vendor" | "regular" | "staff" | "purchase";
   lineKindLabel: string;
   description: string;
   note: string;
@@ -53,18 +32,33 @@ type FlatLine = {
 
 function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
   if (r.expenseLines && r.expenseLines.length > 0) {
-    return r.expenseLines.map((line, idx) => {
+    return r.expenseLines.filter((line) => !isStaffFineExpenseLine(line)).map((line, idx) => {
       const kind = savedLineKind(line);
       const description =
-        kind === "vendor"
-          ? (line.vendor ?? "").trim() || "Cashbook"
-          : (line.label ?? "").trim() || "Regular expense";
+        kind === "staff"
+          ? staffExpenseLineTitle(line)
+          : kind === "vendor"
+            ? (line.vendor ?? "").trim() || "Cashbook"
+            : kind === "purchase"
+              ? (line.vendor ?? "").trim() || "Purchase"
+              : (line.label ?? "").trim() || "Regular expense";
       const note =
-        kind === "vendor"
-          ? (line.ledgerNote ?? "").trim()
-          : (line.note ?? "").trim();
+        kind === "staff"
+          ? staffExpenseLineNote(line)
+          : kind === "vendor" || kind === "purchase"
+            ? (line.ledgerNote ?? "").trim() ||
+              (kind === "purchase" && line.items?.length
+                ? line.items.map((i) => i.name).filter(Boolean).join(", ")
+                : "")
+            : (line.note ?? "").trim();
       const lineKindLabel =
-        kind === "vendor" ? "Cashbook" : "Regular expense";
+        kind === "staff"
+          ? "Payout"
+          : kind === "vendor"
+            ? "Cashbook"
+            : kind === "purchase"
+              ? "Items purchased"
+              : "Regular expense";
       const idPart =
         line.lineId && String(line.lineId).trim().length > 0
           ? String(line.lineId).trim()

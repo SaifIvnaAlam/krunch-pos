@@ -1,27 +1,42 @@
+import type { StaffLineKind } from "../payroll/staffLineKinds";
+
 /** Links a daily vendor line to rows created in Bills & payments (terminal workspace). */
 export type LedgerExpenseLink = {
   ledgerEntryId: string;
   purchaseOrderId?: string;
 };
 
+/** Line items on a daily “items purchased” bill (amounts in taka). */
+export type DailyPurchaseItemSaved = {
+  id: string;
+  name: string;
+  qty: number;
+  unit: string;
+  rate: number;
+  total: number;
+};
+
 export type ExpenseLineSaved = {
-  kind?: "vendor" | "regular";
+  kind?: "vendor" | "regular" | "staff" | "purchase";
   vendor?: string;
   label?: string;
+  /** Staff expense — links to employee directory. */
+  employeeId?: string;
+  employeeName?: string;
+  staffLineKind?: StaffLineKind | "fine";
   note?: string;
   amount: number;
   receiptDataUrls?: string[];
   lineId?: string;
+  /** Vendor payment / purchase bill lines when posted to cashbooks. */
   ledgerKind?: "invoice" | "payment" | "return_credit" | "adjustment";
-  ledgerEmployeeLineKind?:
-    | "salary"
-    | "service_charge"
-    | "bonus"
-    | "overtime";
+  ledgerEmployeeLineKind?: StaffLineKind;
   ledgerNote?: string;
   ledgerLink?: LedgerExpenseLink;
-  /** Links back to a salary-register payout when posted from Employee Salaries. */
+  /** Links back to a salary-register payout. */
   salaryPaymentId?: string;
+  /** Item breakdown for purchase bills. */
+  items?: DailyPurchaseItemSaved[];
 };
 
 export type DailyEntryRow = {

@@ -25,6 +25,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    ports:
+      # Remote dev: Mac/tools connect with deploy/.env POSTGRES_* (lock down VPS firewall to your IP).
+      - "5432:5432"
     networks: [krunch]
 
   api:

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   ChevronRight,
@@ -12,7 +13,9 @@ import { ThemeToggle } from "../ThemeToggle";
 import {
   getVisibleNavSections,
   branchPathToLeaf,
+  leavesFromNodes,
   type NavBranch,
+  type NavLeaf,
   type NavNode,
 } from "../../data/posNav";
 
@@ -30,7 +33,7 @@ type CollapsedShortcut =
       kind: "branch";
       label: string;
       icon: LucideIcon;
-      defaultLeafId: string;
+      leaves: NavLeaf[];
       activeLeafIds: string[];
     };
 
@@ -51,15 +54,15 @@ function topLevelNodesToCollapsedShortcuts(nodes: NavNode[]): CollapsedShortcut[
         leafId: node.id,
       });
     } else {
+      const leaves = leavesFromNodes(node.children);
       const activeLeafIds = leafIdsUnder(node);
-      const defaultLeafId = activeLeafIds[0];
-      if (!defaultLeafId) continue;
+      if (leaves.length === 0) continue;
       out.push({
         key: node.id,
         kind: "branch",
         label: node.label,
         icon: node.icon,
-        defaultLeafId,
+        leaves,
         activeLeafIds,
       });
     }
@@ -195,6 +198,180 @@ function CollapsedNavIconButton({
         <Icon className="size-[16px] shrink-0" strokeWidth={active ? 2.2 : 1.8} />
       </span>
     </button>
+  );
+}
+
+function CollapsedBranchNavButton({
+  label,
+  icon: Icon,
+  active,
+  leaves,
+  activeLeafId,
+  onSelectLeaf,
+}: {
+  label: string;
+  icon: LucideIcon;
+  active: boolean;
+  leaves: NavLeaf[];
+  activeLeafId: string;
+  onSelectLeaf: (id: string) => void;
+}) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const [flyoutStyle, setFlyoutStyle] = useState<{ top: number; left: number } | null>(null);
+
+  const computeFlyoutStyle = () => {
+    const btn = buttonRef.current;
+    if (!btn) return null;
+    const rect = btn.getBoundingClientRect();
+    const flyoutWidth = 220;
+    const overlap = 8;
+    const margin = 8;
+    let left = rect.right - overlap;
+    if (left + flyoutWidth > window.innerWidth - margin) {
+      left = Math.max(margin, rect.left - flyoutWidth + overlap);
+    }
+    const estimatedHeight = 44 + leaves.length * 40;
+    let top = rect.top;
+    if (top + estimatedHeight > window.innerHeight - margin) {
+      top = Math.max(margin, window.innerHeight - estimatedHeight - margin);
+    }
+    return { top, left };
+  };
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const showFlyout = () => {
+    clearCloseTimer();
+    if (leaves.length <= 1) return;
+    setFlyoutStyle(computeFlyoutStyle());
+    setOpen(true);
+  };
+
+  const scheduleClose = () => {
+    clearCloseTimer();
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpen(false);
+      setFlyoutStyle(null);
+    }, 150);
+  };
+
+  useEffect(() => () => clearCloseTimer(), []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const updatePosition = () => {
+      setFlyoutStyle(computeFlyoutStyle());
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition, { passive: true });
+    window.addEventListener("scroll", updatePosition, { passive: true, capture: true });
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, leaves.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setFlyoutStyle(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  const handleClick = () => {
+    if (leaves.length === 1) onSelectLeaf(leaves[0].id);
+  };
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={handleClick}
+        onMouseEnter={showFlyout}
+        onMouseLeave={scheduleClose}
+        title={label}
+        aria-label={label}
+        aria-haspopup={leaves.length > 1 ? "menu" : undefined}
+        aria-expanded={leaves.length > 1 ? open : undefined}
+        aria-current={active ? "page" : undefined}
+        className="group relative flex w-full items-center justify-center py-1.5"
+      >
+        <span
+          className={`flex size-10 items-center justify-center rounded-[6px] transition-all duration-150 ${
+            active || open
+              ? "bg-[var(--pos-sb-active-bg)] text-[var(--pos-sb-active-icon)]"
+              : "text-[var(--pos-sb-icon)] hover:bg-[var(--pos-sb-hover)] hover:text-[var(--pos-sb-text-3)]"
+          }`}
+        >
+          <Icon className="size-[16px] shrink-0" strokeWidth={active || open ? 2.2 : 1.8} />
+        </span>
+      </button>
+
+      {open && flyoutStyle && leaves.length > 1
+        ? createPortal(
+            <div
+              role="menu"
+              aria-label={label}
+              onMouseEnter={showFlyout}
+              onMouseLeave={scheduleClose}
+              className="fixed z-[200] min-w-[200px] max-w-[min(240px,calc(100vw-16px))] overflow-hidden rounded-[8px] border border-solid [border-color:var(--pos-sb-border)] [background:var(--pos-sb-bg)] py-1 shadow-lg"
+              style={{ top: flyoutStyle.top, left: flyoutStyle.left }}
+            >
+              <p className="border-b border-solid px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-sb-section-label)] [border-color:var(--pos-sb-divider)]">
+                {label}
+              </p>
+              {leaves.map((leaf) => {
+                const LeafIcon = leaf.icon;
+                const leafActive = activeLeafId === leaf.id;
+                return (
+                  <button
+                    key={leaf.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      setFlyoutStyle(null);
+                      onSelectLeaf(leaf.id);
+                    }}
+                    aria-current={leafActive ? "page" : undefined}
+                    className={`group flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[12px] transition-colors ${
+                      leafActive
+                        ? "bg-[var(--pos-sb-active-bg)] font-semibold text-[var(--pos-sb-active-text)]"
+                        : "font-normal text-[var(--pos-sb-text-2)] hover:bg-[var(--pos-sb-hover)] hover:text-[var(--pos-sb-text-3)]"
+                    }`}
+                  >
+                    <LeafIcon
+                      className={`size-[13px] shrink-0 ${
+                        leafActive
+                          ? "text-[var(--pos-sb-active-icon)]"
+                          : "text-[var(--pos-sb-icon)] group-hover:text-[var(--pos-sb-text-3)]"
+                      }`}
+                      strokeWidth={leafActive ? 2.2 : 1.8}
+                    />
+                    <span className="min-w-0 flex-1 truncate leading-none">{leaf.label}</span>
+                  </button>
+                );
+              })}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 
@@ -392,12 +569,14 @@ export function PosSidebar({
                         onActivate={() => onSelectLeaf(s.leafId)}
                       />
                     ) : (
-                      <CollapsedNavIconButton
+                      <CollapsedBranchNavButton
                         key={s.key}
                         label={s.label}
                         icon={s.icon}
+                        leaves={s.leaves}
+                        activeLeafId={activeLeafId}
                         active={s.activeLeafIds.includes(activeLeafId)}
-                        onActivate={() => onSelectLeaf(s.defaultLeafId)}
+                        onSelectLeaf={onSelectLeaf}
                       />
                     ),
                   )}

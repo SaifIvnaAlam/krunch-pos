@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpsertEmployeeDirectoryDto } from './dto/upsert-employee-directory.dto';
+import { normalizeEmployeeDirectory } from './employee-directory.util';
 
 export type EmployeeDirectoryDto = {
   employees: unknown[];
@@ -27,7 +28,7 @@ export class EmployeesService {
     });
     if (!row) return { ...EMPTY };
     return {
-      employees: asJsonArray(row.employees),
+      employees: normalizeEmployeeDirectory(asJsonArray(row.employees)),
       updatedAt: row.updatedAt.toISOString(),
     };
   }
@@ -36,18 +37,19 @@ export class EmployeesService {
     branchId: string,
     dto: UpsertEmployeeDirectoryDto,
   ): Promise<EmployeeDirectoryDto> {
+    const employees = normalizeEmployeeDirectory(dto.employees);
     const row = await this.prisma.branchEmployeeDirectory.upsert({
       where: { branchId },
       update: {
-        employees: dto.employees as Prisma.InputJsonValue,
+        employees: employees as Prisma.InputJsonValue,
       },
       create: {
         branchId,
-        employees: dto.employees as Prisma.InputJsonValue,
+        employees: employees as Prisma.InputJsonValue,
       },
     });
     return {
-      employees: asJsonArray(row.employees),
+      employees: normalizeEmployeeDirectory(asJsonArray(row.employees)),
       updatedAt: row.updatedAt.toISOString(),
     };
   }

@@ -10,6 +10,9 @@ import {
 } from "react";
 import {
   Banknote,
+  FileText,
+  Lock,
+  LockOpen,
   Paperclip,
   Pencil,
   Plus,
@@ -20,17 +23,22 @@ import {
   X,
 } from "lucide-react";
 import { sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
-import { uploadFileToStorage, resolveMediaUrl, purgeStoredMediaRef, attachmentUploadBlockedMessage } from "@/features/storage";
-import { StorageImage } from "@/features/storage/StorageImage";
-import { isPersistedMediaRef } from "@/features/storage/storageRef";
+import { uploadFileToStorage, purgeStoredMediaRef, attachmentUploadBlockedMessage } from "@/features/storage";
+import { fromStorageRef } from "@/features/storage/storageRef";
+import {
+  unlinkDailyExpenseLinesForLedgerEntry,
+  upsertDailyPurchaseFromLedgerInvoice,
+} from "@/features/daily-entry";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import { MediaThumb } from "./MediaThumb";
+import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
 import {
   getLedgerWorkspaceLoadState,
   getWorkspace,
+  isLedgerEntryLocked,
   loadLedgerWorkspace,
   setWorkspace,
   subscribeWorkspace,
-  type EmployeeLedgerLineKind,
   type LedgerAttachment,
   type LedgerBookPurpose,
   type LedgerEntry,
@@ -61,6 +69,7 @@ const purchaseLabel = "text-[11px] text-[var(--pos-text-2)]";
 const purchaseTh = "px-4 py-2 text-left text-[11px] font-semibold text-[var(--pos-text-2)]";
 
 export const LEDGER_LEAF_IDS = new Set([
+  "lm-cashbooks",
   "lm-management",
   "lm-suppliers",
   "lm-ledger",
@@ -68,20 +77,53 @@ export const LEDGER_LEAF_IDS = new Set([
 ]);
 
 export type LedgerPanelTab = "books" | "bills" | "items";
+export type CashbooksPanel = "books" | "bills";
+
+const CASHBOOKS_PANEL_OPTIONS: { value: CashbooksPanel; label: string }[] = [
+  { value: "books", label: "Books" },
+  { value: "bills", label: "Bills & payments" },
+];
+
+/** In-page panel for the combined Cashbooks leaf (survives leaf remounts within the module). */
+let cashbooksPanel: CashbooksPanel = "bills";
+const cashbooksPanelListeners = new Set<() => void>();
+
+function getCashbooksPanel(): CashbooksPanel {
+  return cashbooksPanel;
+}
+
+function subscribeCashbooksPanel(cb: () => void): () => void {
+  cashbooksPanelListeners.add(cb);
+  return () => {
+    cashbooksPanelListeners.delete(cb);
+  };
+}
+
+function setCashbooksPanel(panel: CashbooksPanel) {
+  if (cashbooksPanel === panel) return;
+  cashbooksPanel = panel;
+  cashbooksPanelListeners.forEach((listener) => listener());
+}
 
 function selectLedgerTab(tab: LedgerPanelTab) {
-  if (tab === "bills") dispatchPosSelectLeaf("lm-ledger");
-  else if (tab === "items") dispatchPosSelectLeaf("lm-items");
-  else dispatchPosSelectLeaf("lm-management");
+  if (tab === "items") {
+    dispatchPosSelectLeaf("lm-items");
+    return;
+  }
+  setCashbooksPanel(tab);
+  dispatchPosSelectLeaf("lm-cashbooks");
 }
 
-function ledgerTabFromLeafId(leafId: string): LedgerPanelTab {
-  if (leafId === "lm-ledger") return "bills";
-  if (leafId === "lm-items") return "items";
-  return "books";
+/** Open Cashbooks on a specific in-page panel (Books or Bills & payments). */
+export function openCashbooksPanel(panel: CashbooksPanel) {
+  selectLedgerTab(panel);
 }
 
-/** Why this cashbook exists — vendor AP, owner equity/draws, or employee advances/payables. */
+function isItemsLedgerLeaf(leafId: string): boolean {
+  return leafId === "lm-items";
+}
+
+/** Why this cashbook exists — vendor AP or owner equity/draws. */
 export type { LedgerBookPurpose };
 
 export const LEDGER_BOOK_PURPOSE_OPTIONS: {
@@ -90,22 +132,6 @@ export const LEDGER_BOOK_PURPOSE_OPTIONS: {
 }[] = [
   { value: "vendor", label: "Vendor" },
   { value: "owners", label: "Owners" },
-  { value: "employees", label: "Employees" },
-];
-
-/** Cashbook title prefix for employees (matches owner-style “Owner — …” naming). */
-export const EMPLOYEE_LEDGER_BOOK_NAME_PREFIX = "Staff — ";
-
-export type { EmployeeLedgerLineKind };
-
-export const EMPLOYEE_LEDGER_LINE_OPTIONS: {
-  value: EmployeeLedgerLineKind;
-  label: string;
-}[] = [
-  { value: "salary", label: "Salary" },
-  { value: "service_charge", label: "Service Charge" },
-  { value: "bonus", label: "Bonus" },
-  { value: "overtime", label: "Overtime" },
 ];
 
 type Supplier = LedgerSupplier;
@@ -144,47 +170,14 @@ function nextId(prefix: string, existing: string[]): string {
   return `${prefix}-${String(next).padStart(4, "0")}`;
 }
 
-/** Cashbook display name for a staff member. */
-export function employeeLedgerBookName(fullName: string): string {
-  return `${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}${fullName.trim()}`;
-}
-
-/** Create or return the Staff cashbook for this employee (session workspace). */
-export function upsertEmployeeLedgerBook(employee: {
-  name: string;
-  phone?: string;
-}): string {
-  const name = employeeLedgerBookName(employee.name);
-  const w = getWorkspace();
-  const existing = w.suppliers.find((s) => s.name === name);
-  if (existing) return existing.id;
-
-  const id = nextId("sup", w.suppliers.map((s) => s.id));
-  const row: Supplier = {
-    id,
-    name,
-    bookPurpose: "employees",
-    contactPerson: employee.name.trim(),
-    phone: employee.phone?.trim() ?? "",
-    email: "",
-    address: "",
-    notes: "",
-  };
-  setWorkspace((prev) => ({ ...prev, suppliers: [...prev.suppliers, row] }));
-  return id;
-}
-
-export function hasEmployeeLedgerBook(fullName: string): boolean {
-  const name = employeeLedgerBookName(fullName);
-  return getWorkspace().suppliers.some((s) => s.name === name);
-}
-
 function useWorkspace(): Workspace {
   return useSyncExternalStore(subscribeWorkspace, getWorkspace, getWorkspace);
 }
 
-let ledgerBookNamesCacheKey = "";
-let ledgerBookNamesCache: string[] = [];
+const ledgerBookNamesCacheByPurpose = new Map<
+  string,
+  { contentKey: string; names: string[] }
+>();
 
 /** Sorted unique names from Cashbooks — for Daily Entry vendor lines and pickers. */
 export function subscribeLedgerWorkspace(cb: () => void): () => void {
@@ -194,17 +187,18 @@ export function subscribeLedgerWorkspace(cb: () => void): () => void {
 export function getLedgerBookNamesSnapshot(
   purpose: LedgerBookPurpose | "all" = "all",
 ): string[] {
-  const names = getWorkspace().suppliers
-    .filter((s) => purpose === "all" || (s.bookPurpose ?? "vendor") === purpose)
+  const names = getWorkspace()
+    .suppliers.filter(
+      (s) => purpose === "all" || (s.bookPurpose ?? "vendor") === purpose,
+    )
     .map((s) => s.name.trim())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
-  const key = `${purpose}\0${names.join("\0")}`;
-  if (key !== ledgerBookNamesCacheKey) {
-    ledgerBookNamesCacheKey = key;
-    ledgerBookNamesCache = names;
-  }
-  return ledgerBookNamesCache;
+  const contentKey = names.join("\0");
+  const cached = ledgerBookNamesCacheByPurpose.get(purpose);
+  if (cached && cached.contentKey === contentKey) return cached.names;
+  ledgerBookNamesCacheByPurpose.set(purpose, { contentKey, names });
+  return names;
 }
 
 /** Match a cashbook display name to its id (for Daily Entry lines). */
@@ -214,35 +208,6 @@ export function resolveLedgerSupplierIdByBookName(bookName: string): string | nu
   const lower = t.toLowerCase();
   const hit = getWorkspace().suppliers.find((s) => s.name.trim().toLowerCase() === lower);
   return hit?.id ?? null;
-}
-
-function supplierBookPurpose(supplierId: string): LedgerBookPurpose | undefined {
-  return getWorkspace().suppliers.find((s) => s.id === supplierId)?.bookPurpose;
-}
-
-function isEmployeesBookSupplierId(supplierId: string): boolean {
-  return supplierBookPurpose(supplierId) === "employees";
-}
-
-/** Daily Entry / reports: true when this supplier id is a Staff (employees) cashbook. */
-export function isEmployeesLedgerSupplierId(supplierId: string): boolean {
-  return isEmployeesBookSupplierId(supplierId);
-}
-
-const LEGACY_EMPLOYEE_LINE_KIND_LABEL: Record<string, string> = {
-  house_rent: "House rent",
-  deal: "Deal / one-off",
-  advance: "Advance",
-  other: "Other",
-};
-
-export function employeeLedgerLineKindLabel(
-  k: EmployeeLedgerLineKind | string | undefined,
-): string {
-  if (!k) return "—";
-  const hit = EMPLOYEE_LEDGER_LINE_OPTIONS.find((o) => o.value === k);
-  if (hit) return hit.label;
-  return LEGACY_EMPLOYEE_LINE_KIND_LABEL[k] ?? k;
 }
 
 function supplierBalance(supplierId: string, ledger: LedgerEntry[]): number {
@@ -274,7 +239,6 @@ function linkedPurchaseForLedgerEntry(
   e: LedgerEntry,
   moves: StockMove[],
 ): PurchaseOrder | null {
-  if (e.employeeLineKind) return null;
   if (e.type !== "invoice") return null;
   const hit = moves.find(
     (m): m is PurchaseOrder =>
@@ -287,7 +251,6 @@ function linkedReturnForLedgerEntry(
   e: LedgerEntry,
   moves: StockMove[],
 ): PurchaseReturn | null {
-  if (e.employeeLineKind) return null;
   if (e.type !== "return_credit") return null;
   const hit = moves.find(
     (m): m is PurchaseReturn =>
@@ -300,87 +263,128 @@ function returnCreditTotalCents(r: PurchaseReturn): number {
   return r.lines.reduce((s, l) => s + l.creditCents, 0);
 }
 
-function LedgerAttachmentDetail({ attachment }: { attachment: LedgerAttachment }) {
-  const isImage = attachment.mimeType.startsWith("image/");
-  const [href, setHref] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void resolveMediaUrl(attachment.dataUrl).then((url) => {
-      if (!cancelled) setHref(url);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [attachment.dataUrl]);
+function isLedgerAttachmentPdf(att: LedgerAttachment): boolean {
+  if (att.mimeType === "application/pdf") return true;
+  if (att.fileName.toLowerCase().endsWith(".pdf")) return true;
+  if (att.dataUrl.startsWith("data:application/pdf")) return true;
+  const key = fromStorageRef(att.dataUrl);
+  return key != null && key.toLowerCase().endsWith(".pdf");
+}
 
+function LedgerAttachmentsDetail({ attachments }: { attachments: LedgerAttachment[] }) {
+  const [previewRef, setPreviewRef] = useState<string | null>(null);
+  if (attachments.length === 0) return null;
   return (
-    <div className="mt-4 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2.5">
-      <p className={purchaseLabel}>Attachment</p>
-      {isImage &&
-      (isPersistedMediaRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
-        <StorageImage
-          mediaRef={attachment.dataUrl}
-          alt=""
-          className="mt-2 max-h-40 w-full rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-contain"
-        />
-      ) : null}
-      {href ? (
-        <a
-          href={href}
-          download={attachment.fileName}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium underline-offset-2 hover:underline"
-          style={{ color: "var(--pos-sb-base)" }}
+    <div className="mt-4">
+      <p className={purchaseLabel}>
+        {attachments.length === 1 ? "Attachment" : `Attachments (${attachments.length})`}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {attachments.map((att, idx) => (
+          <button
+            key={`${att.dataUrl}-${idx}`}
+            type="button"
+            className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50"
+            onClick={() => setPreviewRef(att.dataUrl)}
+            aria-label={
+              isLedgerAttachmentPdf(att)
+                ? `View PDF ${idx + 1}`
+                : `View attachment ${idx + 1}`
+            }
+            title={att.fileName}
+          >
+            {isLedgerAttachmentPdf(att) ? (
+              <span className="flex size-11 flex-col items-center justify-center gap-0.5 bg-[var(--pos-page)] text-[var(--pos-text-2)]">
+                <FileText className="size-5 shrink-0" strokeWidth={2} aria-hidden />
+                <span className="text-[8px] font-semibold uppercase">PDF</span>
+              </span>
+            ) : (
+              <MediaThumb
+                mediaRef={att.dataUrl}
+                alt={att.fileName || `Attachment ${idx + 1}`}
+                className="size-11 object-cover"
+              />
+            )}
+          </button>
+        ))}
+      </div>
+      {previewRef ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Attachment preview"
+          className="fixed inset-0 z-[220] flex flex-col items-center justify-center bg-black/85 p-4"
+          onClick={() => setPreviewRef(null)}
         >
-          <Paperclip className="size-3.5 shrink-0" strokeWidth={2} aria-hidden />
-          {attachment.fileName}
-        </a>
-      ) : (
-        <p className="mt-2 text-[12px] text-[var(--pos-text-2)]">{attachment.fileName}</p>
-      )}
+          <button
+            type="button"
+            className="absolute right-3 top-3 rounded-lg px-3 py-1.5 text-[13px] font-medium text-white/90 hover:bg-white/10"
+            onClick={() => setPreviewRef(null)}
+          >
+            Close
+          </button>
+          <ReceiptPreviewBody mediaRef={previewRef} />
+          <p className="mt-3 max-w-lg text-center text-[11px] text-white/60">
+            Tap outside or press Escape to close
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
 
+function entryAttachments(entry: LedgerEntry): LedgerAttachment[] {
+  return entry.attachments ?? [];
+}
+
 function LedgerEntryAttachmentField({
-  attachment,
+  attachments,
   onChange,
 }: {
-  attachment: LedgerAttachment | null;
-  onChange: (next: LedgerAttachment | null) => void;
+  attachments: LedgerAttachment[];
+  onChange: (next: LedgerAttachment[]) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [previewRef, setPreviewRef] = useState<string | null>(null);
 
   const onFile = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
+      const files = Array.from(e.target.files ?? []);
       e.target.value = "";
-      if (!file) return;
-      const blocked = attachmentUploadBlockedMessage(file);
-      if (blocked) {
-        setError(blocked);
-        return;
-      }
+      if (files.length === 0) return;
       setError(null);
       void (async () => {
-        try {
-          const previousRef = attachment?.dataUrl;
-          const dataUrl = await uploadFileToStorage(file, "ledger", file.name);
-          onChange({
-            fileName: file.name,
-            mimeType: file.type || "application/octet-stream",
-            dataUrl,
-          });
-          if (previousRef) purgeStoredMediaRef(previousRef);
-        } catch {
-          setError("Could not upload file");
+        const added: LedgerAttachment[] = [];
+        for (const file of files) {
+          const blocked = attachmentUploadBlockedMessage(file);
+          if (blocked) {
+            setError(blocked);
+            continue;
+          }
+          try {
+            const dataUrl = await uploadFileToStorage(file, "ledger", file.name);
+            added.push({
+              fileName: file.name,
+              mimeType: file.type || "application/octet-stream",
+              dataUrl,
+            });
+          } catch {
+            setError("Could not upload file");
+          }
         }
+        if (added.length > 0) onChange([...attachments, ...added]);
       })();
     },
-    [onChange],
+    [attachments, onChange],
   );
+
+  const removeAt = (idx: number) => {
+    setError(null);
+    const target = attachments[idx];
+    onChange(attachments.filter((_, i) => i !== idx));
+    if (target?.dataUrl) purgeStoredMediaRef(target.dataUrl);
+  };
 
   return (
     <div className="min-w-0">
@@ -388,57 +392,83 @@ function LedgerEntryAttachmentField({
         ref={fileInputRef}
         type="file"
         accept={LEDGER_ATTACHMENT_ACCEPT}
+        multiple
         className="sr-only"
         tabIndex={-1}
         aria-hidden
         onChange={onFile}
       />
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {attachments.map((att, idx) => (
+          <div key={`${att.dataUrl}-${idx}`} className="relative inline-flex">
+            <button
+              type="button"
+              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50"
+              onClick={() => setPreviewRef(att.dataUrl)}
+              aria-label={
+                isLedgerAttachmentPdf(att)
+                  ? `View PDF ${idx + 1}`
+                  : `View attachment ${idx + 1}`
+              }
+              title={att.fileName}
+            >
+              {isLedgerAttachmentPdf(att) ? (
+                <span className="flex size-11 flex-col items-center justify-center gap-0.5 bg-[var(--pos-page)] text-[var(--pos-text-2)]">
+                  <FileText className="size-5 shrink-0" strokeWidth={2} aria-hidden />
+                  <span className="text-[8px] font-semibold uppercase">PDF</span>
+                </span>
+              ) : (
+                <MediaThumb
+                  mediaRef={att.dataUrl}
+                  alt={att.fileName || `Attachment ${idx + 1}`}
+                  className="size-11 object-cover"
+                />
+              )}
+            </button>
+            <button
+              type="button"
+              className="absolute -right-0.5 -top-0.5 z-[1] flex size-4 items-center justify-center rounded-full border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[10px] leading-none text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]"
+              aria-label="Remove attachment"
+              onClick={() => removeAt(idx)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          aria-label={attachment ? "Change attachment" : "Attach receipt or file"}
-          className="inline-flex h-10 w-full min-w-0 flex-1 items-center justify-center gap-2 rounded-[9px] border border-solid [border-color:var(--pos-sb-base)] bg-[var(--pos-page)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] transition-colors hover:bg-[var(--pos-nav-hover)]/40"
+          aria-label="Attach receipt or file"
+          className="inline-flex size-11 shrink-0 items-center justify-center rounded-[6px] border border-dashed border-[var(--pos-input-border)] bg-[var(--pos-page)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
         >
           <Paperclip className="size-4 shrink-0" strokeWidth={2} aria-hidden />
-          {attachment ? "Change attachment" : "Attach receipt or file"}
         </button>
-        {attachment ? (
+      </div>
+      <p className="mt-2 text-[10px] leading-snug text-[var(--pos-text-2)]">
+        Photo, PDF, or HEIC — tap a box to view. Multiple files allowed.
+      </p>
+      {error ? <p className="mt-2 text-[11px] text-[#8a3030]">{error}</p> : null}
+      {previewRef ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Attachment preview"
+          className="fixed inset-0 z-[220] flex flex-col items-center justify-center bg-black/85 p-4"
+          onClick={() => setPreviewRef(null)}
+        >
           <button
             type="button"
-            onClick={() => {
-              setError(null);
-              const previousRef = attachment?.dataUrl;
-              onChange(null);
-              if (previousRef) purgeStoredMediaRef(previousRef);
-            }}
-            className="inline-flex h-10 shrink-0 items-center rounded-[9px] border border-solid border-[#c45a5a]/45 px-3 text-[11px] font-medium text-[#8a3030] hover:bg-[#f5e4e4]/60"
+            className="absolute right-3 top-3 rounded-lg px-3 py-1.5 text-[13px] font-medium text-white/90 hover:bg-white/10"
+            onClick={() => setPreviewRef(null)}
           >
-            Clear
+            Close
           </button>
-        ) : null}
-      </div>
-      {attachment ? (
-        <p
-          className="mt-2 truncate text-[11px] text-[var(--pos-text-2)]"
-          title={attachment.fileName}
-        >
-          {attachment.fileName}
-        </p>
-      ) : (
-        <p className="mt-2 text-[10px] leading-snug text-[var(--pos-text-2)]">
-          Photo, PDF, or HEIC — images are compressed automatically
-        </p>
-      )}
-      {attachment?.mimeType.startsWith("image/") &&
-      (isPersistedMediaRef(attachment.dataUrl) || attachment.dataUrl.startsWith("data:")) ? (
-        <StorageImage
-          mediaRef={attachment.dataUrl}
-          alt=""
-          className="mt-2 max-h-28 w-full rounded-[6px] border border-solid [border-color:var(--pos-divider)] object-cover"
-        />
+          <ReceiptPreviewBody mediaRef={previewRef} />
+          <p className="mt-3 max-w-lg text-center text-[11px] text-white/60">
+            Tap outside or press Escape to close
+          </p>
+        </div>
       ) : null}
-      {error ? <p className="mt-2 text-[11px] text-[#8a3030]">{error}</p> : null}
     </div>
   );
 }
@@ -447,11 +477,13 @@ function LedgerEntryAttachmentField({
 function LedgerDetailSlideOver({
   title,
   subtitle,
+  actions,
   children,
   onClose,
 }: {
   title: string;
   subtitle?: ReactNode;
+  actions?: ReactNode;
   children: ReactNode;
   onClose: () => void;
 }) {
@@ -482,6 +514,7 @@ function LedgerDetailSlideOver({
             </button>
           </div>
           {subtitle ? <div className="mt-2">{subtitle}</div> : null}
+          {actions ? <div className="mt-3 flex flex-wrap items-center gap-1.5">{actions}</div> : null}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
       </div>
@@ -619,51 +652,8 @@ function LedgerEntryDetailContent({
 }) {
   const po = linkedPurchaseForLedgerEntry(entry, moves);
   const ret = linkedReturnForLedgerEntry(entry, moves);
-  const att = entry.attachment;
+  const atts = entryAttachments(entry);
   const items = ledgerEntryItems(entry, moves);
-
-  if (entry.employeeLineKind) {
-    const empKind = employeeLedgerLineKindLabel(entry.employeeLineKind);
-    const flowLabel =
-      entry.type === "adjustment" ? "Accrual or correction" : "Payment to employee";
-    return (
-      <>
-        <div className="mb-4 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]">
-            Staff cashbook
-          </p>
-          <p className="mt-1 text-[14px] font-semibold text-[var(--pos-text-1)]">{empKind}</p>
-          <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">{flowLabel}</p>
-        </div>
-        <dl className="space-y-3 text-[12px]">
-          <div>
-            <dt className={purchaseLabel}>Cashbook</dt>
-            <dd className="mt-0.5 font-medium text-[var(--pos-text-1)]">{supplierLabel}</dd>
-          </div>
-          <div>
-            <dt className={purchaseLabel}>Date</dt>
-            <dd className="mt-0.5 text-[var(--pos-text-1)]">{entry.date}</dd>
-          </div>
-          <div>
-            <dt className={purchaseLabel}>Reference</dt>
-            <dd className="mt-0.5 font-mono text-[var(--pos-text-1)]">{entry.ref}</dd>
-          </div>
-          <div>
-            <dt className={purchaseLabel}>Amount</dt>
-            <dd className="mt-0.5 font-mono text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-              {entry.amountCents >= 0 ? "+" : ""}
-              {formatMoney(entry.amountCents)}
-            </dd>
-          </div>
-          <div>
-            <dt className={purchaseLabel}>Memo</dt>
-            <dd className="mt-0.5 text-[var(--pos-text-1)]">{entry.memo.trim() || "—"}</dd>
-          </div>
-        </dl>
-        {att ? <LedgerAttachmentDetail attachment={att} /> : null}
-      </>
-    );
-  }
 
   if (po) {
     return (
@@ -704,7 +694,7 @@ function LedgerEntryDetailContent({
           <p className={purchaseLabel}>Ledger memo</p>
           <p className="mt-1 text-[12px] text-[var(--pos-text-1)]">{entry.memo.trim() || "—"}</p>
         </div>
-        {att ? <LedgerAttachmentDetail attachment={att} /> : null}
+        {atts.length > 0 ? <LedgerAttachmentsDetail attachments={atts} /> : null}
       </>
     );
   }
@@ -783,7 +773,7 @@ function LedgerEntryDetailContent({
             {formatMoney(entry.amountCents)}
           </p>
         </div>
-        {att ? <LedgerAttachmentDetail attachment={att} /> : null}
+        {atts.length > 0 ? <LedgerAttachmentsDetail attachments={atts} /> : null}
       </>
     );
   }
@@ -823,7 +813,7 @@ function LedgerEntryDetailContent({
         <LedgerItemsTable items={items} />
       </div>
     ) : null}
-    {att ? <LedgerAttachmentDetail attachment={att} /> : null}
+    {atts.length > 0 ? <LedgerAttachmentsDetail attachments={atts} /> : null}
     </>
   );
 }
@@ -1025,8 +1015,6 @@ function CashbookModalPanel({
   onSaveField: (patch: Partial<Supplier>) => void;
 }) {
   const purpose = supplier.bookPurpose ?? "vendor";
-  const isEmployee = purpose === "employees";
-  const balanceLabel = isEmployee ? "Balance" : "Payable";
   const balanceTone =
     balanceCents > 0
       ? "text-[#6a3030]"
@@ -1046,7 +1034,7 @@ function CashbookModalPanel({
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--pos-text-2)]">
-              {balanceLabel}
+              Payable
             </p>
             <p
               className={`mt-0.5 font-mono text-[22px] font-semibold leading-none tabular-nums ${balanceTone}`}
@@ -1239,9 +1227,6 @@ function CashbookCreateForm({
           className={purchaseField}
           required
           autoFocus
-          placeholder={
-            purpose === "employees" ? `${EMPLOYEE_LEDGER_BOOK_NAME_PREFIX}Full name` : undefined
-          }
         />
       </label>
       <div className="sm:col-span-2">
@@ -1304,11 +1289,13 @@ function GhostButton({
   onClick,
   type = "button",
   variant = "default",
+  disabled = false,
 }: {
   children: ReactNode;
   onClick?: () => void;
   type?: "button" | "submit";
   variant?: "default" | "bill" | "pay";
+  disabled?: boolean;
 }) {
   const variantClass =
     variant === "bill"
@@ -1321,7 +1308,8 @@ function GhostButton({
     <button
       type={type}
       onClick={onClick}
-      className={`h-9 cursor-pointer rounded-[9px] border px-3 text-[12px] font-medium transition-colors ${variantClass}`}
+      disabled={disabled}
+      className={`h-9 cursor-pointer rounded-[9px] border px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${variantClass}`}
     >
       {children}
     </button>
@@ -1383,15 +1371,18 @@ function ChoiceChips<T extends string>({
 function DangerGhostButton({
   children,
   onClick,
+  disabled = false,
 }: {
   children: ReactNode;
   onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="rounded-[8px] border border-solid border-[#c45a5a]/50 bg-[var(--pos-card)] px-2.5 py-1.5 text-[11px] font-medium text-[#8a3030] transition-colors hover:bg-[#f5e4e4]/80"
+      disabled={disabled}
+      className="rounded-[8px] border border-solid border-[#c45a5a]/50 bg-[var(--pos-card)] px-2.5 py-1.5 text-[11px] font-medium text-[#8a3030] transition-colors hover:bg-[#f5e4e4]/80 disabled:cursor-not-allowed disabled:opacity-45"
     >
       {children}
     </button>
@@ -1566,8 +1557,8 @@ function SupplierListView() {
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
-          title="Cashbooks"
-          subtitle="Tag each book as vendor, owners, or employees. Balances come from Bills & Payments."
+          title="Books"
+          subtitle="Vendor and owner books. Balances update from bills and payments."
         />
         <PrimaryButton type="button" onClick={startCreate}>
           Add cashbook
@@ -1694,14 +1685,12 @@ function SupplierListView() {
                       onKeyDown={(ev) => ev.stopPropagation()}
                     >
                       <div className="flex flex-wrap justify-end gap-1.5">
-                        {s.bookPurpose !== "employees" ? (
-                          <GhostButton variant="bill" onClick={() => startNewPurchaseFor(s.id)}>
-                            <span className="inline-flex items-center gap-1">
-                              <Receipt className="size-3.5" strokeWidth={2} />
-                              Bill
-                            </span>
-                          </GhostButton>
-                        ) : null}
+                        <GhostButton variant="bill" onClick={() => startNewPurchaseFor(s.id)}>
+                          <span className="inline-flex items-center gap-1">
+                            <Receipt className="size-3.5" strokeWidth={2} />
+                            Bill
+                          </span>
+                        </GhostButton>
                         <GhostButton variant="pay" onClick={() => startPaymentFor(s.id)}>
                           <span className="inline-flex items-center gap-1">
                             <Banknote className="size-3.5" strokeWidth={2} />
@@ -1761,17 +1750,15 @@ function SupplierListView() {
               </div>
             ) : selectedSupplier ? (
               <div className="flex flex-wrap items-center gap-2">
-                {selectedSupplier.bookPurpose !== "employees" ? (
-                  <GhostButton
-                    variant="bill"
-                    onClick={() => startNewPurchaseFor(selectedSupplier.id)}
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <Receipt className="size-3.5" strokeWidth={2} />
-                      Bill
-                    </span>
-                  </GhostButton>
-                ) : null}
+                <GhostButton
+                  variant="bill"
+                  onClick={() => startNewPurchaseFor(selectedSupplier.id)}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <Receipt className="size-3.5" strokeWidth={2} />
+                    Bill
+                  </span>
+                </GhostButton>
                 <GhostButton variant="pay" onClick={() => startPaymentFor(selectedSupplier.id)}>
                   <span className="inline-flex items-center gap-1">
                     <Banknote className="size-3.5" strokeWidth={2} />
@@ -1817,21 +1804,12 @@ function ledgerKindForDisplay(t: LedgerEntry["type"]): string {
   }
 }
 
-/** Table / chips: employee books show salary, service charge, etc.; vendors show bill / payment / … */
+/** Table / chips: bill / payment / return / correction. */
 function ledgerEntryLineLabel(e: LedgerEntry): string {
-  if (e.employeeLineKind) {
-    return employeeLedgerLineKindLabel(e.employeeLineKind);
-  }
   return ledgerKindForDisplay(e.type);
 }
 
 function ledgerDraftSummaryLabel(d: LedgerEntryDraft): string {
-  if (d.supplierId && isEmployeesBookSupplierId(d.supplierId)) {
-    if (d.employeeLineKind) {
-      return employeeLedgerLineKindLabel(d.employeeLineKind as EmployeeLedgerLineKind);
-    }
-    return "Staff cashbook";
-  }
   return ledgerKindForDisplay(d.kind);
 }
 
@@ -1889,14 +1867,12 @@ type LedgerItemDraft = {
 type LedgerEntryDraft = {
   supplierId: string;
   date: string;
-  /** Vendor drawer: invoice | payment only. Staff books always commit as payment. */
+  /** Vendor drawer: invoice | payment only. */
   kind: LedgerEntry["type"];
   amount: string;
   method: (typeof LEDGER_PAYMENT_METHODS)[number];
   notes: string;
-  attachment: LedgerAttachment | null;
-  /** Set on employee cashbooks — salary, service charge, bonus, overtime. */
-  employeeLineKind: "" | EmployeeLedgerLineKind;
+  attachments: LedgerAttachment[];
   /** Bill line items (name / qty / unit / rate). */
   items: LedgerItemDraft[];
 };
@@ -1912,18 +1888,15 @@ function newLedgerItemDraft(): LedgerItemDraft {
 }
 
 function defaultLedgerEntryDraft(prefillSupplierId: string): LedgerEntryDraft {
-  const sup = getWorkspace().suppliers.find((s) => s.id === prefillSupplierId);
-  const isEmp = sup?.bookPurpose === "employees";
   return {
     supplierId: prefillSupplierId,
     date: todayIso(),
-    kind: isEmp ? "payment" : "invoice",
+    kind: "invoice",
     amount: "",
     method: LEDGER_PAYMENT_METHODS[0],
     notes: "",
-    attachment: null,
-    employeeLineKind: isEmp ? "salary" : "",
-    items: isEmp ? [] : [newLedgerItemDraft()],
+    attachments: [],
+    items: [newLedgerItemDraft()],
   };
 }
 
@@ -1969,16 +1942,110 @@ function itemsTotalCentsFromDraft(d: LedgerEntryDraft): number | null {
   return lines.reduce((s, l) => s + l.totalCents, 0);
 }
 
-function memoFromEmployeeLedgerDraft(d: LedgerEntryDraft): string {
-  const k = d.employeeLineKind as EmployeeLedgerLineKind;
-  const kindLabel = employeeLedgerLineKindLabel(k);
-  return `${kindLabel} · ${paymentMemoFromDraft(d)}`;
-}
-
 function paymentMemoFromDraft(d: LedgerEntryDraft): string {
   const n = d.notes.trim();
   if (n) return `${d.method} · ${n}`;
   return d.method;
+}
+
+function formatCentsAsAmountInput(cents: number): string {
+  const abs = Math.abs(cents);
+  const whole = Math.floor(abs / 100);
+  const frac = abs % 100;
+  if (frac === 0) return String(whole);
+  return `${whole}.${String(frac).padStart(2, "0")}`;
+}
+
+function paymentMethodAndNotesFromMemo(memo: string): {
+  method: (typeof LEDGER_PAYMENT_METHODS)[number];
+  notes: string;
+} {
+  const m = memo.trim();
+  for (const method of LEDGER_PAYMENT_METHODS) {
+    if (m === method) return { method, notes: "" };
+    const prefix = `${method} · `;
+    if (m.startsWith(prefix)) return { method, notes: m.slice(prefix.length) };
+  }
+  return { method: LEDGER_PAYMENT_METHODS[0], notes: m };
+}
+
+function draftFromLedgerEntry(entry: LedgerEntry, moves: StockMove[]): LedgerEntryDraft {
+  const items = ledgerEntryItems(entry, moves);
+  const itemDrafts =
+    items.length > 0
+      ? items.map((line) => ({
+          key: line.id,
+          name: line.name,
+          qty: String(line.qty),
+          unit: line.unit,
+          rate: formatCentsAsAmountInput(line.rateCents),
+        }))
+      : [newLedgerItemDraft()];
+
+  if (entry.type === "payment") {
+    const { method, notes } = paymentMethodAndNotesFromMemo(entry.memo);
+    return {
+      supplierId: entry.supplierId,
+      date: entry.date,
+      kind: "payment",
+      amount: formatCentsAsAmountInput(entry.amountCents),
+      method,
+      notes,
+      attachments: [...(entry.attachments ?? [])],
+      items: [newLedgerItemDraft()],
+    };
+  }
+
+  const po = linkedPurchaseForLedgerEntry(entry, moves);
+  const noteFromPo = po?.note?.trim() ?? "";
+  const notes =
+    noteFromPo ||
+    (entry.memo.trim() === "Purchase" ? "" : entry.memo.trim());
+  const amountOnlyItemDrafts =
+    items.length === 0
+      ? [
+          {
+            ...newLedgerItemDraft(),
+            name: notes || "Purchase",
+            qty: "1",
+            unit: "pcs",
+            rate: formatCentsAsAmountInput(entry.amountCents),
+          },
+        ]
+      : itemDrafts;
+  return {
+    supplierId: entry.supplierId,
+    date: entry.date,
+    kind: "invoice",
+    amount: "",
+    method: LEDGER_PAYMENT_METHODS[0],
+    notes,
+    attachments: [...(entry.attachments ?? [])],
+    items: amountOnlyItemDrafts,
+  };
+}
+
+function canEditLedgerEntry(entry: LedgerEntry): boolean {
+  return (
+    !isLedgerEntryLocked(entry) &&
+    (entry.type === "invoice" || entry.type === "payment")
+  );
+}
+
+function setLedgerEntryLocked(id: string, locked: boolean): boolean {
+  const existing = getWorkspace().ledger.find((e) => e.id === id);
+  if (!existing) return false;
+  if (locked === isLedgerEntryLocked(existing)) return true;
+  const now = new Date().toISOString();
+  setWorkspace((w) => ({
+    ...w,
+    ledger: w.ledger.map((e) => {
+      if (e.id !== id) return e;
+      if (locked) return { ...e, isLocked: true, lockedAt: now };
+      return { ...e, isLocked: false, lockedAt: undefined };
+    }),
+  }));
+  return true;
 }
 
 function ledgerRefForKind(kind: LedgerEntry["type"]): string {
@@ -2015,14 +2082,6 @@ function memoFromLedgerDraft(d: LedgerEntryDraft): string {
 }
 
 function amountCentsFromLedgerDraft(d: LedgerEntryDraft): number | null {
-  if (isEmployeesBookSupplierId(d.supplierId) && d.employeeLineKind) {
-    const nRaw = Number.parseFloat(d.amount);
-    if (!Number.isFinite(nRaw)) return null;
-    const cents = Math.round(Math.max(0, nRaw) * 100);
-    if (cents <= 0) return null;
-    return -cents;
-  }
-
   if (d.kind === "invoice" && draftHasItemRows(d)) {
     const itemsTotal = itemsTotalCentsFromDraft(d);
     if (itemsTotal === null || itemsTotal <= 0) return null;
@@ -2051,11 +2110,6 @@ function amountCentsFromLedgerDraft(d: LedgerEntryDraft): number | null {
 
 function isLedgerDraftSaveDisabled(d: LedgerEntryDraft): boolean {
   if (!d.supplierId) return true;
-  if (isEmployeesBookSupplierId(d.supplierId)) {
-    if (!d.employeeLineKind) return true;
-    if (!d.amount.trim()) return true;
-    return amountCentsFromLedgerDraft(d) === null;
-  }
   if (d.kind === "invoice" && draftHasItemRows(d)) {
     return amountCentsFromLedgerDraft(d) === null;
   }
@@ -2067,13 +2121,28 @@ export type DailyLedgerCommitResult =
   | { ok: true; ledgerEntryId: string; purchaseOrderId?: string }
   | { ok: false };
 
+function buildLedgerEntryFields(
+  draft: LedgerEntryDraft,
+  amountCents: number,
+  items: LedgerItemLine[],
+): Pick<LedgerEntry, "supplierId" | "date" | "memo" | "amountCents"> &
+  Partial<Pick<LedgerEntry, "attachments" | "items">> {
+  return {
+    supplierId: draft.supplierId,
+    date: draft.date,
+    memo: memoFromLedgerDraft(draft),
+    amountCents,
+    ...(draft.attachments.length > 0 ? { attachments: draft.attachments } : {}),
+    ...(items.length > 0 ? { items } : {}),
+  };
+}
+
 /** Persists a bills & payments line from the drawer. */
 function commitLedgerEntryDraft(draft: LedgerEntryDraft): DailyLedgerCommitResult {
   const supplierId = draft.supplierId;
   if (!supplierId) return { ok: false };
 
   if (draft.kind === "invoice") {
-    if (isEmployeesBookSupplierId(supplierId)) return { ok: false };
     const total = amountCentsFromLedgerDraft(draft);
     if (total === null) return { ok: false };
     const items = committedItemsFromDraft(draft);
@@ -2099,14 +2168,9 @@ function commitLedgerEntryDraft(draft: LedgerEntryDraft): DailyLedgerCommitResul
     };
     const inv: LedgerEntry = {
       id: lgId,
-      supplierId,
-      date,
       type: "invoice",
       ref,
-      memo: memoFromLedgerDraft(draft),
-      amountCents: total,
-      ...(draft.attachment ? { attachment: draft.attachment } : {}),
-      ...(items.length > 0 ? { items } : {}),
+      ...buildLedgerEntryFields(draft, total, items),
     };
     setWorkspace((w) => ({
       ...w,
@@ -2122,49 +2186,107 @@ function commitLedgerEntryDraft(draft: LedgerEntryDraft): DailyLedgerCommitResul
   const w0 = getWorkspace();
   const lgId = nextId("lg", w0.ledger.map((x) => x.id));
 
-  if (isEmployeesBookSupplierId(supplierId)) {
-    if (!draft.employeeLineKind) return { ok: false };
-    const kind: LedgerEntry["type"] = "payment";
-    const ref = `EM-${Date.now().toString(36).toUpperCase().slice(-8)}`;
-    const memo = memoFromEmployeeLedgerDraft(draft);
-    setWorkspace((w) => ({
-      ...w,
-      ledger: [
-        {
-          id: lgId,
-          supplierId,
-          date: draft.date,
-          type: kind,
-          ref,
-          memo,
-          amountCents,
-          employeeLineKind: draft.employeeLineKind as EmployeeLedgerLineKind,
-          ...(draft.attachment ? { attachment: draft.attachment } : {}),
-        },
-        ...w.ledger,
-      ],
-    }));
-    return { ok: true, ledgerEntryId: lgId };
-  }
-
   const kind = draft.kind;
   setWorkspace((w) => ({
     ...w,
     ledger: [
       {
         id: lgId,
-        supplierId,
-        date: draft.date,
         type: kind,
         ref: ledgerRefForKind(kind),
-        memo: memoFromLedgerDraft(draft),
-        amountCents,
-        ...(draft.attachment ? { attachment: draft.attachment } : {}),
+        ...buildLedgerEntryFields(draft, amountCents, []),
       },
       ...w.ledger,
     ],
   }));
   return { ok: true, ledgerEntryId: lgId };
+}
+
+/** Updates an existing bill or payment in place (keeps id + ref). */
+function updateLedgerEntryDraft(
+  entryId: string,
+  draft: LedgerEntryDraft,
+): DailyLedgerCommitResult {
+  const w0 = getWorkspace();
+  const existing = w0.ledger.find((e) => e.id === entryId);
+  if (!existing || !canEditLedgerEntry(existing)) return { ok: false };
+
+  const kind = existing.type;
+  const effectiveDraft: LedgerEntryDraft = { ...draft, kind };
+  const supplierId = effectiveDraft.supplierId;
+  if (!supplierId) return { ok: false };
+
+  if (kind === "invoice") {
+    const total = amountCentsFromLedgerDraft(effectiveDraft);
+    if (total === null) return { ok: false };
+    const items = committedItemsFromDraft(effectiveDraft);
+    if (items === null) return { ok: false };
+    const po = linkedPurchaseForLedgerEntry(existing, w0.moves);
+    const note = effectiveDraft.notes.trim();
+    const fields = buildLedgerEntryFields(effectiveDraft, total, items);
+
+    setWorkspace((w) => ({
+      ...w,
+      moves: po
+        ? w.moves.map((m) =>
+            m.id === po.id && m.kind === "purchase"
+              ? {
+                  ...m,
+                  supplierId,
+                  date: effectiveDraft.date,
+                  amountCents: total,
+                  note,
+                  ...(items.length > 0 ? { items } : { items: undefined }),
+                }
+              : m,
+          )
+        : w.moves,
+      ledger: w.ledger.map((e) => {
+        if (e.id !== entryId) return e;
+        const next: LedgerEntry = {
+          id: e.id,
+          type: e.type,
+          ref: e.ref,
+          ...fields,
+          ...(isLedgerEntryLocked(e) ? { isLocked: true, lockedAt: e.lockedAt } : {}),
+        };
+        return next;
+      }),
+    }));
+    return { ok: true, ledgerEntryId: entryId, purchaseOrderId: po?.id };
+  }
+
+  const amountCents = amountCentsFromLedgerDraft(effectiveDraft);
+  if (amountCents === null) return { ok: false };
+  const fields = buildLedgerEntryFields(effectiveDraft, amountCents, []);
+
+  setWorkspace((w) => ({
+    ...w,
+    ledger: w.ledger.map((e) => {
+      if (e.id !== entryId) return e;
+      return {
+        id: e.id,
+        type: e.type,
+        ref: e.ref,
+        ...fields,
+        ...(isLedgerEntryLocked(e) ? { isLocked: true, lockedAt: e.lockedAt } : {}),
+      };
+    }),
+  }));
+  return { ok: true, ledgerEntryId: entryId };
+}
+
+function removeLedgerEntryById(id: string): boolean {
+  const w0 = getWorkspace();
+  const entry = w0.ledger.find((e) => e.id === id);
+  if (!entry || isLedgerEntryLocked(entry)) return false;
+  const po = linkedPurchaseForLedgerEntry(entry, w0.moves);
+  setWorkspace((w) => ({
+    ...w,
+    ledger: w.ledger.filter((e) => e.id !== id),
+    moves: po ? w.moves.filter((m) => m.id !== po.id) : w.moves,
+  }));
+  return true;
 }
 
 /** Same rules as the ledger drawer amount field — used to validate before daily save posts a line. */
@@ -2179,8 +2301,7 @@ export function validateLedgerAmountForKind(
     amount: amountStr,
     method: LEDGER_PAYMENT_METHODS[0],
     notes: "",
-    attachment: null,
-    employeeLineKind: "",
+    attachments: [],
     items: [],
   });
   if (cents !== null) return null;
@@ -2189,31 +2310,12 @@ export function validateLedgerAmountForKind(
   return "Enter a valid amount (greater than zero) for this type.";
 }
 
-/** Validates amount for a daily expense line that posts to Bills & payments (vendor + staff rules). */
+/** Validates amount for a daily expense line that posts to Bills & payments. */
 export function validateDailyExpenseLedgerAmount(params: {
   supplierId: string;
   amountStr: string;
   kind: LedgerEntry["type"];
-  employeeLineKind: "" | EmployeeLedgerLineKind;
 }): string | null {
-  const d: LedgerEntryDraft = {
-    supplierId: params.supplierId,
-    date: "2000-01-01",
-    kind: params.kind,
-    amount: params.amountStr,
-    method: LEDGER_PAYMENT_METHODS[0],
-    notes: "",
-    attachment: null,
-    employeeLineKind: params.employeeLineKind,
-    items: [],
-  };
-  if (isEmployeesBookSupplierId(params.supplierId)) {
-    if (!params.employeeLineKind) return "Select a payment type.";
-    if (!params.amountStr.trim()) return "Enter an amount for this ledger line.";
-    const cents = amountCentsFromLedgerDraft(d);
-    if (cents !== null) return null;
-    return "Enter a valid amount (greater than zero) for this payment.";
-  }
   return validateLedgerAmountForKind(params.kind, params.amountStr);
 }
 
@@ -2223,26 +2325,56 @@ export function commitLedgerFromDailyExpenseLine(params: {
   amountStr: string;
   kind: LedgerEntry["type"];
   notes: string;
-  employeeLineKind?: EmployeeLedgerLineKind;
+  attachments?: LedgerAttachment[];
+  /** When set (bills), amount is derived from item totals. */
+  items?: Array<{
+    name: string;
+    qty: number;
+    unit: string;
+    rate: number;
+  }>;
 }): DailyLedgerCommitResult {
+  const itemDrafts = (params.items ?? []).map((item) => ({
+    key: `li-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: item.name,
+    qty: String(item.qty),
+    unit: item.unit || "pcs",
+    rate: String(item.rate),
+  }));
   return commitLedgerEntryDraft({
     supplierId: params.supplierId,
     date: params.entryDateIso,
     kind: params.kind,
-    amount: params.amountStr,
+    amount: itemDrafts.length > 0 ? "" : params.amountStr,
     method: LEDGER_PAYMENT_METHODS[0],
     notes: params.notes,
-    attachment: null,
-    employeeLineKind: params.employeeLineKind ?? "",
-    items: [],
+    attachments: params.attachments ?? [],
+    items: itemDrafts,
   });
+}
+
+/** True when a daily-linked ledger row is locked and must not be replaced. */
+export function isDailyLedgerLinkLocked(link: {
+  ledgerEntryId: string;
+}): boolean {
+  const entry = getWorkspace().ledger.find((e) => e.id === link.ledgerEntryId);
+  return isLedgerEntryLocked(entry);
+}
+
+/** True when the linked cashbook row still has file attachments. */
+export function dailyLedgerLinkHasAttachments(link: {
+  ledgerEntryId: string;
+}): boolean {
+  const entry = getWorkspace().ledger.find((e) => e.id === link.ledgerEntryId);
+  return (entry?.attachments?.length ?? 0) > 0;
 }
 
 /** Removes ledger (and draft PO for bills) created from Daily Entry so edits stay in sync. */
 export function removeDailyLedgerExpenseLink(link: {
   ledgerEntryId: string;
   purchaseOrderId?: string;
-}): void {
+}): boolean {
+  if (isDailyLedgerLinkLocked(link)) return false;
   setWorkspace((w) => ({
     ...w,
     ledger: w.ledger.filter((e) => e.id !== link.ledgerEntryId),
@@ -2250,6 +2382,7 @@ export function removeDailyLedgerExpenseLink(link: {
       ? w.moves.filter((m) => m.id !== link.purchaseOrderId)
       : w.moves,
   }));
+  return true;
 }
 
 /** Centered wide modal shell for cashbook entry forms. */
@@ -2332,6 +2465,7 @@ function LedgerEntryDrawerForm({
   runningBySupplier,
   bookField,
   dateField = "editable",
+  kindField = "editable",
 }: {
   ledgerDraft: LedgerEntryDraft;
   patchLedgerDraft: (patch: Partial<LedgerEntryDraft>) => void;
@@ -2341,19 +2475,19 @@ function LedgerEntryDrawerForm({
   bookField: "select" | "readonly";
   /** Daily Entry overlay: date is the entry day and cannot be changed. */
   dateField?: "editable" | "readonly";
+  /** Edit mode: keep bill vs payment fixed. */
+  kindField?: "editable" | "readonly";
 }) {
-  const activeSupplier = ws.suppliers.find((s) => s.id === ledgerDraft.supplierId);
-  const isEmployeeBook = activeSupplier?.bookPurpose === "employees";
-
   const onBookChange = (newId: string) => {
-    const sup = ws.suppliers.find((s) => s.id === newId);
-    const emp = sup?.bookPurpose === "employees";
+    if (kindField === "readonly") {
+      patchLedgerDraft({ supplierId: newId });
+      return;
+    }
     patchLedgerDraft({
       supplierId: newId,
-      kind: emp ? "payment" : "invoice",
+      kind: "invoice",
       amount: "",
-      employeeLineKind: emp ? "salary" : "",
-      items: emp ? [] : ledgerDraft.items.length > 0 ? ledgerDraft.items : [newLedgerItemDraft()],
+      items: ledgerDraft.items.length > 0 ? ledgerDraft.items : [newLedgerItemDraft()],
     });
   };
 
@@ -2388,14 +2522,12 @@ function LedgerEntryDrawerForm({
     return any ? sum : null;
   })();
 
-  const amountLabel = isEmployeeBook ? "Amount paid (৳)" : "Amount (৳)";
+  const amountLabel = "Amount (৳)";
 
   const running = ledgerDraft.supplierId
     ? (runningBySupplier.get(ledgerDraft.supplierId) ?? 0)
     : 0;
-  const balanceDisplay = isEmployeeBook
-    ? formatMoney(running)
-    : formatMoney(Math.max(0, running));
+  const balanceDisplay = formatMoney(Math.max(0, running));
 
   const dateControl =
     dateField === "readonly" ? (
@@ -2446,114 +2578,48 @@ function LedgerEntryDrawerForm({
         )}
         {ledgerDraft.supplierId ? (
           <div className="col-span-2 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
-            <span className={purchaseLabel}>{isEmployeeBook ? "Balance" : "Owed"}</span>
+            <span className={purchaseLabel}>Owed</span>
             <p className="mt-0.5 font-mono text-[14px] font-semibold tabular-nums leading-snug text-[var(--pos-text-1)]">
               {balanceDisplay}
             </p>
-            {isEmployeeBook ? (
-              <p className="mt-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
-                + means more owed to this person · − means net paid ahead or reduced obligation
-              </p>
-            ) : null}
           </div>
         ) : null}
 
-        {isEmployeeBook ? (
-          <>
-            <label className="col-span-2 block min-w-0">
-              <span className={purchaseLabel}>Payment type</span>
-              <select
-                value={ledgerDraft.employeeLineKind}
-                onChange={(e) =>
-                  patchLedgerDraft({
-                    employeeLineKind: e.target.value as EmployeeLedgerLineKind,
-                  })
-                }
-                className={purchaseField}
-              >
-                {EMPLOYEE_LEDGER_LINE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {dateControl}
-            <>
-              <div className="min-w-0">
-                <span className={purchaseLabel}>{amountLabel}</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="any"
-                  value={ledgerDraft.amount}
-                  onChange={(e) =>
-                    patchLedgerDraft({
-                      amount: sanitizeNonNegativeDecimalInput(e.target.value),
-                    })
-                  }
-                  placeholder="0"
-                  className={`${purchaseField} font-mono placeholder:text-[var(--pos-text-2)]`}
-                />
+        <>
+            {kindField === "readonly" ? (
+              <div className="min-w-0 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
+                <span className={purchaseLabel}>Type</span>
+                <p className="mt-0.5 text-[13px] font-medium leading-snug text-[var(--pos-text-1)]">
+                  {ledgerDraftSummaryLabel(ledgerDraft)}
+                </p>
               </div>
+            ) : (
               <label className="min-w-0">
-                <span className={purchaseLabel}>Via</span>
+                <span className={purchaseLabel}>Type</span>
                 <select
-                  value={ledgerDraft.method}
-                  onChange={(e) =>
+                  value={ledgerDraft.kind}
+                  onChange={(e) => {
+                    const kind = e.target.value as LedgerEntryDrawerKind;
                     patchLedgerDraft({
-                      method: e.target.value as LedgerEntryDraft["method"],
-                    })
-                  }
+                      kind,
+                      items:
+                        kind === "invoice"
+                          ? ledgerDraft.items.length > 0
+                            ? ledgerDraft.items
+                            : [newLedgerItemDraft()]
+                          : [],
+                    });
+                  }}
                   className={purchaseField}
                 >
-                  {LEDGER_PAYMENT_METHODS.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
+                  {LEDGER_DRAWER_KINDS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>
               </label>
-            </>
-            <label className="col-span-2 block min-w-0">
-              <span className={purchaseLabel}>Memo</span>
-              <textarea
-                value={ledgerDraft.notes}
-                onChange={(e) => patchLedgerDraft({ notes: e.target.value })}
-                rows={2}
-                placeholder="Period, ref #, notes…"
-                className="mt-1 min-h-[40px] w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 py-1.5 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]"
-              />
-            </label>
-          </>
-        ) : (
-          <>
-            <label className="min-w-0">
-              <span className={purchaseLabel}>Type</span>
-              <select
-                value={ledgerDraft.kind}
-                onChange={(e) => {
-                  const kind = e.target.value as LedgerEntryDrawerKind;
-                  patchLedgerDraft({
-                    kind,
-                    items:
-                      kind === "invoice"
-                        ? ledgerDraft.items.length > 0
-                          ? ledgerDraft.items
-                          : [newLedgerItemDraft()]
-                        : [],
-                  });
-                }}
-                className={purchaseField}
-              >
-                {LEDGER_DRAWER_KINDS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            )}
             {dateControl}
             {ledgerDraft.kind === "payment" ? (
               <>
@@ -2754,15 +2820,14 @@ function LedgerEntryDrawerForm({
               />
             </label>
           </>
-        )}
       </div>
       <div className="rounded-[10px] border border-dashed border-[var(--pos-input-border)] bg-[var(--pos-page)] px-3 py-3">
         <p className={`${purchaseLabel} mb-2 font-semibold text-[var(--pos-text-1)]`}>
-          Attachment (optional)
+          Attachments (optional)
         </p>
         <LedgerEntryAttachmentField
-          attachment={ledgerDraft.attachment}
-          onChange={(next) => patchLedgerDraft({ attachment: next })}
+          attachments={ledgerDraft.attachments}
+          onChange={(next) => patchLedgerDraft({ attachments: next })}
         />
       </div>
     </div>
@@ -2773,6 +2838,9 @@ function SupplierLedgerView() {
   const ws = useWorkspace();
   const filter = ws.ledgerSupplierFilter;
   const [ledgerDrawerOpen, setLedgerDrawerOpen] = useState(false);
+  const [editingLedgerEntryId, setEditingLedgerEntryId] = useState<string | null>(null);
+  const [pendingLockEntryId, setPendingLockEntryId] = useState<string | null>(null);
+  const [pendingUnlockEntryId, setPendingUnlockEntryId] = useState<string | null>(null);
   const [ledgerDraft, setLedgerDraft] = useState<LedgerEntryDraft>(() =>
     defaultLedgerEntryDraft(""),
   );
@@ -2816,6 +2884,7 @@ function SupplierLedgerView() {
       const base = defaultLedgerEntryDraft(sid);
       setLedgerDraft({ ...base, kind: "payment" });
     }
+    setEditingLedgerEntryId(null);
     setLedgerDrawerOpen(true);
     setWorkspace((w) => ({
       ...w,
@@ -2829,9 +2898,6 @@ function SupplierLedgerView() {
     [ws.suppliers],
   );
 
-  const filterSupplier = filter ? ws.suppliers.find((s) => s.id === filter) : null;
-  const viewingEmployeeBook = filterSupplier?.bookPurpose === "employees";
-
   const entries = useMemo(() => {
     let e = ws.ledger.slice().sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
     if (filter) e = e.filter((x) => x.supplierId === filter);
@@ -2844,9 +2910,6 @@ function SupplierLedgerView() {
     if (q) {
       e = e.filter((x) => {
         const kindLabel = ledgerEntryLineLabel(x).toLowerCase();
-        const empKindQ = x.employeeLineKind
-          ? employeeLedgerLineKindLabel(x.employeeLineKind).toLowerCase()
-          : "";
         const purposeLabel = ledgerBookPurposeLabel(
           ws.suppliers.find((s) => s.id === x.supplierId)?.bookPurpose,
         ).toLowerCase();
@@ -2859,7 +2922,6 @@ function SupplierLedgerView() {
           supplierName(x.supplierId).toLowerCase().includes(q) ||
           x.type.includes(q) ||
           kindLabel.includes(q) ||
-          empKindQ.includes(q) ||
           purposeLabel.includes(q) ||
           itemNames.includes(q)
         );
@@ -2918,45 +2980,11 @@ function SupplierLedgerView() {
     let billsAddedCents = 0;
     let paidOutCents = 0;
     for (const e of entries) {
-      if (e.employeeLineKind) {
-        if (e.amountCents > 0) billsAddedCents += e.amountCents;
-        else paidOutCents += -e.amountCents;
-      } else {
-        if (e.type === "invoice") billsAddedCents += e.amountCents;
-        else if (e.type === "payment" || e.type === "return_credit") paidOutCents += -e.amountCents;
-      }
+      if (e.type === "invoice") billsAddedCents += e.amountCents;
+      else if (e.type === "payment" || e.type === "return_credit") paidOutCents += -e.amountCents;
     }
     return { billsAddedCents, paidOutCents };
   }, [entries]);
-
-  /** Aggregate item lines across the current filtered view for a quick purchase rollup. */
-  const itemsInView = useMemo(() => {
-    const byKey = new Map<
-      string,
-      { name: string; unit: string; qty: number; totalCents: number }
-    >();
-    for (const e of entries) {
-      const lines = ledgerEntryItems(e, ws.moves);
-      for (const line of lines) {
-        const key = `${line.name.trim().toLowerCase()}|${line.unit.trim().toLowerCase()}`;
-        const prev = byKey.get(key);
-        if (prev) {
-          prev.qty += line.qty;
-          prev.totalCents += line.totalCents;
-        } else {
-          byKey.set(key, {
-            name: line.name.trim(),
-            unit: line.unit,
-            qty: line.qty,
-            totalCents: line.totalCents,
-          });
-        }
-      }
-    }
-    return [...byKey.values()]
-      .sort((a, b) => b.totalCents - a.totalCents)
-      .slice(0, 8);
-  }, [entries, ws.moves]);
 
   const hasActiveLedgerFilters =
     ledgerSearchQ.trim() !== "" ||
@@ -2975,68 +3003,189 @@ function SupplierLedgerView() {
     setLedgerDraft((d) => ({ ...d, ...patch }));
   }
 
-  function openLedgerDrawer() {
+  function openLedgerDrawer(kind: "invoice" | "payment" = "invoice") {
     const initial = filter || ws.suppliers[0]?.id || "";
-    setLedgerDraft(defaultLedgerEntryDraft(initial));
+    const base = defaultLedgerEntryDraft(initial);
+    setEditingLedgerEntryId(null);
+    setLedgerDraft(kind === "payment" ? { ...base, kind: "payment" } : base);
+    setLedgerDrawerOpen(true);
+  }
+
+  function openEditLedgerEntry(entry: LedgerEntry) {
+    if (!canEditLedgerEntry(entry)) return;
+    setEditingLedgerEntryId(entry.id);
+    setLedgerDraft(draftFromLedgerEntry(entry, ws.moves));
+    setSelectedLedgerEntryId(null);
     setLedgerDrawerOpen(true);
   }
 
   function closeLedgerDrawer() {
     setLedgerDrawerOpen(false);
+    setEditingLedgerEntryId(null);
     setLedgerDraft(defaultLedgerEntryDraft(""));
   }
 
   const saveLedgerFromDrawer = useCallback(() => {
-    if (!commitLedgerEntryDraft(ledgerDraft).ok) return;
-    setLedgerDrawerOpen(false);
-    setLedgerDraft(defaultLedgerEntryDraft(""));
-  }, [ledgerDraft]);
+    const draftSnapshot = ledgerDraft;
+    const editingId = editingLedgerEntryId;
+    const result = editingId
+      ? updateLedgerEntryDraft(editingId, draftSnapshot)
+      : commitLedgerEntryDraft(draftSnapshot);
+    if (!result.ok) return;
+
+    const closeDrawer = () => {
+      setLedgerDrawerOpen(false);
+      setEditingLedgerEntryId(null);
+      setLedgerDraft(defaultLedgerEntryDraft(""));
+    };
+
+    if (draftSnapshot.kind !== "invoice") {
+      closeDrawer();
+      return;
+    }
+
+    const vendorName =
+      getWorkspace().suppliers.find((s) => s.id === draftSnapshot.supplierId)?.name?.trim() ??
+      "";
+    const committedItems = committedItemsFromDraft(draftSnapshot) ?? [];
+    const amountCents =
+      amountCentsFromLedgerDraft(draftSnapshot) ??
+      committedItems.reduce((s, i) => s + i.totalCents, 0);
+
+    void (async () => {
+      const sync = await upsertDailyPurchaseFromLedgerInvoice({
+        ledgerEntryId: result.ledgerEntryId,
+        purchaseOrderId: result.purchaseOrderId,
+        vendorName,
+        date: draftSnapshot.date,
+        notes: draftSnapshot.notes,
+        amountCents: Math.abs(amountCents),
+        items: committedItems.map((i) => ({
+          id: i.id,
+          name: i.name,
+          qty: i.qty,
+          unit: i.unit,
+          rateCents: i.rateCents,
+          totalCents: i.totalCents,
+        })),
+        attachmentRefs: draftSnapshot.attachments.map((a) => a.dataUrl),
+      });
+      if (!sync.ok) {
+        window.alert(
+          `${sync.message}\n\nThe cashbook bill was saved, but Daily Entry was not updated.`,
+        );
+      }
+      closeDrawer();
+    })();
+  }, [editingLedgerEntryId, ledgerDraft]);
 
   const removeEntry = useCallback((id: string) => {
+    const entry = getWorkspace().ledger.find((e) => e.id === id);
+    if (!entry) return;
+    if (isLedgerEntryLocked(entry)) {
+      window.alert("This entry is locked. Unlock it before removing.");
+      return;
+    }
     if (!window.confirm("Remove this line? Only do this if it was entered by mistake.")) return;
-    setWorkspace((w) => ({ ...w, ledger: w.ledger.filter((e) => e.id !== id) }));
+
+    void (async () => {
+      const unlink = await unlinkDailyExpenseLinesForLedgerEntry(id);
+      if (!unlink.ok) {
+        window.alert(unlink.message);
+        return;
+      }
+      if (!removeLedgerEntryById(id)) {
+        window.alert("Could not remove this cashbook line.");
+        return;
+      }
+      setSelectedLedgerEntryId((prev) => (prev === id ? null : prev));
+    })();
   }, []);
 
+  const confirmLockEntry = useCallback(() => {
+    if (!pendingLockEntryId) return;
+    setLedgerEntryLocked(pendingLockEntryId, true);
+    setPendingLockEntryId(null);
+  }, [pendingLockEntryId]);
+
+  const confirmUnlockEntry = useCallback(() => {
+    if (!pendingUnlockEntryId) return;
+    setLedgerEntryLocked(pendingUnlockEntryId, false);
+    setPendingUnlockEntryId(null);
+  }, [pendingUnlockEntryId]);
+
   const isLedgerSaveDisabled = isLedgerDraftSaveDisabled(ledgerDraft);
+  const canPostLedger = ws.suppliers.length > 0;
+  const isEditingEntry = Boolean(editingLedgerEntryId);
 
   return (
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
-          title={viewingEmployeeBook ? "Staff cashbook" : "Bills & Payments"}
-          subtitle={
-            viewingEmployeeBook
-              ? "Record salary, service charge, bonus, and overtime — not vendor bills."
-              : "Add a bill with one amount and a note, record payments and credits, and filter by book for balance."
-          }
+          title="Bills & payments"
+          subtitle="Post bills, payments, and credits. Filter by book to see running balance."
         />
-        <button
-          type="button"
-          onClick={openLedgerDrawer}
-          disabled={ws.suppliers.length === 0}
-          className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-[10px] px-4 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
-          style={{ backgroundColor: "var(--pos-sb-base)" }}
-        >
-          <Plus className="size-4" strokeWidth={2.2} />
-          {viewingEmployeeBook ? "Add line" : "Add entry"}
-        </button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <GhostButton
+            variant="bill"
+            disabled={!canPostLedger}
+            onClick={() => openLedgerDrawer("invoice")}
+          >
+            <span className="inline-flex items-center gap-1">
+              <Receipt className="size-3.5" strokeWidth={2} />
+              Bill
+            </span>
+          </GhostButton>
+          <GhostButton
+            variant="pay"
+            disabled={!canPostLedger}
+            onClick={() => openLedgerDrawer("payment")}
+          >
+            <span className="inline-flex items-center gap-1">
+              <Banknote className="size-3.5" strokeWidth={2} />
+              Pay
+            </span>
+          </GhostButton>
+        </div>
       </div>
 
       {ws.suppliers.length === 0 ? (
         <div className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-3">
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            Add a cashbook first - vendor, owner, or employee - then record bills and
-            payments here.
+            Add a cashbook first — vendor or owner — then record bills and payments here.
           </p>
           <button
             type="button"
             onClick={() => selectLedgerTab("books")}
             className="mt-2 text-[12px] font-semibold text-[var(--pos-text-1)] underline-offset-2 hover:underline"
           >
-            Go to Cashbooks
+            Go to Books
           </button>
         </div>
       ) : null}
+
+      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
+        <div className={`${purchaseStatCell} min-w-[140px] flex-1`}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">
+            {filter ? "Balance" : "Payable (all)"}
+          </div>
+          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+            {formatMoneyWholeTaka(dueCents)}
+          </div>
+        </div>
+        <div className={`${purchaseStatCell} min-w-[120px] flex-1`}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Bills (view)</div>
+          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+            {formatMoneyWholeTaka(ledgerEntriesViewStats.billsAddedCents)}
+          </div>
+        </div>
+        <div className={`${purchaseStatCell} min-w-[120px] flex-1`}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Paid (view)</div>
+          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+            {formatMoneyWholeTaka(ledgerEntriesViewStats.paidOutCents)}
+          </div>
+        </div>
+      </div>
 
       <div className={`${purchaseFilters} items-end`}>
         <label className="block min-w-0 flex-1 sm:max-w-md">
@@ -3123,75 +3272,15 @@ function SupplierLedgerView() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
-        <div className={`${purchaseStatCell} min-w-[140px] flex-1`}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">
-            {filter ? "Balance" : "Payable (all)"}
-          </div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-            {formatMoneyWholeTaka(dueCents)}
-          </div>
-        </div>
-        <div className={`${purchaseStatCell} min-w-[120px] flex-1`}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">
-            {viewingEmployeeBook ? "Owed (+) (view)" : "Bills (view)"}
-          </div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-            {formatMoneyWholeTaka(ledgerEntriesViewStats.billsAddedCents)}
-          </div>
-        </div>
-        <div className={`${purchaseStatCell} min-w-[120px] flex-1`}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">
-            {viewingEmployeeBook ? "Paid out (view)" : "Paid (view)"}
-          </div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-            {formatMoneyWholeTaka(ledgerEntriesViewStats.paidOutCents)}
-          </div>
-        </div>
-      </div>
-
-      {!viewingEmployeeBook && itemsInView.length > 0 ? (
-        <div className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
-          <div className="mb-2 flex items-baseline justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]">
-              Items in view
-            </p>
-            <p className="text-[10px] text-[var(--pos-text-2)]">
-              Top {itemsInView.length} by spend · click a bill for full lines
-            </p>
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-0.5">
-            {itemsInView.map((row) => (
-              <div
-                key={`${row.name}|${row.unit}`}
-                className="min-w-[140px] shrink-0 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2"
-              >
-                <p className="truncate text-[12px] font-medium text-[var(--pos-text-1)]" title={row.name}>
-                  {row.name}
-                </p>
-                <p className="mt-0.5 text-[11px] tabular-nums text-[var(--pos-text-2)]">
-                  {row.qty} {row.unit}
-                </p>
-                <p className="mt-1 font-mono text-[12px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-                  {formatMoney(row.totalCents)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[720px] border-collapse text-[12px]">
           <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
             <tr className="border-b border-solid [border-color:var(--pos-divider)]">
               <th className={purchaseTh}>Date</th>
               <th className={purchaseTh}>Cashbook</th>
-              <th className={purchaseTh}>{viewingEmployeeBook ? "Line" : "Type"}</th>
+              <th className={purchaseTh}>Type</th>
               <th className={purchaseTh}>Details</th>
-              <th className={`${purchaseTh} text-right`}>
-                {viewingEmployeeBook ? "Amount" : "Due"}
-              </th>
+              <th className={`${purchaseTh} text-right`}>Due</th>
               {filter ? (
                 <th className={`${purchaseTh} text-right`}>Balance after</th>
               ) : null}
@@ -3206,9 +3295,9 @@ function SupplierLedgerView() {
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
                   {ws.suppliers.length === 0
-                    ? "No cashbooks yet - open Cashbooks and add one to start posting bills and payments."
+                    ? "No cashbooks yet — switch to Books and add one to start posting bills and payments."
                     : ws.ledger.length === 0
-                      ? "No activity yet. Use Add entry to post a bill or payment."
+                      ? "No activity yet. Use Bill or Pay to post an entry."
                       : "No entries match your filters - adjust search, cashbook, type, or dates."}
                 </td>
               </tr>
@@ -3242,8 +3331,23 @@ function SupplierLedgerView() {
                       {supplierName(e.supplierId)}
                     </td>
                     <td className="px-4 py-2">
-                      <span className="inline-flex rounded-full bg-[var(--pos-nav-hover)]/50 px-2 py-0.5 text-[10px] font-semibold text-[var(--pos-text-2)]">
-                        {ledgerEntryLineLabel(e)}
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex rounded-full bg-[var(--pos-nav-hover)]/50 px-2 py-0.5 text-[10px] font-semibold text-[var(--pos-text-2)]">
+                          {ledgerEntryLineLabel(e)}
+                        </span>
+                        {isLedgerEntryLocked(e) ? (
+                          <span
+                            className="inline-flex items-center gap-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800"
+                            title={
+                              e.lockedAt
+                                ? `Locked ${formatLedgerDateReadonly(e.lockedAt.slice(0, 10))}`
+                                : "Locked"
+                            }
+                          >
+                            <Lock className="size-2.5" strokeWidth={2.5} aria-hidden />
+                            Locked
+                          </span>
+                        ) : null}
                       </span>
                     </td>
                     <td
@@ -3277,9 +3381,37 @@ function SupplierLedgerView() {
                       onClick={(ev) => ev.stopPropagation()}
                       onKeyDown={(ev) => ev.stopPropagation()}
                     >
-                      <DangerGhostButton onClick={() => removeEntry(e.id)}>
-                        Remove
-                      </DangerGhostButton>
+                      <div className="inline-flex flex-wrap items-center justify-end gap-1">
+                        {canEditLedgerEntry(e) ? (
+                          <GhostButton onClick={() => openEditLedgerEntry(e)}>
+                            <span className="inline-flex items-center gap-1">
+                              <Pencil className="size-3" strokeWidth={2} aria-hidden />
+                              Edit
+                            </span>
+                          </GhostButton>
+                        ) : null}
+                        {isLedgerEntryLocked(e) ? (
+                          <GhostButton onClick={() => setPendingUnlockEntryId(e.id)}>
+                            <span className="inline-flex items-center gap-1">
+                              <LockOpen className="size-3" strokeWidth={2} aria-hidden />
+                              Unlock
+                            </span>
+                          </GhostButton>
+                        ) : (
+                          <GhostButton onClick={() => setPendingLockEntryId(e.id)}>
+                            <span className="inline-flex items-center gap-1">
+                              <Lock className="size-3" strokeWidth={2} aria-hidden />
+                              Lock
+                            </span>
+                          </GhostButton>
+                        )}
+                        <DangerGhostButton
+                          disabled={isLedgerEntryLocked(e)}
+                          onClick={() => removeEntry(e.id)}
+                        >
+                          Remove
+                        </DangerGhostButton>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -3293,9 +3425,50 @@ function SupplierLedgerView() {
         <LedgerDetailSlideOver
           title={ledgerEntryLineLabel(selectedLedgerEntry)}
           subtitle={
-            <p className="font-mono text-[12px] text-[var(--pos-text-1)]">
-              {selectedLedgerEntry.ref}
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-mono text-[12px] text-[var(--pos-text-1)]">
+                {selectedLedgerEntry.ref}
+              </p>
+              {isLedgerEntryLocked(selectedLedgerEntry) ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                  <Lock className="size-3" strokeWidth={2.5} aria-hidden />
+                  Locked
+                </span>
+              ) : null}
+            </div>
+          }
+          actions={
+            <>
+              {canEditLedgerEntry(selectedLedgerEntry) ? (
+                <GhostButton onClick={() => openEditLedgerEntry(selectedLedgerEntry)}>
+                  <span className="inline-flex items-center gap-1">
+                    <Pencil className="size-3.5" strokeWidth={2} aria-hidden />
+                    Edit
+                  </span>
+                </GhostButton>
+              ) : null}
+              {isLedgerEntryLocked(selectedLedgerEntry) ? (
+                <GhostButton onClick={() => setPendingUnlockEntryId(selectedLedgerEntry.id)}>
+                  <span className="inline-flex items-center gap-1">
+                    <LockOpen className="size-3.5" strokeWidth={2} aria-hidden />
+                    Unlock
+                  </span>
+                </GhostButton>
+              ) : (
+                <GhostButton onClick={() => setPendingLockEntryId(selectedLedgerEntry.id)}>
+                  <span className="inline-flex items-center gap-1">
+                    <Lock className="size-3.5" strokeWidth={2} aria-hidden />
+                    Lock
+                  </span>
+                </GhostButton>
+              )}
+              <DangerGhostButton
+                disabled={isLedgerEntryLocked(selectedLedgerEntry)}
+                onClick={() => removeEntry(selectedLedgerEntry.id)}
+              >
+                Remove
+              </DangerGhostButton>
+            </>
           }
           onClose={() => setSelectedLedgerEntryId(null)}
         >
@@ -3309,16 +3482,13 @@ function SupplierLedgerView() {
 
       {ledgerDrawerOpen ? (
         <LedgerDrawerFrame
-          title={
-            ledgerDraft.supplierId && isEmployeesBookSupplierId(ledgerDraft.supplierId)
-              ? "Add staff cashbook line"
-              : "Cashboarrd Entry"
-          }
+          title={isEditingEntry ? "Edit cashbook entry" : "Cashbook Entry"}
           titleId="ledger-entry-drawer-title"
           subtitle={
             ledgerDraft.supplierId ? (
               <p className="text-[11px] text-[var(--pos-text-2)]">
                 {supplierName(ledgerDraft.supplierId)} · {ledgerDraftSummaryLabel(ledgerDraft)}
+                {isEditingEntry ? " · editing" : ""}
               </p>
             ) : (
               <p className="text-[11px] text-[var(--pos-text-2)]">
@@ -3343,7 +3513,7 @@ function SupplierLedgerView() {
                 style={{ backgroundColor: "var(--pos-sb-base)" }}
                 disabled={isLedgerSaveDisabled}
               >
-                Save
+                {isEditingEntry ? "Save changes" : "Save"}
               </button>
             </div>
           }
@@ -3356,8 +3526,93 @@ function SupplierLedgerView() {
             runningBySupplier={runningBySupplier}
             bookField="select"
             dateField="editable"
+            kindField={isEditingEntry ? "readonly" : "editable"}
           />
         </LedgerDrawerFrame>
+      ) : null}
+
+      {pendingLockEntryId ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lock-ledger-entry-title"
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => setPendingLockEntryId(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="lock-ledger-entry-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Lock this entry?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Locked bills and payments cannot be edited or removed until unlocked.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={() => setPendingLockEntryId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/55 bg-amber-500/90 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 sm:flex-none"
+                onClick={confirmLockEntry}
+              >
+                <Lock className="size-3.5" strokeWidth={2.25} aria-hidden />
+                Lock
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingUnlockEntryId ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="unlock-ledger-entry-title"
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => setPendingUnlockEntryId(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="unlock-ledger-entry-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Unlock this entry?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              You will be able to edit or remove this bill or payment again.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={() => setPendingUnlockEntryId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/55 bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 sm:flex-none"
+                onClick={confirmUnlockEntry}
+              >
+                <LockOpen className="size-3.5" strokeWidth={2.25} aria-hidden />
+                Unlock
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -3399,7 +3654,6 @@ function PurchasedItemsView() {
     for (const entry of ws.ledger) {
       if (entry.type !== "invoice") continue;
       const supplier = ws.suppliers.find((s) => s.id === entry.supplierId);
-      if (supplier && supplier.bookPurpose === "employees") continue;
       const items = ledgerEntryItems(entry, ws.moves);
       if (items.length === 0) continue;
       const supplierName = supplier?.name ?? entry.supplierId;
@@ -3750,8 +4004,50 @@ function PurchasedItemsView() {
   );
 }
 
+function CashbooksPanelTabs({
+  panel,
+  onChange,
+}: {
+  panel: CashbooksPanel;
+  onChange: (panel: CashbooksPanel) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Cashbooks sections"
+      className="flex shrink-0 gap-1 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-1"
+    >
+      {CASHBOOKS_PANEL_OPTIONS.map((opt) => {
+        const active = panel === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(opt.value)}
+            className={[
+              "h-8 flex-1 cursor-pointer rounded-[8px] px-3 text-[12px] font-medium transition-colors sm:flex-none sm:px-4",
+              active
+                ? "bg-[var(--pos-card)] font-semibold text-[var(--pos-text-1)] shadow-sm"
+                : "text-[var(--pos-text-2)] hover:text-[var(--pos-text-1)]",
+            ].join(" ")}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function LedgerModuleView({ leafId }: { leafId: string }) {
-  const tab = ledgerTabFromLeafId(leafId);
+  const panel = useSyncExternalStore(
+    subscribeCashbooksPanel,
+    getCashbooksPanel,
+    getCashbooksPanel,
+  );
+  const showItems = isItemsLedgerLeaf(leafId);
   const ledgerLoad = useSyncExternalStore(
     subscribeWorkspace,
     getLedgerWorkspaceLoadState,
@@ -3761,6 +4057,13 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
   useEffect(() => {
     void loadLedgerWorkspace();
   }, []);
+
+  useEffect(() => {
+    if (leafId === "lm-ledger") setCashbooksPanel("bills");
+    else if (leafId === "lm-management" || leafId === "lm-suppliers") {
+      setCashbooksPanel("books");
+    }
+  }, [leafId]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
@@ -3772,11 +4075,14 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
           {ledgerLoad.error}
         </p>
       ) : null}
+      {!showItems ? (
+        <CashbooksPanelTabs panel={panel} onChange={setCashbooksPanel} />
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {tab === "books" ? (
-          <SupplierListView />
-        ) : tab === "items" ? (
+        {showItems ? (
           <PurchasedItemsView />
+        ) : panel === "books" ? (
+          <SupplierListView />
         ) : (
           <SupplierLedgerView />
         )}

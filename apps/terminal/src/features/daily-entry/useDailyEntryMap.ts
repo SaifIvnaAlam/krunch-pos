@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { loadDailyEntryMap } from "./dailyEntryRepository";
+import { invalidateDailyEntryMapCache, loadDailyEntryMap } from "./dailyEntryRepository";
+import { DAILY_ENTRY_STORAGE_UPDATE_EVENT } from "./localDailyEntryStorage";
 import type { DailyEntryMap } from "./types";
 
 export function useDailyEntryMap() {
@@ -10,7 +11,8 @@ export function useDailyEntryMap() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const next = await loadDailyEntryMap();
+      invalidateDailyEntryMapCache();
+      const next = await loadDailyEntryMap({ force: true });
       setMap(next);
       setError(null);
     } catch (e) {
@@ -22,6 +24,16 @@ export function useDailyEntryMap() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const onExternalUpdate = () => {
+      void refresh();
+    };
+    window.addEventListener(DAILY_ENTRY_STORAGE_UPDATE_EVENT, onExternalUpdate);
+    return () => {
+      window.removeEventListener(DAILY_ENTRY_STORAGE_UPDATE_EVENT, onExternalUpdate);
+    };
   }, [refresh]);
 
   return { map, loading, error, refresh };

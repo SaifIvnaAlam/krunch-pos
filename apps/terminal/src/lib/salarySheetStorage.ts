@@ -9,11 +9,7 @@ import {
 } from "./employeeDirectoryStorage";
 import { getEmployeeDirectoryLoadState } from "@/features/employees/employeeDirectoryStore";
 
-export type SalaryPaymentEmployeeLineKind =
-  | "salary"
-  | "service_charge"
-  | "bonus"
-  | "overtime";
+export type SalaryPaymentEmployeeLineKind = "payout" | "advance";
 
 export type SalaryPayment = {
   id: string;
@@ -53,7 +49,17 @@ export type SalarySheetDoc = {
   periodLabel: string;
   rows: SalarySheetRow[];
   updatedAt: string;
+  /** Total SC pool amount entered for this month (whole BDT). */
+  serviceChargePool?: number;
+  /** When true, accrual fields on this month cannot be edited. */
+  isLocked?: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
 };
+
+export function isSalarySheetLocked(doc: SalarySheetDoc | undefined): boolean {
+  return Boolean(doc?.isLocked);
+}
 
 /** `YYYY-MM` → one salary sheet. */
 export type SalarySheetBundle = {
@@ -96,6 +102,15 @@ export function totalPayableForRow(r: SalarySheetRow): number {
 export function sumPaymentsForRow(r: SalarySheetRow): number {
   if (!Array.isArray(r.payments)) return 0;
   return r.payments.reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0);
+}
+
+export function stillOwedForRow(r: SalarySheetRow): number {
+  return Math.max(0, totalPayableForRow(r) - sumPaymentsForRow(r));
+}
+
+/** Paid ahead of earned salary for the month (whole BDT). */
+export function advanceBalanceForRow(r: SalarySheetRow): number {
+  return Math.max(0, sumPaymentsForRow(r) - totalPayableForRow(r));
 }
 
 export function isSalaryPaymentPosted(p: SalaryPayment): boolean {
@@ -196,27 +211,47 @@ export function createSalaryPayment(amount: number, date: string, note?: string)
   };
 }
 
-/** Split `pool` across rows with pct > 0, proportional to pct; whole units; ties broken by row order. */
+/** Sum of SC % values on rows that have a positive weight. */
+export function serviceChargeWeightSum(rows: SalarySheetRow[]): number {
+  return rows.reduce(
+    (s, r) => s + (r.pct != null && r.pct > 0 ? r.pct : 0),
+    0,
+  );
+}
+
+/** Total BDT that should be distributed: each row gets pool × (SC % ÷ 100). */
+export function serviceChargePoolTargetTotal(rows: SalarySheetRow[], pool: number): number {
+  if (pool <= 0 || !Number.isFinite(pool)) return 0;
+  return Math.round(
+    rows
+      .filter((r) => r.pct != null && r.pct > 0)
+      .reduce((s, r) => s + (pool * (r.pct as number)) / 100, 0),
+  );
+}
+
+/**
+ * Split `pool` by each row's SC % of the pool (10% → 10% of pool, not normalized weights).
+ * Whole BDT units; fractional remainders assigned by largest fractional part first.
+ */
 export function distributeServiceChargePool(
   rows: SalarySheetRow[],
   pool: number,
 ): Map<string, number> {
   const out = new Map<string, number>();
-  if (pool < 0 || !Number.isFinite(pool)) return out;
+  if (pool <= 0 || !Number.isFinite(pool)) return out;
 
   const elig = rows.filter((r) => r.pct != null && r.pct > 0);
-  const wsum = elig.reduce((s, r) => s + (r.pct as number), 0);
-  if (wsum <= 0) return out;
+  if (elig.length === 0) return out;
 
   type Part = { id: string; floor: number; frac: number };
   const parts: Part[] = elig.map((r) => {
-    const exact = (pool * (r.pct as number)) / wsum;
+    const exact = (pool * (r.pct as number)) / 100;
     const floor = Math.floor(exact);
     return { id: r.id, floor, frac: exact - floor };
   });
 
   let assigned = parts.reduce((s, p) => s + p.floor, 0);
-  let remainder = Math.round(pool) - assigned;
+  let remainder = serviceChargePoolTargetTotal(rows, pool) - assigned;
   const order = [...parts.entries()].sort((a, b) => b[1].frac - a[1].frac || a[0] - b[0]);
 
   for (let j = 0; j < order.length && remainder > 0; j++) {
@@ -263,6 +298,7 @@ export function syncDocRowsToEmployees(
   doc: SalarySheetDoc,
   employees: Employee[],
 ): SalarySheetDoc {
+  if (doc.isLocked) return doc;
   const active = employees.filter((e) => e.active);
   if (active.length === 0) return doc;
 
@@ -402,11 +438,12 @@ function coercePayment(raw: unknown): SalaryPayment | null {
       : undefined;
   const kindRaw = p.postedEmployeeLineKind;
   const postedEmployeeLineKind =
+    kindRaw === "payout" ||
     kindRaw === "salary" ||
     kindRaw === "service_charge" ||
     kindRaw === "bonus" ||
     kindRaw === "overtime"
-      ? kindRaw
+      ? ("payout" as const)
       : undefined;
   return {
     id,
@@ -511,10 +548,28 @@ function coerceSalarySheetDoc(
 
   const updatedAt =
     typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString();
+  const isLocked = parsed.isLocked === true;
+  const lockedAt =
+    typeof parsed.lockedAt === "string" && parsed.lockedAt.trim()
+      ? parsed.lockedAt.trim()
+      : undefined;
+  const lockedBy =
+    typeof parsed.lockedBy === "string" && parsed.lockedBy.trim()
+      ? parsed.lockedBy.trim()
+      : undefined;
+  const poolRaw = parsed.serviceChargePool;
+  const serviceChargePool =
+    typeof poolRaw === "number" && Number.isFinite(poolRaw) && poolRaw > 0
+      ? Math.round(poolRaw)
+      : undefined;
   return {
     periodLabel: periodLabel || "Pay period",
     rows,
     updatedAt,
+    ...(serviceChargePool != null ? { serviceChargePool } : {}),
+    ...(isLocked ? { isLocked: true } : {}),
+    ...(lockedAt ? { lockedAt } : {}),
+    ...(lockedBy ? { lockedBy } : {}),
   };
 }
 

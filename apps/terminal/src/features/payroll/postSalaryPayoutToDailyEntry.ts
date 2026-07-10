@@ -4,26 +4,21 @@ import {
   expenseTotalFromExpenseLines,
 } from "@/features/daily-entry/calculations";
 import { loadDailyEntryMap, saveDailyEntry } from "@/features/daily-entry/dailyEntryRepository";
-import type { DailyEntryRow, ExpenseLineSaved } from "@/features/daily-entry/types";
-import { flushLedgerWorkspacePersist, loadLedgerWorkspace } from "@/features/ledger";
-import {
-  commitLedgerFromDailyExpenseLine,
-  employeeLedgerBookName,
-  resolveLedgerSupplierIdByBookName,
-  upsertEmployeeLedgerBook,
-  type EmployeeLedgerLineKind,
-} from "../../components/pos/LedgerModuleView";
+import type { DailyEntryMap, DailyEntryRow, ExpenseLineSaved } from "@/features/daily-entry/types";
 import {
   isSalaryPaymentPosted,
   type SalaryPayment,
 } from "../../lib/salarySheetStorage";
+import type { StaffLineKind } from "./staffLineKinds";
 
 export type PostSalaryPayoutParams = {
+  employeeId: string;
   employeeName: string;
-  employeePhone?: string;
   payment: SalaryPayment;
-  employeeLineKind: EmployeeLedgerLineKind;
+  staffLineKind: StaffLineKind;
   enteredBy?: string;
+  /** When provided, skips a network fetch of all daily entries. */
+  dailyMap?: DailyEntryMap;
 };
 
 export type PostSalaryPayoutResult =
@@ -61,38 +56,39 @@ function emptyDailyEntryRow(
 }
 
 function buildStaffExpenseLine(params: {
-  bookName: string;
   payment: SalaryPayment;
+  employeeId: string;
   employeeName: string;
-  employeeLineKind: EmployeeLedgerLineKind;
+  staffLineKind: StaffLineKind;
   lineId: string;
-  ledgerEntryId: string;
-  purchaseOrderId?: string;
 }): ExpenseLineSaved {
+  const name = params.employeeName.trim() || "Staff";
+  const isAdvance = params.staffLineKind === "advance";
   const note =
-    params.payment.note?.trim() || `Salary payout · ${params.employeeName.trim() || "Staff"}`;
+    params.payment.note?.trim() ||
+    (isAdvance ? `Salary advance · ${name}` : `Salary payout · ${name}`);
   return {
-    kind: "vendor",
-    vendor: params.bookName,
+    kind: "staff",
+    employeeId: params.employeeId,
+    employeeName: name,
+    staffLineKind: params.staffLineKind,
     amount: params.payment.amount,
     lineId: params.lineId,
-    ledgerKind: "payment",
-    ledgerEmployeeLineKind: params.employeeLineKind,
-    ledgerNote: note,
+    note,
     salaryPaymentId: params.payment.id,
-    ledgerLink: {
-      ledgerEntryId: params.ledgerEntryId,
-      ...(params.purchaseOrderId ? { purchaseOrderId: params.purchaseOrderId } : {}),
-    },
   };
 }
 
-/** Posts one salary-register payout to Daily Entry (expenses + staff cashbook). */
+/** Posts one salary-register payout to Daily Entry expenses (no cashbook). */
 export async function postSalaryPayoutToDailyEntry(
   params: PostSalaryPayoutParams,
 ): Promise<PostSalaryPayoutResult> {
-  const { employeeName, payment, employeeLineKind } = params;
+  const { employeeId, employeeName, payment, staffLineKind } = params;
   const name = employeeName.trim();
+  const empId = employeeId.trim();
+  if (!empId) {
+    return { ok: false, message: "Employee is required to post a payout." };
+  }
   if (!name) {
     return { ok: false, message: "Employee name is required to post a payout." };
   }
@@ -103,18 +99,7 @@ export async function postSalaryPayoutToDailyEntry(
     return { ok: false, message: "This payout is already posted to daily books." };
   }
 
-  await loadLedgerWorkspace();
-  upsertEmployeeLedgerBook({ name, phone: params.employeePhone });
-  const bookName = employeeLedgerBookName(name);
-  const supplierId = resolveLedgerSupplierIdByBookName(bookName);
-  if (!supplierId) {
-    return {
-      ok: false,
-      message: `Could not find cashbook “${bookName}”. Create it in Employee Management.`,
-    };
-  }
-
-  const map = await loadDailyEntryMap();
+  const map = params.dailyMap ?? (await loadDailyEntryMap());
   const dateKey = payment.date;
   const prior = map[dateKey];
   if (prior?.isLocked) {
@@ -126,32 +111,13 @@ export async function postSalaryPayoutToDailyEntry(
 
   const enteredBy = params.enteredBy?.trim() || prior?.enteredBy?.trim() || "Unknown";
   const lineId = newExpenseLineId();
-  const ledgerNote =
-    payment.note?.trim() || `Salary payout · ${name}`;
-
-  const ledgerRes = commitLedgerFromDailyExpenseLine({
-    supplierId,
-    entryDateIso: dateKey,
-    amountStr: String(payment.amount),
-    kind: "payment",
-    notes: ledgerNote,
-    employeeLineKind,
-  });
-  if (!ledgerRes.ok) {
-    return {
-      ok: false,
-      message: "Could not post to the staff cashbook — check the amount and cashbook.",
-    };
-  }
 
   const expenseLine = buildStaffExpenseLine({
-    bookName,
     payment,
+    employeeId: empId,
     employeeName: name,
-    employeeLineKind,
+    staffLineKind,
     lineId,
-    ledgerEntryId: ledgerRes.ledgerEntryId,
-    purchaseOrderId: ledgerRes.purchaseOrderId,
   });
 
   let nextRow: DailyEntryRow;
@@ -172,13 +138,6 @@ export async function postSalaryPayoutToDailyEntry(
   nextRow.expenses = expenseTotalFromExpenseLines(nextRow.expenseLines);
   nextRow.remainingBalance = computeRemainingBalanceForRow(nextRow);
 
-  try {
-    await flushLedgerWorkspacePersist();
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Could not save ledger workspace.";
-    return { ok: false, message };
-  }
-
   const saveRes = await saveDailyEntry(nextRow);
   if (!saveRes.ok) {
     return { ok: false, message: saveRes.message };
@@ -188,7 +147,7 @@ export async function postSalaryPayoutToDailyEntry(
     ...payment,
     dailyEntryLineId: lineId,
     dailyEntryDate: dateKey,
-    postedEmployeeLineKind: employeeLineKind,
+    postedEmployeeLineKind: staffLineKind === "advance" ? "advance" : "payout",
   };
 
   return { ok: true, payment: updatedPayment, dailyEntryDate: dateKey };

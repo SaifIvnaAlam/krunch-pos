@@ -15,14 +15,50 @@ export function rowsToMap(rows: DailyEntryRow[]): DailyEntryMap {
   return map;
 }
 
-export async function loadDailyEntryMap(): Promise<DailyEntryMap> {
-  const rows = await fetchDailyEntriesFromApi();
-  return rowsToMap(rows);
+let cachedMap: DailyEntryMap | null = null;
+let loadPromise: Promise<DailyEntryMap> | null = null;
+
+export function getCachedDailyEntryMap(): DailyEntryMap | null {
+  return cachedMap;
+}
+
+export function invalidateDailyEntryMapCache(): void {
+  cachedMap = null;
+  loadPromise = null;
+}
+
+export function patchDailyEntryMapCache(row: DailyEntryRow): void {
+  cachedMap = { ...(cachedMap ?? {}), [row.date]: row };
+}
+
+function removeDailyEntryFromCache(date: string): void {
+  if (!cachedMap) return;
+  const next = { ...cachedMap };
+  delete next[date];
+  cachedMap = next;
+}
+
+export async function loadDailyEntryMap(options?: { force?: boolean }): Promise<DailyEntryMap> {
+  if (!options?.force && cachedMap) return cachedMap;
+  if (!options?.force && loadPromise) return loadPromise;
+
+  loadPromise = (async () => {
+    const rows = await fetchDailyEntriesFromApi();
+    cachedMap = rowsToMap(rows);
+    return cachedMap;
+  })();
+
+  try {
+    return await loadPromise;
+  } finally {
+    loadPromise = null;
+  }
 }
 
 export async function saveDailyEntry(row: DailyEntryRow): Promise<PersistResult> {
   try {
-    await upsertDailyEntryOnApi(row);
+    const saved = await upsertDailyEntryOnApi(row);
+    patchDailyEntryMapCache(saved);
     return { ok: true };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Could not save daily entry.";
@@ -33,6 +69,7 @@ export async function saveDailyEntry(row: DailyEntryRow): Promise<PersistResult>
 export async function deleteDailyEntry(date: string): Promise<PersistResult> {
   try {
     await deleteDailyEntryOnApi(date);
+    removeDailyEntryFromCache(date);
     return { ok: true };
   } catch (e) {
     const message =
@@ -46,7 +83,8 @@ export async function lockDailyEntry(
   lockedBy?: string,
 ): Promise<PersistResult> {
   try {
-    await lockDailyEntryOnApi(date, lockedBy);
+    const row = await lockDailyEntryOnApi(date, lockedBy);
+    patchDailyEntryMapCache(row);
     return { ok: true };
   } catch (e) {
     const message =
@@ -60,7 +98,8 @@ export async function unlockDailyEntry(
   unlockedBy?: string,
 ): Promise<PersistResult> {
   try {
-    await unlockDailyEntryOnApi(date, unlockedBy);
+    const row = await unlockDailyEntryOnApi(date, unlockedBy);
+    patchDailyEntryMapCache(row);
     return { ok: true };
   } catch (e) {
     const message =

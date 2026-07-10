@@ -7,8 +7,10 @@ import {
 } from "@/features/employees/employeeDirectoryStore";
 import {
   newEmployeeRecordId,
+  normalizeEmployeeEmail,
   normalizeEmployeeMoney,
   normalizeEmployeePct,
+  isValidEmployeeEmail,
   type Employee,
 } from "./employeeDirectoryModel";
 
@@ -60,6 +62,7 @@ export function mergeRosterNames(names: string[]): void {
       name,
       role: "",
       phone: "",
+      email: "",
       defaultBasicSalary: 0,
       serviceChargePct: null,
       active: true,
@@ -80,11 +83,16 @@ export function addEmployee(
   if (snapshot.some((e) => e.name.trim().toLowerCase() === name.toLowerCase())) {
     return { ok: false, message: "An employee with this name already exists." };
   }
+  const email = normalizeEmployeeEmail(input.email);
+  if (!isValidEmployeeEmail(email)) {
+    return { ok: false, message: "Enter a valid email address or leave blank." };
+  }
   const employee: Employee = {
     id: newEmployeeRecordId(),
     name,
     role: input.role.trim(),
     phone: input.phone.trim(),
+    email,
     defaultBasicSalary: normalizeEmployeeMoney(input.defaultBasicSalary),
     serviceChargePct: normalizeEmployeePct(input.serviceChargePct),
     active: input.active !== false,
@@ -113,6 +121,12 @@ export function updateEmployee(
     return { ok: false, message: "Another employee already uses this name." };
   }
 
+  const email =
+    patch.email !== undefined ? normalizeEmployeeEmail(patch.email) : cur.email;
+  if (!isValidEmployeeEmail(email)) {
+    return { ok: false, message: "Enter a valid email address or leave blank." };
+  }
+
   const employee: Employee = {
     ...cur,
     ...patch,
@@ -120,6 +134,7 @@ export function updateEmployee(
     name,
     role: patch.role !== undefined ? patch.role.trim() : cur.role,
     phone: patch.phone !== undefined ? patch.phone.trim() : cur.phone,
+    email,
     defaultBasicSalary:
       patch.defaultBasicSalary !== undefined
         ? normalizeEmployeeMoney(patch.defaultBasicSalary)
@@ -149,7 +164,6 @@ export function removeEmployee(id: string): { ok: true } | { ok: false; message:
   const snapshot = getSnapshot();
   const list = snapshot.filter((e) => e.id !== id);
   if (list.length === snapshot.length) return { ok: false, message: "Employee not found." };
-  if (list.length === 0) return { ok: false, message: "Keep at least one employee on the list." };
   replaceEmployeeDirectorySnapshot(list);
   return { ok: true };
 }

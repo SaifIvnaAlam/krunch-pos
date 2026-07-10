@@ -36,22 +36,22 @@ import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
 import {
   commitLedgerFromDailyExpenseLine,
-  EMPLOYEE_LEDGER_LINE_OPTIONS,
   getLedgerBookNamesSnapshot,
-  isEmployeesLedgerSupplierId,
-  LEDGER_DRAWER_KINDS,
+  isDailyLedgerLinkLocked,
   removeDailyLedgerExpenseLink,
   resolveLedgerSupplierIdByBookName,
   subscribeLedgerWorkspace,
   validateDailyExpenseLedgerAmount,
-  type EmployeeLedgerLineKind,
+  openCashbooksPanel,
 } from "./LedgerModuleView";
+import type { LedgerAttachment } from "@/features/ledger";
 import {
   bankNetAfterWithdrawals,
   bankSaleNetAfterServiceCharge,
   bankSaleServiceChargeAmount,
   carriedOpeningBalanceForDate,
   deleteDailyEntry,
+  expenseTotalFromExpenseLines,
   listDailyEntriesDescendingFromMap,
   lockDailyEntry,
   roundTaka,
@@ -64,27 +64,112 @@ import {
   type DailyEntryRow,
   type ExpenseLineSaved,
 } from "@/features/daily-entry";
+import {
+  employeeIdFromSavedStaffLine,
+  isLegacyStaffVendorLine,
+  isStaffFineExpenseLine,
+  staffExpenseLineNote,
+  staffExpenseLineTitle,
+  staffLineKindFromSaved,
+} from "@/features/daily-entry/staffExpenseLine";
+import {
+  getSalaryBundle,
+  loadSalaryWorkspace,
+  STAFF_ADVANCE_LINE_KIND,
+  STAFF_LINE_KIND,
+  syncStaffExpensesToSalaryRegister,
+  validateStaffPayoutAmount,
+  type StaffLineKind,
+} from "@/features/payroll";
 import { flushLedgerWorkspacePersist, loadLedgerWorkspace } from "@/features/ledger";
+import { getEmployeeById, useActiveEmployees } from "../../lib/employeeDirectoryStorage";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
-import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
 import { useSession } from "@/features/auth";
+
+type PurchaseItemDraft = {
+  key: string;
+  vendor: string;
+  name: string;
+  qty: string;
+  unit: string;
+  rate: string;
+};
 
 type ExpenseLineDraft = {
   id: string;
-  kind: "vendor" | "regular";
+  kind: "vendor" | "regular" | "staff" | "purchase";
   vendor: string;
   /** Regular expense title (no vendor) */
   label: string;
-  /** Regular expense memo (vendor lines leave empty). */
+  /** Staff expense — employee directory id */
+  employeeId: string;
+  /** Regular payout vs advance salary */
+  staffLineKind: StaffLineKind;
+  /** Regular / staff expense memo */
   note: string;
+  /** Links to salary register when synced from a prior save. */
+  salaryPaymentId?: string;
   amount: string;
   receiptDataUrls: string[];
-  /** Vendor lines: optional Bills & payments row on save (same book, amount, entry date). */
-  ledgerKind: "" | NonNullable<ExpenseLineSaved["ledgerKind"]>;
-  /** Staff cashbooks — salary, service charge, bonus, overtime. When set, line posts like Cashbooks staff flow. */
-  ledgerEmployeeLineKind: "" | EmployeeLedgerLineKind;
+  /**
+   * Purchase bills only — attachments keyed by vendor cashbook name so each
+   * vendor group posts its own receipts to that vendor’s bill.
+   */
+  vendorReceipts: Record<string, string[]>;
+  /** Purchase bills only — optional memo per vendor group. */
+  vendorNotes: Record<string, string>;
+  /** Kept for draft shape; cashbook match always posts as payment (not user-selected). */
+  ledgerKind: "" | "payment";
+  /** Legacy vendor staff lines only */
+  ledgerEmployeeLineKind: "";
+  /** Optional memo when posting a payment/bill to a matched cashbook. */
   ledgerNote: string;
+  /** Item rows for purchase bills. */
+  items: PurchaseItemDraft[];
 };
+
+const PURCHASE_ITEM_UNITS = [
+  "pcs",
+  "kg",
+  "g",
+  "L",
+  "ml",
+  "box",
+  "bag",
+  "dozen",
+  "pack",
+  "bottle",
+] as const;
+
+function newPurchaseItemDraft(vendor = ""): PurchaseItemDraft {
+  return {
+    key: `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    vendor,
+    name: "",
+    qty: "1",
+    unit: "pcs",
+    rate: "",
+  };
+}
+
+function emptyExpenseLineFields(): Omit<ExpenseLineDraft, "id" | "kind"> {
+  return {
+    vendor: "",
+    label: "",
+    employeeId: "",
+    staffLineKind: STAFF_LINE_KIND,
+    note: "",
+    amount: "",
+    receiptDataUrls: [],
+    vendorReceipts: {},
+    vendorNotes: {},
+    ledgerKind: "",
+    ledgerEmployeeLineKind: "",
+    ledgerNote: "",
+    items: [],
+  };
+}
 
 function isPdfOrImageFile(file: File): boolean {
   return file.type.startsWith("image/") || file.type === "application/pdf";
@@ -113,6 +198,42 @@ function isPdfMediaRef(ref: string): boolean {
   if (isMediaRef(ref)) return false;
   const key = fromStorageRef(ref);
   return key != null && key.toLowerCase().endsWith(".pdf");
+}
+
+/** Cashbook payments accept multiple attachments — copy all Daily Entry receipts. */
+function ledgerAttachmentsFromReceiptRefs(
+  urls: string[] | undefined,
+): LedgerAttachment[] {
+  const out: LedgerAttachment[] = [];
+  for (const raw of urls ?? []) {
+    const ref = raw.trim();
+    if (!ref) continue;
+    const pathHint =
+      fromStorageRef(ref) ??
+      (ref.startsWith("data:") ? "" : ref.replace(/^media:/, ""));
+    const fileName =
+      pathHint.split("/").pop() || (isPdfMediaRef(ref) ? "receipt.pdf" : "receipt");
+    const lower = fileName.toLowerCase();
+    let mimeType = "application/octet-stream";
+    if (ref.startsWith("data:")) {
+      const m = /^data:([^;,]+)/.exec(ref);
+      if (m?.[1]) mimeType = m[1];
+    } else if (lower.endsWith(".pdf") || isPdfMediaRef(ref)) {
+      mimeType = "application/pdf";
+    } else if (lower.endsWith(".png")) {
+      mimeType = "image/png";
+    } else if (lower.endsWith(".webp")) {
+      mimeType = "image/webp";
+    } else if (lower.endsWith(".gif")) {
+      mimeType = "image/gif";
+    } else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+      mimeType = "image/jpeg";
+    } else {
+      mimeType = "image/jpeg";
+    }
+    out.push({ fileName, mimeType, dataUrl: ref });
+  }
+  return out;
 }
 
 function clipboardAttachmentFilesFromDataTransfer(data: DataTransfer | null): File[] {
@@ -149,6 +270,17 @@ function expenseLineIdFromEventTarget(target: EventTarget | null): string | null
   while (el) {
     const id = el.getAttribute?.("data-expense-line-id");
     if (id) return id;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+function purchaseVendorFromEventTarget(target: EventTarget | null): string | null {
+  let el = target as HTMLElement | null;
+  while (el) {
+    if (el.hasAttribute?.("data-purchase-vendor")) {
+      return el.getAttribute("data-purchase-vendor");
+    }
     el = el.parentElement;
   }
   return null;
@@ -191,6 +323,11 @@ function persistedAttachmentRefsFromForm(
     for (const url of line.receiptDataUrls) {
       if (isPersistedMediaRef(url)) refs.push(url.trim());
     }
+    for (const urls of Object.values(line.vendorReceipts ?? {})) {
+      for (const url of urls) {
+        if (isPersistedMediaRef(url)) refs.push(url.trim());
+      }
+    }
   }
   return refs;
 }
@@ -225,6 +362,11 @@ function hasInProgressAttachmentPreviews(
     for (const url of line.receiptDataUrls) {
       if (url.startsWith("blob:") || url.startsWith("data:")) return true;
     }
+    for (const urls of Object.values(line.vendorReceipts ?? {})) {
+      for (const url of urls) {
+        if (url.startsWith("blob:") || url.startsWith("data:")) return true;
+      }
+    }
   }
   for (const url of voidUrls) {
     if (url.startsWith("blob:") || url.startsWith("data:")) return true;
@@ -237,12 +379,68 @@ function buildExpenseLinesToSaveFromDrafts(
 ): ExpenseLineSaved[] {
   const linesToSave: ExpenseLineSaved[] = [];
   for (const line of expenseLines) {
-    const amt = parseAmount(line.amount);
     const receiptUrls = persistedAttachmentRefs(line.receiptDataUrls);
     const receiptField =
       receiptUrls.length > 0 ? ({ receiptDataUrls: receiptUrls } as const) : {};
     const lineIdField = { lineId: line.id } as const;
-    if (line.kind === "vendor") {
+    if (line.kind === "staff") {
+      const amt = parseAmount(line.amount);
+      const employeeId = line.employeeId.trim();
+      if (employeeId && amt > 0) {
+        const emp = getEmployeeById(employeeId);
+        linesToSave.push({
+          kind: "staff",
+          employeeId,
+          employeeName: emp?.name ?? "",
+          staffLineKind: line.staffLineKind,
+          amount: amt,
+          lineId: line.id,
+          ...(line.note.trim() ? { note: line.note.trim() } : {}),
+          ...(line.salaryPaymentId ? { salaryPaymentId: line.salaryPaymentId } : {}),
+          ...receiptField,
+        });
+      }
+    } else if (line.kind === "purchase") {
+      const committed = committedPurchaseItemsFromDraft(line.items);
+      if (!committed || committed.length === 0) continue;
+      const groups = groupPurchaseItemsByVendor(committed);
+      const vendorKeys = Array.from(groups.keys());
+      for (const vendor of vendorKeys) {
+        const groupItems = groups.get(vendor)!;
+        const supplierId = resolveLedgerSupplierIdByBookName(vendor);
+        if (!supplierId) continue;
+        const amt = groupItems.reduce((s, i) => s + i.total, 0);
+        const lineId =
+          vendorKeys.length === 1 ? line.id : `${line.id}::${vendor.toLowerCase()}`;
+        const vendorUrls = line.vendorReceipts?.[vendor] ?? [];
+        // Legacy: older drafts kept a single shared receipt list on the card.
+        const legacyUrls =
+          vendorUrls.length === 0 && vendorKeys.length === 1
+            ? line.receiptDataUrls
+            : [];
+        const groupReceiptUrls = persistedAttachmentRefs(
+          vendorUrls.length > 0 ? vendorUrls : legacyUrls,
+        );
+        const groupReceiptField =
+          groupReceiptUrls.length > 0
+            ? ({ receiptDataUrls: groupReceiptUrls } as const)
+            : {};
+        const groupNote =
+          (line.vendorNotes?.[vendor] ?? "").trim() ||
+          (vendorKeys.length === 1 ? line.ledgerNote.trim() : "");
+        linesToSave.push({
+          kind: "purchase",
+          vendor,
+          amount: amt,
+          items: groupItems,
+          ledgerKind: "invoice",
+          ledgerNote: groupNote,
+          lineId,
+          ...groupReceiptField,
+        });
+      }
+    } else if (line.kind === "vendor") {
+      const amt = parseAmount(line.amount);
       const v = line.vendor.trim();
       if (v && amt > 0) {
         const base = {
@@ -253,22 +451,10 @@ function buildExpenseLinesToSaveFromDrafts(
           ...receiptField,
         };
         const supplierId = resolveLedgerSupplierIdByBookName(v);
-        const isEmp = Boolean(supplierId && isEmployeesLedgerSupplierId(supplierId));
-        if (isEmp) {
-          if (line.ledgerEmployeeLineKind) {
-            linesToSave.push({
-              ...base,
-              ledgerKind: "payment",
-              ledgerEmployeeLineKind: line.ledgerEmployeeLineKind,
-              ledgerNote: line.ledgerNote.trim(),
-            });
-          } else {
-            linesToSave.push(base);
-          }
-        } else if (line.ledgerKind) {
+        if (supplierId) {
           linesToSave.push({
             ...base,
-            ledgerKind: line.ledgerKind,
+            ledgerKind: "payment",
             ledgerNote: line.ledgerNote.trim(),
           });
         } else {
@@ -276,6 +462,7 @@ function buildExpenseLinesToSaveFromDrafts(
         }
       }
     } else {
+      const amt = parseAmount(line.amount);
       const expenseTitle = line.label.trim();
       if (expenseTitle && amt > 0) {
         const noteTrim = line.note.trim();
@@ -319,7 +506,7 @@ function buildDailyEntryCandidateFromForm(args: {
       ? voidAttachmentsFiltered
       : undefined;
   const linesToSave = buildExpenseLinesToSaveFromDrafts(args.expenseLines);
-  const expenseTotal = linesToSave.reduce((s, line) => s + line.amount, 0);
+  const expenseTotal = expenseTotalFromExpenseLines(linesToSave);
   const bankWithdrawnToSave = Math.max(0, parseAmount(args.bankWithdrawn));
 
   return {
@@ -435,8 +622,6 @@ const amountInputClass =
   "h-[3.125rem] w-full rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[22px] font-semibold tabular-nums text-right text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
 const textInputClass =
   "h-9 w-full min-w-0 rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
-const selectClass =
-  "h-9 w-full min-w-0 cursor-pointer rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
 const labelClass = "text-[12px] font-medium leading-snug text-[var(--pos-text-1)]";
 const fieldGroupClass = "flex min-w-0 flex-col gap-1.5";
 const salesFieldGroupClass = `${fieldGroupClass} min-w-0 w-full`;
@@ -463,8 +648,6 @@ const expensePrimarySelectClass = `${expensePrimaryInputClass} cursor-pointer`;
 /** Regular-line memo: reads as quiet placeholder text until focused. */
 const expenseQuietInputClass =
   "h-8 w-full min-w-0 rounded-[6px] border border-solid border-transparent bg-transparent px-2 text-[12px] text-[var(--pos-text-1)] transition-[border-color,background-color,box-shadow] placeholder:text-[var(--pos-text-2)]/70 focus:border-[var(--pos-input-border)] focus:bg-[var(--pos-input-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
-const expenseMiniLabelClass =
-  "text-[10px] font-medium uppercase tracking-[0.04em] text-[var(--pos-text-2)]";
 const expenseRemoveBtnClass =
   "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700";
 
@@ -485,8 +668,12 @@ const expenseIconBtnClass =
   "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]";
 const expenseNoteBtnActiveClass =
   "border-[var(--pos-sb-base)] bg-[var(--pos-nav-hover)]/20 text-[var(--pos-text-1)]";
-const expenseAddBtnClass =
-  "inline-flex w-full flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-dashed [border-color:var(--pos-border-medium,var(--pos-divider))] bg-transparent px-3 py-2.5 text-[12px] font-semibold leading-tight text-[var(--pos-text-1)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30";
+const expenseAddBtnBaseClass =
+  "inline-flex w-full flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid px-3 py-2.5 text-[12px] font-semibold leading-tight transition-colors hover:opacity-90";
+const expenseAddRegularBtnClass = `${expenseAddBtnBaseClass} border-red-500/35 bg-red-500/12 text-red-800 hover:bg-red-500/18`;
+const expenseAddStaffBtnClass = `${expenseAddBtnBaseClass} border-sky-500/35 bg-sky-500/12 text-sky-900 hover:bg-sky-500/18`;
+const expenseAddVendorBtnClass = `${expenseAddBtnBaseClass} border-amber-500/35 bg-amber-500/12 text-amber-900 hover:bg-amber-500/18`;
+const expenseAddPurchaseBtnClass = `${expenseAddBtnBaseClass} border-yellow-600/40 bg-yellow-500/15 text-yellow-950 hover:bg-yellow-500/25`;
 const editOpeningBtnClass =
   "inline-flex shrink-0 items-center justify-center rounded-md p-1 text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]";
 
@@ -514,14 +701,7 @@ function newVendorExpenseLine(): ExpenseLineDraft {
   return {
     id: newLineId(),
     kind: "vendor",
-    vendor: "",
-    label: "",
-    note: "",
-    amount: "",
-    receiptDataUrls: [],
-    ledgerKind: "",
-    ledgerEmployeeLineKind: "",
-    ledgerNote: "",
+    ...emptyExpenseLineFields(),
   };
 }
 
@@ -529,14 +709,24 @@ function newRegularExpenseLine(): ExpenseLineDraft {
   return {
     id: newLineId(),
     kind: "regular",
-    vendor: "",
-    label: "",
-    note: "",
-    amount: "",
-    receiptDataUrls: [],
-    ledgerKind: "",
-    ledgerEmployeeLineKind: "",
-    ledgerNote: "",
+    ...emptyExpenseLineFields(),
+  };
+}
+
+function newStaffExpenseLine(): ExpenseLineDraft {
+  return {
+    id: newLineId(),
+    kind: "staff",
+    ...emptyExpenseLineFields(),
+  };
+}
+
+function newPurchaseExpenseLine(): ExpenseLineDraft {
+  return {
+    id: newLineId(),
+    kind: "purchase",
+    ...emptyExpenseLineFields(),
+    items: [newPurchaseItemDraft()],
   };
 }
 
@@ -557,34 +747,145 @@ function dateAddDays(dateKey: string, days: number) {
   return dt.toISOString().slice(0, 10);
 }
 
-const MONTH_ABBR = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-] as const;
-
-/** `dateKey` is YYYY-MM-DD; returns e.g. `09-Apr-2026`. */
-function formatDateKeyAsDisplay(dateKey: string): string {
-  const parts = dateKey.split("-").map((x) => Number.parseInt(x, 10));
-  const [y, m, d] = parts;
-  if (!y || !m || m < 1 || m > 12 || !d || d < 1 || d > 31) return dateKey;
-  const mon = MONTH_ABBR[m - 1];
-  if (!mon) return dateKey;
-  const dd = String(d).padStart(2, "0");
-  return `${dd}-${mon}-${y}`;
-}
-
 function parseAmount(raw: string): number {
   return parseNonNegativeAmount(raw);
+}
+
+function purchaseItemLineTotal(item: PurchaseItemDraft): number | null {
+  if (!item.name.trim()) return null;
+  const qty = parseAmount(item.qty);
+  const rate = parseAmount(item.rate);
+  if (!Number.isFinite(qty) || !Number.isFinite(rate)) return null;
+  if (qty <= 0 || rate < 0) return null;
+  return Math.round(qty * rate * 100) / 100;
+}
+
+function purchaseItemsTotal(items: readonly PurchaseItemDraft[]): number {
+  let sum = 0;
+  let any = false;
+  for (const item of items) {
+    const lineTotal = purchaseItemLineTotal(item);
+    if (lineTotal === null) continue;
+    sum += lineTotal;
+    any = true;
+  }
+  return any ? Math.round(sum * 100) / 100 : 0;
+}
+
+/** Group draft purchase rows by vendor (insertion order). Empty vendor = unassigned. */
+function groupPurchaseDraftItemsByVendor(
+  items: readonly PurchaseItemDraft[],
+): Array<{ vendor: string; items: PurchaseItemDraft[] }> {
+  const order: string[] = [];
+  const map = new Map<string, PurchaseItemDraft[]>();
+  for (const item of items) {
+    const vendor = item.vendor.trim();
+    if (!map.has(vendor)) {
+      order.push(vendor);
+      map.set(vendor, []);
+    }
+    map.get(vendor)!.push(item);
+  }
+  return order.map((vendor) => ({ vendor, items: map.get(vendor)! }));
+}
+
+function purchaseVendorReceiptUrls(
+  line: ExpenseLineDraft,
+  vendor: string,
+): string[] {
+  const key = vendor.trim();
+  if (!key) return [];
+  const fromMap = line.vendorReceipts?.[key];
+  if (fromMap && fromMap.length > 0) return fromMap;
+  // Legacy single-list fallback when only one vendor is on the card.
+  const vendors = new Set(
+    line.items.map((i) => i.vendor.trim()).filter(Boolean),
+  );
+  if (vendors.size === 1 && vendors.has(key) && line.receiptDataUrls.length > 0) {
+    return line.receiptDataUrls;
+  }
+  return fromMap ?? [];
+}
+
+function draftLineCashAmount(line: ExpenseLineDraft): number {
+  if (line.kind === "purchase") return 0;
+  return parseAmount(line.amount);
+}
+
+function committedPurchaseItemsFromDraft(
+  items: readonly PurchaseItemDraft[],
+): Array<{
+  id: string;
+  vendor: string;
+  name: string;
+  qty: number;
+  unit: string;
+  rate: number;
+  total: number;
+}> | null {
+  const named = items.filter((i) => i.name.trim().length > 0);
+  if (named.length === 0) return null;
+  const out: Array<{
+    id: string;
+    vendor: string;
+    name: string;
+    qty: number;
+    unit: string;
+    rate: number;
+    total: number;
+  }> = [];
+  for (const row of named) {
+    const vendor = row.vendor.trim();
+    if (!vendor) return null;
+    const total = purchaseItemLineTotal(row);
+    if (total === null || total <= 0) return null;
+    const qty = parseAmount(row.qty);
+    const rate = parseAmount(row.rate);
+    out.push({
+      id: row.key,
+      vendor,
+      name: row.name.trim(),
+      qty,
+      unit: row.unit.trim() || "pcs",
+      rate,
+      total,
+    });
+  }
+  return out;
+}
+
+function groupPurchaseItemsByVendor(
+  items: Array<{
+    id: string;
+    vendor: string;
+    name: string;
+    qty: number;
+    unit: string;
+    rate: number;
+    total: number;
+  }>,
+): Map<
+  string,
+  Array<{ id: string; name: string; qty: number; unit: string; rate: number; total: number }>
+> {
+  const groups = new Map<
+    string,
+    Array<{ id: string; name: string; qty: number; unit: string; rate: number; total: number }>
+  >();
+  for (const item of items) {
+    const vendor = item.vendor.trim();
+    const list = groups.get(vendor) ?? [];
+    list.push({
+      id: item.id,
+      name: item.name,
+      qty: item.qty,
+      unit: item.unit,
+      rate: item.rate,
+      total: item.total,
+    });
+    groups.set(vendor, list);
+  }
+  return groups;
 }
 
 /** Amount fields show blank instead of 0 so untouched fields are easy to scan. */
@@ -605,7 +906,8 @@ type ExpenseFieldPart =
   | "attach"
   | "ledgerKind"
   | "ledgerNote"
-  | "note";
+  | "note"
+  | "employeeId";
 
 type SalesFieldPart = "voidRemarks" | "voidAttach" | "bankWithdrawn";
 
@@ -637,8 +939,48 @@ function salesFieldErrorMessage(
 
 function findFirstExpenseValidationError(
   lines: ExpenseLineDraft[],
+  options?: { dateKey?: string; salaryBundle?: ReturnType<typeof getSalaryBundle> },
 ): { message: string; lineId: string; part: ExpenseFieldPart } | null {
+  const monthKey = options?.dateKey?.slice(0, 7);
+  const salaryBundle = options?.salaryBundle;
+
   for (const line of lines) {
+    if (line.kind === "staff") {
+      if (parseAmount(line.amount) > 0 && !line.employeeId.trim()) {
+        return {
+          message: "Select an employee for this staff payout.",
+          lineId: line.id,
+          part: "employeeId",
+        };
+      }
+      if (line.employeeId.trim() && parseAmount(line.amount) <= 0) {
+        return {
+          message: "Enter an amount for this staff payout.",
+          lineId: line.id,
+          part: "amount",
+        };
+      }
+      if (
+        line.employeeId.trim() &&
+        parseAmount(line.amount) > 0 &&
+        monthKey &&
+        salaryBundle
+      ) {
+        const capErr = validateStaffPayoutAmount({
+          bundle: salaryBundle,
+          monthKey,
+          employeeId: line.employeeId.trim(),
+          amount: parseAmount(line.amount),
+          staffLineKind: line.staffLineKind,
+          excludeLineId: line.id,
+          excludePaymentId: line.salaryPaymentId,
+        });
+        if (capErr) {
+          return { message: capErr, lineId: line.id, part: "amount" };
+        }
+      }
+      continue;
+    }
     if (line.kind === "vendor") {
       if (parseAmount(line.amount) > 0 && !line.vendor.trim()) {
         return {
@@ -656,36 +998,18 @@ function findFirstExpenseValidationError(
       }
       const noteTrim = line.ledgerNote.trim();
       const supplierId = resolveLedgerSupplierIdByBookName(line.vendor.trim());
-      const isEmp = Boolean(supplierId && isEmployeesLedgerSupplierId(supplierId));
-      if (noteTrim && !isEmp && !line.ledgerKind) {
+      if (noteTrim && !supplierId) {
         return {
-          message: "Select a ledger entry type, or clear the note.",
+          message: "Memo is only used when the name matches a cashbook.",
           lineId: line.id,
-          part: "ledgerKind",
+          part: "ledgerNote",
         };
       }
-      if (noteTrim && isEmp && !line.ledgerEmployeeLineKind) {
-        return {
-          message: "Select a payment type, or clear the note.",
-          lineId: line.id,
-          part: "ledgerKind",
-        };
-      }
-      if (isEmp ? line.ledgerEmployeeLineKind : line.ledgerKind) {
-        if (!supplierId) {
-          return {
-            message: "Cashbook posting needs a book name that matches Cashbooks.",
-            lineId: line.id,
-            part: "vendor",
-          };
-        }
+      if (supplierId) {
         const ledgerAmtErr = validateDailyExpenseLedgerAmount({
           supplierId,
           amountStr: line.amount,
-          kind: isEmp
-            ? "payment"
-            : (line.ledgerKind as NonNullable<ExpenseLineSaved["ledgerKind"]>),
-          employeeLineKind: isEmp ? line.ledgerEmployeeLineKind : "",
+          kind: "payment",
         });
         if (ledgerAmtErr) {
           return {
@@ -695,7 +1019,56 @@ function findFirstExpenseValidationError(
           };
         }
       }
-    } else {
+      continue;
+    }
+    if (line.kind === "purchase") {
+      const hasAnyItemInput = line.items.some(
+        (i) => i.name.trim() || i.rate.trim() || i.vendor.trim() || parseAmount(i.qty) !== 1,
+      );
+      const hasAnyVendorNote = Object.values(line.vendorNotes ?? {}).some((n) => n.trim());
+      if (!hasAnyItemInput && !line.ledgerNote.trim() && !hasAnyVendorNote) {
+        continue;
+      }
+      for (const item of line.items) {
+        const touched =
+          item.name.trim() ||
+          item.vendor.trim() ||
+          item.rate.trim() ||
+          (item.qty.trim() !== "" && item.qty.trim() !== "1");
+        if (!touched) continue;
+        if (!item.vendor.trim()) {
+          return {
+            message: "Select a vendor for each item.",
+            lineId: line.id,
+            part: "vendor",
+          };
+        }
+        if (!resolveLedgerSupplierIdByBookName(item.vendor.trim())) {
+          return {
+            message: "Purchases must use an existing vendor cashbook.",
+            lineId: line.id,
+            part: "vendor",
+          };
+        }
+        if (!item.name.trim() || purchaseItemLineTotal(item) === null) {
+          return {
+            message: "Enter name, qty, and rate for each item.",
+            lineId: line.id,
+            part: "amount",
+          };
+        }
+      }
+      const items = committedPurchaseItemsFromDraft(line.items);
+      if (!items || items.length === 0) {
+        return {
+          message: "Add at least one item with vendor, name, qty, and rate.",
+          lineId: line.id,
+          part: "amount",
+        };
+      }
+      continue;
+    }
+    if (line.kind === "regular") {
       if (parseAmount(line.amount) > 0 && !line.label.trim()) {
         return {
           message: "Enter an expense title.",
@@ -748,7 +1121,7 @@ function formatSummaryMoney(value: number) {
 
 function expenseTotalFromRow(r: DailyEntryRow): number {
   if (r.expenseLines && r.expenseLines.length > 0) {
-    return r.expenseLines.reduce((s, line) => s + line.amount, 0);
+    return expenseTotalFromExpenseLines(r.expenseLines);
   }
   return r.expenses ?? 0;
 }
@@ -767,46 +1140,71 @@ function normalizeReceiptUrls(urls: string[] | undefined): string {
 }
 
 function draftLinePostsToLedger(line: ExpenseLineDraft | undefined): boolean {
-  if (!line || line.kind !== "vendor") return false;
-  const v = line.vendor.trim();
-  if (!v) return false;
-  const sid = resolveLedgerSupplierIdByBookName(v);
-  if (sid && isEmployeesLedgerSupplierId(sid)) return Boolean(line.ledgerEmployeeLineKind);
-  return Boolean(line.ledgerKind);
+  if (!line) return false;
+  if (line.kind === "vendor") {
+    const v = line.vendor.trim();
+    if (!v) return false;
+    return Boolean(resolveLedgerSupplierIdByBookName(v));
+  }
+  if (line.kind === "purchase") {
+    return Boolean(committedPurchaseItemsFromDraft(line.items));
+  }
+  return false;
 }
 
 function savedLinePostsToLedger(line: ExpenseLineSaved): boolean {
-  if (savedLineKind(line) !== "vendor") return false;
-  const v = (line.vendor ?? "").trim();
-  if (!v) return false;
-  const sid = resolveLedgerSupplierIdByBookName(v);
-  if (sid && isEmployeesLedgerSupplierId(sid)) {
-    return Boolean(line.ledgerEmployeeLineKind && line.ledgerKind);
+  const kind = savedLineKind(line);
+  if (kind === "vendor") {
+    const v = (line.vendor ?? "").trim();
+    if (!v) return false;
+    return line.ledgerKind === "payment";
   }
-  return Boolean(line.ledgerKind);
+  if (kind === "purchase") {
+    const v = (line.vendor ?? "").trim();
+    if (!v) return false;
+    return line.ledgerKind === "invoice";
+  }
+  return false;
+}
+
+function normalizePurchaseItemsFingerprint(
+  items:
+    | Array<{ name: string; qty: number; unit: string; rate: number; total: number }>
+    | undefined,
+): string {
+  const rows = [...(items ?? [])]
+    .map(
+      (i) =>
+        `${i.name.trim().toLowerCase()}\0${i.qty}\0${i.unit}\0${i.rate}\0${i.total}`,
+    )
+    .sort((a, b) => a.localeCompare(b));
+  return JSON.stringify(rows);
 }
 
 /** Multiset key for vendor expense rows that post to the ledger (dedupe commits vs prior save). */
 function vendorLedgerFingerprintSaved(line: ExpenseLineSaved): string | null {
   if (!savedLinePostsToLedger(line)) return null;
   const v = (line.vendor ?? "").trim();
-  const sid = resolveLedgerSupplierIdByBookName(v);
   const note = (line.ledgerNote ?? "").trim();
-  if (sid && isEmployeesLedgerSupplierId(sid)) {
-    return `${v}\0${line.amount}\0${line.ledgerEmployeeLineKind}\0${note}`;
+  const kind = savedLineKind(line);
+  if (kind === "purchase") {
+    // Each vendor split carries its own receipts onto that vendor’s bill.
+    return `${v}\0${line.amount}\0invoice\0${note}\0${normalizeReceiptUrls(line.receiptDataUrls)}\0${normalizePurchaseItemsFingerprint(line.items)}`;
   }
-  return `${v}\0${line.amount}\0${line.ledgerKind!}\0${note}`;
+  return `${v}\0${line.amount}\0${line.ledgerKind!}\0${note}\0${normalizeReceiptUrls(line.receiptDataUrls)}`;
 }
 
 function vendorLedgerFingerprintDraft(line: ExpenseLineDraft): string | null {
   if (!draftLinePostsToLedger(line)) return null;
   const v = line.vendor.trim();
-  const sid = resolveLedgerSupplierIdByBookName(v);
-  const amt = parseAmount(line.amount);
-  if (sid && isEmployeesLedgerSupplierId(sid)) {
-    return `${v}\0${amt}\0${line.ledgerEmployeeLineKind}\0${line.ledgerNote.trim()}`;
+  if (line.kind === "purchase") {
+    const items = committedPurchaseItemsFromDraft(line.items);
+    if (!items) return null;
+    const amt = items.reduce((s, i) => s + i.total, 0);
+    return `${v}\0${amt}\0invoice\0${line.ledgerNote.trim()}\0${normalizeReceiptUrls(line.receiptDataUrls)}\0${normalizePurchaseItemsFingerprint(items)}`;
   }
-  return `${v}\0${amt}\0${line.ledgerKind}\0${line.ledgerNote.trim()}`;
+  const amt = parseAmount(line.amount);
+  return `${v}\0${amt}\0payment\0${line.ledgerNote.trim()}\0${normalizeReceiptUrls(line.receiptDataUrls)}`;
 }
 
 function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined): string {
@@ -815,20 +1213,28 @@ function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined):
     return {
       kind,
       lineId: line.lineId ?? "",
-      vendor: kind === "vendor" ? (line.vendor ?? "").trim() : "",
+      vendor: kind === "vendor" || kind === "purchase" ? (line.vendor ?? "").trim() : "",
       label: kind === "regular" ? (line.label ?? "").trim() : "",
+      employeeId: kind === "staff" ? (line.employeeId ?? "").trim() : "",
+      staffLineKind:
+        kind === "staff" ? staffLineKindFromSaved(line as ExpenseLineSaved) : "",
+      salaryPaymentId: kind === "staff" ? (line.salaryPaymentId ?? "") : "",
       amount: line.amount,
       receipts: normalizeReceiptUrls(line.receiptDataUrls),
-      ledgerKind: kind === "vendor" ? (line.ledgerKind ?? "") : "",
+      ledgerKind:
+        kind === "vendor" || kind === "purchase" ? (line.ledgerKind ?? "") : "",
       ledgerEmployeeLineKind:
         kind === "vendor" ? (line.ledgerEmployeeLineKind ?? "") : "",
-      ledgerNote: kind === "vendor" ? (line.ledgerNote ?? "").trim() : "",
-      note: kind === "regular" ? (line.note ?? "").trim() : "",
+      ledgerNote:
+        kind === "vendor" || kind === "purchase" ? (line.ledgerNote ?? "").trim() : "",
+      note:
+        kind === "regular" || kind === "staff" ? (line.note ?? "").trim() : "",
+      items: kind === "purchase" ? normalizePurchaseItemsFingerprint(line.items) : "",
     };
   });
   rows.sort((a, b) =>
-    `${a.kind}\0${a.lineId}\0${a.vendor}\0${a.label}\0${a.amount}\0${a.ledgerKind}\0${a.ledgerEmployeeLineKind}\0${a.ledgerNote}\0${a.note}`.localeCompare(
-      `${b.kind}\0${b.lineId}\0${b.vendor}\0${b.label}\0${b.amount}\0${b.ledgerKind}\0${b.ledgerEmployeeLineKind}\0${b.ledgerNote}\0${b.note}`,
+    `${a.kind}\0${a.lineId}\0${a.vendor}\0${a.label}\0${a.employeeId}\0${a.staffLineKind}\0${a.salaryPaymentId}\0${a.amount}\0${a.ledgerKind}\0${a.ledgerEmployeeLineKind}\0${a.ledgerNote}\0${a.note}\0${a.items}`.localeCompare(
+      `${b.kind}\0${b.lineId}\0${b.vendor}\0${b.label}\0${b.employeeId}\0${b.staffLineKind}\0${b.salaryPaymentId}\0${b.amount}\0${b.ledgerKind}\0${b.ledgerEmployeeLineKind}\0${b.ledgerNote}\0${b.note}\0${b.items}`,
     ),
   );
   return JSON.stringify(rows);
@@ -854,44 +1260,98 @@ function syncDailyExpenseLedgerLinks({
 
   let failed = false;
   const lines = baseLines.map((base) => {
-    if (savedLineKind(base) !== "vendor") return base;
+    const baseKind = savedLineKind(base);
+    if (baseKind !== "vendor" && baseKind !== "purchase") return base;
 
     const lineId = base.lineId;
-    const draft = lineId ? draftById.get(lineId) : undefined;
+    const draftId =
+      lineId && lineId.includes("::") ? lineId.slice(0, lineId.indexOf("::")) : lineId;
+    const draft = draftId ? draftById.get(draftId) : undefined;
     const priorLine = lineId ? priorByLineId.get(lineId) : undefined;
+    const postsNow =
+      savedLinePostsToLedger(base) &&
+      (baseKind === "purchase"
+        ? Boolean(base.vendor?.trim() && (base.items?.length ?? 0) > 0)
+        : draftLinePostsToLedger(draft));
 
-    if (!savedLinePostsToLedger(base) || !draftLinePostsToLedger(draft)) {
+    if (!postsNow) {
       if (priorLine?.ledgerLink) {
-        removeDailyLedgerExpenseLink(priorLine.ledgerLink);
+        // Tear down daily-created payment/bill links when the line no longer posts.
+        if (
+          priorLine.ledgerKind === "payment" ||
+          priorLine.ledgerKind === "invoice"
+        ) {
+          if (!removeDailyLedgerExpenseLink(priorLine.ledgerLink)) {
+            failed = true;
+            return { ...base, ledgerLink: priorLine.ledgerLink };
+          }
+        }
       }
       return base;
     }
-    if (!draft) return base;
 
-    const fpDraft = vendorLedgerFingerprintDraft(draft);
-    const fpPrior = priorLine && savedLinePostsToLedger(priorLine)
-      ? vendorLedgerFingerprintSaved(priorLine)
-      : null;
+    const fpDraft =
+      baseKind === "purchase"
+        ? vendorLedgerFingerprintSaved(base)
+        : vendorLedgerFingerprintDraft(draft!);
+    const fpPrior =
+      priorLine && savedLinePostsToLedger(priorLine)
+        ? vendorLedgerFingerprintSaved(priorLine)
+        : null;
+
+    const isPurchase = baseKind === "purchase";
 
     if (priorLine?.ledgerLink && fpPrior === fpDraft) {
       return { ...base, ledgerLink: priorLine.ledgerLink };
     }
 
-    const supplierId = resolveLedgerSupplierIdByBookName(draft.vendor.trim());
+    if (priorLine?.ledgerLink && isDailyLedgerLinkLocked(priorLine.ledgerLink)) {
+      failed = true;
+      return { ...base, ledgerLink: priorLine.ledgerLink };
+    }
+
+    const supplierId = resolveLedgerSupplierIdByBookName(
+      (baseKind === "purchase" ? base.vendor : draft?.vendor)?.trim() ?? "",
+    );
     if (!supplierId) {
       failed = true;
       return { ...base, ledgerLink: priorLine?.ledgerLink };
     }
 
-    const isEmp = isEmployeesLedgerSupplierId(supplierId);
+    const purchaseItems = isPurchase ? (base.items ?? []) : null;
+    if (isPurchase && (!purchaseItems || purchaseItems.length === 0)) {
+      failed = true;
+      return { ...base, ledgerLink: priorLine?.ledgerLink };
+    }
+
+    const receiptUrls = (() => {
+      if (isPurchase) {
+        // Per-vendor receipts are already on the saved split line.
+        return base.receiptDataUrls ? [...base.receiptDataUrls] : [];
+      }
+      return (
+        draft?.receiptDataUrls ??
+        (base.receiptDataUrls ? [...base.receiptDataUrls] : [])
+      );
+    })();
+
     const res = commitLedgerFromDailyExpenseLine({
       supplierId,
       entryDateIso: dateKey,
-      amountStr: draft.amount,
-      kind: isEmp ? "payment" : (draft.ledgerKind as NonNullable<ExpenseLineSaved["ledgerKind"]>),
-      notes: draft.ledgerNote,
-      ...(isEmp
-        ? { employeeLineKind: draft.ledgerEmployeeLineKind as EmployeeLedgerLineKind }
+      amountStr: isPurchase ? String(base.amount) : (draft?.amount ?? ""),
+      kind: isPurchase ? "invoice" : "payment",
+      notes:
+        (isPurchase ? base.ledgerNote : draft?.ledgerNote)?.trim() ?? "",
+      attachments: ledgerAttachmentsFromReceiptRefs(receiptUrls),
+      ...(purchaseItems
+        ? {
+            items: purchaseItems.map((i) => ({
+              name: i.name,
+              qty: i.qty,
+              unit: i.unit,
+              rate: i.rate,
+            })),
+          }
         : {}),
     });
 
@@ -900,8 +1360,14 @@ function syncDailyExpenseLedgerLinks({
       return { ...base, ledgerLink: priorLine?.ledgerLink };
     }
 
-    if (priorLine?.ledgerLink) {
-      removeDailyLedgerExpenseLink(priorLine.ledgerLink);
+    if (
+      priorLine?.ledgerLink &&
+      (priorLine.ledgerKind === "payment" || priorLine.ledgerKind === "invoice")
+    ) {
+      if (!removeDailyLedgerExpenseLink(priorLine.ledgerLink)) {
+        failed = true;
+        return { ...base, ledgerLink: priorLine.ledgerLink };
+      }
     }
 
     return {
@@ -918,9 +1384,14 @@ function syncDailyExpenseLedgerLinks({
   );
   for (const pl of prior?.expenseLines ?? []) {
     if (!pl.lineId || !savedLinePostsToLedger(pl) || !pl.ledgerLink) continue;
-    if (savedLineKind(pl) !== "vendor") continue;
+    const plKind = savedLineKind(pl);
+    if (plKind !== "vendor" && plKind !== "purchase") continue;
     if (baseLineIds.has(pl.lineId)) continue;
-    removeDailyLedgerExpenseLink(pl.ledgerLink);
+    if (pl.ledgerKind === "payment" || pl.ledgerKind === "invoice") {
+      if (!removeDailyLedgerExpenseLink(pl.ledgerLink)) {
+        failed = true;
+      }
+    }
   }
 
   return { lines, failed };
@@ -958,38 +1429,113 @@ function savedEntryBodyEquals(prior: DailyEntryRow, next: DailyEntryRow): boolea
 
 function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
   if (r.expenseLines && r.expenseLines.length > 0) {
-    return r.expenseLines.map((line) => {
+    const filtered = r.expenseLines.filter((line) => !isStaffFineExpenseLine(line));
+    const drafts: ExpenseLineDraft[] = [];
+    const purchaseDraftById = new Map<string, ExpenseLineDraft>();
+
+    for (const line of filtered) {
+      if (line.kind === "staff" || isLegacyStaffVendorLine(line)) {
+        drafts.push({
+          id: line.lineId ?? newLineId(),
+          kind: "staff" as const,
+          ...emptyExpenseLineFields(),
+          employeeId: line.employeeId?.trim() || employeeIdFromSavedStaffLine(line),
+          staffLineKind: staffLineKindFromSaved(line),
+          note: staffExpenseLineNote(line),
+          salaryPaymentId: line.salaryPaymentId,
+          amount: line.amount === 0 ? "" : String(line.amount),
+          receiptDataUrls: [...(line.receiptDataUrls ?? [])],
+        });
+        continue;
+      }
       const kind = savedLineKind(line);
-      return {
+      if (kind === "purchase") {
+        const lineVendor = (line.vendor ?? "").trim();
+        const rawId = line.lineId ?? newLineId();
+        const draftId = rawId.includes("::") ? rawId.slice(0, rawId.indexOf("::")) : rawId;
+        const itemDrafts =
+          line.items && line.items.length > 0
+            ? line.items.map((item) => ({
+                key: item.id || newLineId(),
+                vendor: lineVendor,
+                name: item.name,
+                qty: String(item.qty),
+                unit: item.unit || "pcs",
+                rate: item.rate === 0 ? "" : String(item.rate),
+              }))
+            : [newPurchaseItemDraft(lineVendor)];
+        const existing = purchaseDraftById.get(draftId);
+        const vendorReceiptPatch =
+          lineVendor && (line.receiptDataUrls?.length ?? 0) > 0
+            ? { [lineVendor]: [...(line.receiptDataUrls ?? [])] }
+            : {};
+        const vendorNotePatch =
+          lineVendor && (line.ledgerNote ?? "").trim()
+            ? { [lineVendor]: (line.ledgerNote ?? "").trim() }
+            : {};
+        if (existing) {
+          existing.items = [...existing.items, ...itemDrafts];
+          existing.amount = String(
+            (parseAmount(existing.amount) || 0) + (line.amount || 0),
+          );
+          if (lineVendor && vendorReceiptPatch[lineVendor]) {
+            const prev = existing.vendorReceipts[lineVendor] ?? [];
+            const incoming = vendorReceiptPatch[lineVendor];
+            const merged = [...prev];
+            for (const url of incoming) {
+              if (!merged.includes(url)) merged.push(url);
+            }
+            existing.vendorReceipts = {
+              ...existing.vendorReceipts,
+              [lineVendor]: merged,
+            };
+          }
+          if (lineVendor && vendorNotePatch[lineVendor] && !existing.vendorNotes[lineVendor]) {
+            existing.vendorNotes = {
+              ...existing.vendorNotes,
+              ...vendorNotePatch,
+            };
+          }
+        } else {
+          const draft: ExpenseLineDraft = {
+            id: draftId,
+            kind: "purchase",
+            ...emptyExpenseLineFields(),
+            vendor: lineVendor,
+            amount: line.amount === 0 ? "" : String(line.amount),
+            receiptDataUrls: [],
+            vendorReceipts: vendorReceiptPatch,
+            vendorNotes: vendorNotePatch,
+            ledgerNote: "",
+            items: itemDrafts,
+          };
+          purchaseDraftById.set(draftId, draft);
+          drafts.push(draft);
+        }
+        continue;
+      }
+      drafts.push({
         id: line.lineId ?? newLineId(),
         kind,
+        ...emptyExpenseLineFields(),
         vendor: kind === "vendor" ? (line.vendor ?? "") : "",
         label: kind === "regular" ? (line.label ?? "") : "",
         amount: line.amount === 0 ? "" : String(line.amount),
         receiptDataUrls: [...(line.receiptDataUrls ?? [])],
-        ledgerKind: kind === "vendor" && line.ledgerKind ? line.ledgerKind : "",
-        ledgerEmployeeLineKind:
-          kind === "vendor" && line.ledgerEmployeeLineKind
-            ? line.ledgerEmployeeLineKind
-            : "",
         ledgerNote: kind === "vendor" ? (line.ledgerNote ?? "") : "",
         note: kind === "regular" ? (line.note ?? "") : "",
-      };
-    });
+      });
+    }
+    return drafts;
   }
   if ((r.expenses ?? 0) > 0) {
     return [
       {
         id: newLineId(),
         kind: "vendor",
+        ...emptyExpenseLineFields(),
         vendor: "Legacy total",
-        label: "",
-        note: "",
         amount: String(r.expenses),
-        receiptDataUrls: [],
-        ledgerKind: "",
-        ledgerEmployeeLineKind: "",
-        ledgerNote: "",
       },
     ];
   }
@@ -1019,7 +1565,7 @@ function computeRemainingFromParts(
     parseAmount(sales.foodiSale) +
     parseAmount(sales.foodpandaSale);
   const voidAmt = Math.max(0, parseAmount(sales.voidSale));
-  const expenseSum = expenseLineDrafts.reduce((s, line) => s + parseAmount(line.amount), 0);
+  const expenseSum = expenseLineDrafts.reduce((s, line) => s + draftLineCashAmount(line), 0);
   return roundTaka(parseAmount(openingBalance) + salesSum - voidAmt - expenseSum);
 }
 
@@ -1027,7 +1573,10 @@ function buildVendorOptions(
   draftLines: ExpenseLineDraft[],
   ledgerBookNames: readonly string[],
 ): string[] {
-  const set = new Set<string>([...ledgerBookNames]);
+  const set = new Set<string>();
+  for (const name of ledgerBookNames) {
+    set.add(name);
+  }
   for (const line of draftLines) {
     if (line.kind !== "vendor") continue;
     const v = line.vendor.trim();
@@ -1089,10 +1638,19 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
   const titles: string[] = [];
   const expenseNotes: string[] = [];
   for (const line of r.expenseLines ?? []) {
+    if (isStaffFineExpenseLine(line)) continue;
     const k = savedLineKind(line);
-    if (k === "vendor") {
+    if (k === "staff" || isLegacyStaffVendorLine(line)) {
+      titles.push(staffExpenseLineTitle(line));
+      expenseNotes.push(staffExpenseLineNote(line));
+    } else if (k === "vendor" || k === "purchase") {
       vendors.push((line.vendor ?? "").trim());
       expenseNotes.push((line.ledgerNote ?? "").trim());
+      if (k === "purchase") {
+        for (const item of line.items ?? []) {
+          titles.push(item.name.trim());
+        }
+      }
     } else {
       titles.push((line.label ?? "").trim());
       expenseNotes.push((line.note ?? "").trim());
@@ -1325,8 +1883,19 @@ function amountFieldProps(
   };
 }
 
-export function DailyEntryFormView() {
+export function DailyEntryFormView({
+  openDateKey = null,
+  openStaffPayoutEmployeeId = null,
+  onOpenDateKeyConsumed,
+  onOpenStaffPayoutEmployeeIdConsumed,
+}: {
+  openDateKey?: string | null;
+  openStaffPayoutEmployeeId?: string | null;
+  onOpenDateKeyConsumed?: () => void;
+  onOpenStaffPayoutEmployeeIdConsumed?: () => void;
+} = {}) {
   const { userName } = useSession();
+  const activeEmployees = useActiveEmployees();
   const { map: entryMap, loading: entriesLoading, error: entriesLoadError, refresh: refreshEntries } =
     useDailyEntryMap();
 
@@ -1385,6 +1954,24 @@ export function DailyEntryFormView() {
   expenseLinesRef.current = expenseLines;
   const voidSaleAttachmentUrlsRef = useRef<string[]>(voidSaleAttachmentUrls);
   voidSaleAttachmentUrlsRef.current = voidSaleAttachmentUrls;
+  const pendingStaffPayoutEmployeeIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!openDateKey || !/^\d{4}-\d{2}-\d{2}$/.test(openDateKey)) return;
+    setDateKey(openDateKey);
+    setDateFieldText(formatDateKeyAsDisplay(openDateKey));
+    setActiveView("entry");
+    if (openStaffPayoutEmployeeId?.trim()) {
+      pendingStaffPayoutEmployeeIdRef.current = openStaffPayoutEmployeeId.trim();
+    }
+    onOpenDateKeyConsumed?.();
+    onOpenStaffPayoutEmployeeIdConsumed?.();
+  }, [
+    openDateKey,
+    openStaffPayoutEmployeeId,
+    onOpenDateKeyConsumed,
+    onOpenStaffPayoutEmployeeIdConsumed,
+  ]);
 
   const historyRows = useMemo(
     () => listDailyEntriesDescendingFromMap(entryMap),
@@ -1432,8 +2019,35 @@ export function DailyEntryFormView() {
     [expenseLines, ledgerBookNames],
   );
 
+  const purchaseVendorOptions = useMemo(() => {
+    // Vendor-purpose books only (purchases are bills against suppliers).
+    const vendorBooks = getLedgerBookNamesSnapshot("vendor");
+    const set = new Set(vendorBooks);
+    for (const line of expenseLines) {
+      if (line.kind !== "purchase") continue;
+      const v = line.vendor.trim();
+      if (v) set.add(v);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [expenseLines, ledgerBookNames]);
+
+  const cashExpenseLines = useMemo(
+    () => expenseLines.filter((l) => l.kind !== "purchase"),
+    [expenseLines],
+  );
+  const purchaseExpenseLines = useMemo(
+    () => expenseLines.filter((l) => l.kind === "purchase"),
+    [expenseLines],
+  );
+
+  const purchaseBillsTotal = useMemo(
+    () =>
+      purchaseExpenseLines.reduce((s, line) => s + purchaseItemsTotal(line.items), 0),
+    [purchaseExpenseLines],
+  );
+
   const expenseSum = useMemo(
-    () => expenseLines.reduce((s, line) => s + parseAmount(line.amount), 0),
+    () => expenseLines.reduce((s, line) => s + draftLineCashAmount(line), 0),
     [expenseLines],
   );
 
@@ -1604,6 +2218,23 @@ export function DailyEntryFormView() {
     setBankWithdrawn("");
     setFormNotice({ kind: "none" });
   }, [dateKey, entryMap, savedListVersion]);
+
+  useEffect(() => {
+    const employeeId = pendingStaffPayoutEmployeeIdRef.current;
+    if (!employeeId || activeView !== "entry") return;
+    pendingStaffPayoutEmployeeIdRef.current = null;
+    setExpenseLines((lines) => {
+      if (
+        lines.some(
+          (line) =>
+            line.kind === "staff" && line.employeeId === employeeId && line.amount.trim() === "",
+        )
+      ) {
+        return lines;
+      }
+      return [...lines, { ...newStaffExpenseLine(), employeeId }];
+    });
+  }, [dateKey, entryMap, savedListVersion, activeView]);
 
   useEffect(() => {
     if (openingEdit) openingInputRef.current?.focus();
@@ -1798,9 +2429,15 @@ export function DailyEntryFormView() {
         | "label"
         | "note"
         | "receiptDataUrls"
+        | "vendorReceipts"
+        | "vendorNotes"
         | "ledgerKind"
         | "ledgerEmployeeLineKind"
         | "ledgerNote"
+        | "employeeId"
+        | "staffLineKind"
+        | "salaryPaymentId"
+        | "items"
       >
     >,
   ) {
@@ -1814,10 +2451,18 @@ export function DailyEntryFormView() {
       if ("amount" in nextPatch && n.part === "amount") return { kind: "none" };
       if ("label" in nextPatch && n.part === "label") return { kind: "none" };
       if ("note" in nextPatch && n.part === "note") return { kind: "none" };
-      if ("receiptDataUrls" in nextPatch && n.part === "attach") return { kind: "none" };
+      if (
+        ("receiptDataUrls" in nextPatch || "vendorReceipts" in nextPatch) &&
+        n.part === "attach"
+      ) {
+        return { kind: "none" };
+      }
       if ("ledgerKind" in nextPatch && n.part === "ledgerKind") return { kind: "none" };
       if ("ledgerEmployeeLineKind" in nextPatch && n.part === "ledgerKind") return { kind: "none" };
+      if ("employeeId" in nextPatch && n.part === "employeeId") return { kind: "none" };
       if ("ledgerNote" in nextPatch && n.part === "ledgerNote") return { kind: "none" };
+      if ("vendorNotes" in nextPatch && n.part === "ledgerNote") return { kind: "none" };
+      if ("items" in nextPatch && n.part === "amount") return { kind: "none" };
       return n;
     });
     setExpenseLines((lines) =>
@@ -1825,11 +2470,60 @@ export function DailyEntryFormView() {
     );
   }
 
-  async function attachReceiptFilesToExpenseLine(lineId: string, picked: readonly File[]) {
+  function patchPurchaseItem(
+    lineId: string,
+    itemKey: string,
+    patch: Partial<PurchaseItemDraft>,
+  ) {
+    setFormNotice((n) => {
+      if (n.kind !== "field" || n.lineId !== lineId) return n;
+      if (n.part === "amount" || n.part === "vendor") return { kind: "none" };
+      return n;
+    });
+    setExpenseLines((lines) =>
+      lines.map((line) => {
+        if (line.id !== lineId || line.kind !== "purchase") return line;
+        return {
+          ...line,
+          items: line.items.map((item) => {
+            if (item.key !== itemKey) return item;
+            const next = { ...item, ...patch };
+            if (typeof patch.qty === "string") {
+              next.qty = sanitizeNonNegativeDecimalInput(patch.qty);
+            }
+            if (typeof patch.rate === "string") {
+              next.rate = sanitizeNonNegativeDecimalInput(patch.rate);
+            }
+            return next;
+          }),
+        };
+      }),
+    );
+  }
+
+  async function attachReceiptFilesToExpenseLine(
+    lineId: string,
+    picked: readonly File[],
+    purchaseVendor?: string,
+  ) {
     if (picked.length === 0) return;
     const line = expenseLinesRef.current.find((l) => l.id === lineId);
     if (!line) return;
-    const urls = line.receiptDataUrls;
+    const vendorKey = purchaseVendor?.trim() ?? "";
+    const useVendorBucket = line.kind === "purchase" && vendorKey.length > 0;
+    if (line.kind === "purchase" && !useVendorBucket) {
+      setFormNotice({
+        kind: "field",
+        message: "Select a vendor before attaching a receipt.",
+        lineId,
+        part: "vendor",
+      });
+      return;
+    }
+    const urls = useVendorBucket
+      ? purchaseVendorReceiptUrls(line, vendorKey)
+      : line.receiptDataUrls;
+    const busyKey = useVendorBucket ? `${lineId}::${vendorKey}` : lineId;
 
     if (!readValidAccessToken()) {
       setFormNotice({
@@ -1856,8 +2550,22 @@ export function DailyEntryFormView() {
 
     const previewUrls = slice.map((f) => URL.createObjectURL(f));
     let current = [...urls, ...previewUrls];
-    patchLine(lineId, { receiptDataUrls: current });
-    setAttachBusyLineId(lineId);
+    const applyUrls = (nextUrls: string[]) => {
+      if (useVendorBucket) {
+        patchLine(lineId, {
+          vendorReceipts: {
+            ...(expenseLinesRef.current.find((l) => l.id === lineId)?.vendorReceipts ??
+              line.vendorReceipts),
+            [vendorKey]: nextUrls,
+          },
+          receiptDataUrls: [],
+        });
+      } else {
+        patchLine(lineId, { receiptDataUrls: nextUrls });
+      }
+    };
+    applyUrls(current);
+    setAttachBusyLineId(busyKey);
     try {
       for (let i = 0; i < slice.length; i++) {
         const file = slice[i];
@@ -1865,11 +2573,11 @@ export function DailyEntryFormView() {
         try {
           const ref = await uploadFileToStorage(file, "receipts", file.name);
           current = current.map((u) => (u === preview ? ref : u));
-          patchLine(lineId, { receiptDataUrls: current });
+          applyUrls(current);
         } catch (err) {
           URL.revokeObjectURL(preview);
           current = current.filter((u) => u !== preview);
-          patchLine(lineId, { receiptDataUrls: current });
+          applyUrls(current);
           setFormNotice({
             kind: "globalError",
             message:
@@ -1922,13 +2630,27 @@ export function DailyEntryFormView() {
       }
       const lineId = expenseLineIdFromPasteEvent(e);
       if (!lineId) return;
-      if (!expenseLinesRef.current.some((l) => l.id === lineId)) return;
+      const line = expenseLinesRef.current.find((l) => l.id === lineId);
+      if (!line) return;
       e.preventDefault();
-      void attachReceiptFilesToExpenseLine(lineId, files);
+      const purchaseVendor =
+        line.kind === "purchase"
+          ? purchaseVendorFromEventTarget(e.target) ??
+            purchaseVendorFromEventTarget(document.activeElement)
+          : null;
+      void attachReceiptFilesToExpenseLine(
+        lineId,
+        files,
+        purchaseVendor ?? undefined,
+      );
     };
     document.addEventListener("paste", onPaste, true);
     return () => document.removeEventListener("paste", onPaste, true);
   }, [activeView]);
+
+  function addStaffExpenseLine() {
+    setExpenseLines((lines) => [...lines, newStaffExpenseLine()]);
+  }
 
   function addVendorExpenseLine() {
     setExpenseLines((lines) => [...lines, newVendorExpenseLine()]);
@@ -1936,6 +2658,10 @@ export function DailyEntryFormView() {
 
   function addRegularExpenseLine() {
     setExpenseLines((lines) => [...lines, newRegularExpenseLine()]);
+  }
+
+  function addPurchaseExpenseLine() {
+    setExpenseLines((lines) => [...lines, newPurchaseExpenseLine()]);
   }
 
   function removeExpenseLine(id: string) {
@@ -1967,8 +2693,31 @@ export function DailyEntryFormView() {
     });
   }
 
+  function purchaseVendorNoteKey(lineId: string, vendor: string): string {
+    return `${lineId}::${vendor}`;
+  }
+
+  function togglePurchaseVendorNote(lineId: string, vendor: string) {
+    const key = purchaseVendorNoteKey(lineId, vendor);
+    setOpenExpenseNoteLineIds((prev) => {
+      const next = new Set(prev);
+      const willOpen = !next.has(key);
+      if (willOpen) {
+        next.add(key);
+        requestAnimationFrame(() => {
+          document.getElementById(`purchase-note-${lineId}-${vendor}`)?.focus();
+        });
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }
+
   function renderExpenseNoteToggle(line: ExpenseLineDraft) {
-    const hasNote = line.note.trim().length > 0;
+    const noteText =
+      line.kind === "vendor" || line.kind === "purchase" ? line.ledgerNote : line.note;
+    const hasNote = noteText.trim().length > 0;
     const noteOpen = openExpenseNoteLineIds.has(line.id);
     return (
       <button
@@ -1984,51 +2733,191 @@ export function DailyEntryFormView() {
     );
   }
 
-  /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
-  function renderReceiptAddControl(line: ExpenseLineDraft) {
-    const inputId = `daily-expense-receipt-${line.id}`;
-    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-    const busy = attachBusyLineId === line.id;
-    const attachCount = line.receiptDataUrls.length;
+  function renderPurchaseVendorNoteToggle(
+    line: ExpenseLineDraft,
+    vendor: string,
+    options?: { disabled?: boolean },
+  ) {
+    const noteText = (line.vendorNotes?.[vendor] ?? "").trim();
+    const key = purchaseVendorNoteKey(line.id, vendor);
+    const noteOpen = openExpenseNoteLineIds.has(key);
+    const disabled = Boolean(options?.disabled);
     return (
-      <div className="flex min-w-0 flex-col items-center gap-0.5">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          togglePurchaseVendorNote(line.id, vendor);
+        }}
+        className={`${expenseIconBtnClass} ${noteText || noteOpen ? expenseNoteBtnActiveClass : ""} ${
+          disabled ? "cursor-not-allowed opacity-50" : ""
+        }`}
+        aria-label={
+          disabled
+            ? "Select a vendor before adding a note"
+            : noteOpen
+              ? "Hide note"
+              : noteText
+                ? "Edit note"
+                : "Add note"
+        }
+        aria-expanded={noteOpen}
+        title={
+          disabled
+            ? "Select a vendor before adding a note"
+            : noteOpen
+              ? "Hide note"
+              : noteText
+                ? "Edit note"
+                : "Add note"
+        }
+      >
+        <StickyNote className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+      </button>
+    );
+  }
+
+  function removePurchaseItem(lineId: string, itemKey: string) {
+    setFormNotice((n) =>
+      n.kind === "field" && n.lineId === lineId ? { kind: "none" } : n,
+    );
+    const line = expenseLinesRef.current.find((l) => l.id === lineId);
+    if (!line || line.kind !== "purchase") return;
+    const removed = line.items.find((i) => i.key === itemKey);
+    const vendor = removed?.vendor.trim() ?? "";
+    const remaining = line.items.filter((i) => i.key !== itemKey);
+    const vendorStillUsed = remaining.some((i) => i.vendor.trim() === vendor);
+    if (vendor && !vendorStillUsed) {
+      setOpenExpenseNoteLineIds((prev) => {
+        const next = new Set(prev);
+        next.delete(purchaseVendorNoteKey(lineId, vendor));
+        return next;
+      });
+    }
+    setExpenseLines((lines) =>
+      lines.flatMap((l) => {
+        if (l.id !== lineId || l.kind !== "purchase") return [l];
+        const nextItems = l.items.filter((i) => i.key !== itemKey);
+        if (nextItems.length === 0) return [];
+        const removedVendor =
+          l.items.find((i) => i.key === itemKey)?.vendor.trim() ?? "";
+        const stillUsed = nextItems.some((i) => i.vendor.trim() === removedVendor);
+        if (!removedVendor || stillUsed) {
+          return [{ ...l, items: nextItems }];
+        }
+        const nextReceipts = { ...(l.vendorReceipts ?? {}) };
+        const nextNotes = { ...(l.vendorNotes ?? {}) };
+        delete nextReceipts[removedVendor];
+        delete nextNotes[removedVendor];
+        return [
+          {
+            ...l,
+            items: nextItems,
+            vendorReceipts: nextReceipts,
+            vendorNotes: nextNotes,
+          },
+        ];
+      }),
+    );
+  }
+
+  function removePurchaseVendorGroup(lineId: string, vendor: string) {
+    setFormNotice((n) =>
+      n.kind === "field" && n.lineId === lineId ? { kind: "none" } : n,
+    );
+    setOpenExpenseNoteLineIds((prev) => {
+      const next = new Set(prev);
+      next.delete(purchaseVendorNoteKey(lineId, vendor));
+      return next;
+    });
+    setExpenseLines((lines) =>
+      lines.flatMap((line) => {
+        if (line.id !== lineId || line.kind !== "purchase") return [line];
+        const remaining = line.items.filter((i) => i.vendor.trim() !== vendor);
+        if (remaining.length === 0) return [];
+        const nextReceipts = { ...line.vendorReceipts };
+        const nextNotes = { ...line.vendorNotes };
+        delete nextReceipts[vendor];
+        delete nextNotes[vendor];
+        return [
+          {
+            ...line,
+            items: remaining,
+            vendorReceipts: nextReceipts,
+            vendorNotes: nextNotes,
+          },
+        ];
+      }),
+    );
+  }
+
+  /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
+  function renderReceiptAddControl(
+    line: ExpenseLineDraft,
+    options?: { purchaseVendor?: string; disabled?: boolean },
+  ) {
+    const purchaseVendor = options?.purchaseVendor?.trim() ?? "";
+    const forPurchaseVendor = line.kind === "purchase" && purchaseVendor.length > 0;
+    const inputId = forPurchaseVendor
+      ? `daily-expense-receipt-${line.id}-${purchaseVendor}`
+      : `daily-expense-receipt-${line.id}`;
+    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+    const busyKey = forPurchaseVendor ? `${line.id}::${purchaseVendor}` : line.id;
+    const busy = attachBusyLineId === busyKey;
+    const attachCount = forPurchaseVendor
+      ? purchaseVendorReceiptUrls(line, purchaseVendor).length
+      : line.receiptDataUrls.length;
+    const disabled = Boolean(options?.disabled) || busy;
+    return (
+      <div className="flex shrink-0 flex-col items-center gap-0.5">
       <div
-        className={`relative flex h-[3.125rem] w-full min-w-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+        className={`relative flex size-12 shrink-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
       >
         <input
           id={inputId}
           type="file"
           accept={RECEIPT_FILE_ACCEPT}
           multiple
-          disabled={busy}
+          disabled={disabled}
           className="sr-only"
           tabIndex={-1}
           aria-hidden
           onChange={(e) => {
             const picked = e.target.files ? Array.from(e.target.files) : [];
             e.target.value = "";
-            void attachReceiptFilesToExpenseLine(line.id, picked);
+            void attachReceiptFilesToExpenseLine(
+              line.id,
+              picked,
+              forPurchaseVendor ? purchaseVendor : undefined,
+            );
           }}
         />
         <label
-          htmlFor={inputId}
-          className={`relative inline-flex size-12 shrink-0 cursor-pointer items-center justify-center rounded-[10px] border border-solid transition-colors hover:bg-[var(--pos-nav-hover)]/30 ${
-            busy ? "pointer-events-none opacity-50" : ""
+          htmlFor={disabled ? undefined : inputId}
+          className={`relative inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid transition-colors ${
+            disabled
+              ? "cursor-not-allowed opacity-50"
+              : "cursor-pointer hover:bg-[var(--pos-nav-hover)]/30"
           } ${
             attachErr
               ? "border-red-500/70 text-red-700"
               : "border-[var(--pos-divider)] text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
           }`}
           aria-label={
-            attachCount > 0
-              ? `Attach receipt image or PDF (${attachCount} attached)`
-              : "Attach receipt image or PDF"
+            options?.disabled
+              ? "Select a vendor before attaching"
+              : attachCount > 0
+                ? `Attach receipt image or PDF (${attachCount} attached)`
+                : "Attach receipt image or PDF"
           }
           title={
-            attachErr ??
-            (attachCount > 0
-              ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste (Ctrl+V / ⌘V) while this row is focused`
-              : "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused")
+            options?.disabled
+              ? "Select a vendor before attaching"
+              : attachErr ??
+                (attachCount > 0
+                  ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste (Ctrl+V / ⌘V) while this row is focused`
+                  : "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused")
           }
         >
           <Paperclip className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
@@ -2049,13 +2938,20 @@ export function DailyEntryFormView() {
     );
   }
 
-  function renderReceiptThumbnails(line: ExpenseLineDraft) {
-    const urls = line.receiptDataUrls;
+  function renderReceiptThumbnails(
+    line: ExpenseLineDraft,
+    options?: { purchaseVendor?: string },
+  ) {
+    const purchaseVendor = options?.purchaseVendor?.trim() ?? "";
+    const forPurchaseVendor = line.kind === "purchase" && purchaseVendor.length > 0;
+    const urls = forPurchaseVendor
+      ? purchaseVendorReceiptUrls(line, purchaseVendor)
+      : line.receiptDataUrls;
     if (urls.length === 0) return null;
     return (
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1">
         {urls.map((url, idx) => (
-          <div key={`${line.id}-r-${idx}`} className="relative inline-flex">
+          <div key={`${line.id}-${purchaseVendor || "r"}-${idx}`} className="relative inline-flex">
             <button
               type="button"
               className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50"
@@ -2084,9 +2980,18 @@ export function DailyEntryFormView() {
               onClick={(e) => {
                 e.stopPropagation();
                 const removed = urls[idx];
-                patchLine(line.id, {
-                  receiptDataUrls: urls.filter((_, j) => j !== idx),
-                });
+                const nextUrls = urls.filter((_, j) => j !== idx);
+                if (forPurchaseVendor) {
+                  patchLine(line.id, {
+                    vendorReceipts: {
+                      ...line.vendorReceipts,
+                      [purchaseVendor]: nextUrls,
+                    },
+                    receiptDataUrls: [],
+                  });
+                } else {
+                  patchLine(line.id, { receiptDataUrls: nextUrls });
+                }
                 purgeAttachmentRefIfUnsaved(savedRowForDate, removed);
               }}
             >
@@ -2207,98 +3112,120 @@ export function DailyEntryFormView() {
   async function handleSave() {
     if (isSaving || isFormLocked || isAttachmentUploadBusy) return;
 
-    const validation = findFirstExpenseValidationError(expenseLines);
-    if (validation) {
-      setFormNotice({
-        kind: "field",
-        message: validation.message,
-        lineId: validation.lineId,
-        part: validation.part,
-      });
-      return;
-    }
-
-    const voidAmtParsed = Math.max(0, parseAmount(voidSale));
-    const voidRemarksTrim = voidSaleRemarks.trim();
-    if (voidAmtParsed > 0 && !voidRemarksTrim) {
-      setFormNotice({
-        kind: "salesField",
-        message: "Remarks are required when void sales is greater than zero.",
-        part: "voidRemarks",
-      });
-      return;
-    }
-
-    const voidAttachmentsToSave = dailyEntryCandidate.voidSaleAttachmentDataUrls;
-    const linesToSave = buildExpenseLinesToSaveFromDrafts(expenseLines);
-    const expenseTotal = linesToSave.reduce((s, line) => s + line.amount, 0);
-    const bankWithdrawnToSave = dailyEntryCandidate.bankWithdrawn ?? 0;
-
-    if (bankWithdrawnToSave > expenseTotal) {
-      setFormNotice({
-        kind: "salesField",
-        message: "Withdrawn from bank cannot exceed total expenses for this day.",
-        part: "bankWithdrawn",
-      });
-      return;
-    }
-
-    const prior = entryMap[dateKey];
-    const nextCandidate: DailyEntryRow = {
-      ...dailyEntryCandidate,
-      voidSaleAttachmentDataUrls: voidAttachmentsToSave,
-      expenses: expenseTotal,
-      bankWithdrawn: bankWithdrawnToSave,
-      expenseLines: linesToSave,
-      enteredBy: enteredByName,
-    };
-
-    if (prior && savedEntryBodyEquals(prior, nextCandidate)) {
-      setFormNotice({
-        kind: "global",
-        message:
-          "Nothing changed — this day already has that entry. Edit the form to update it, or choose another date.",
-      });
-      return;
-    }
-
-    const { lines: syncedExpenseLines, failed: ledgerPostFailed } = syncDailyExpenseLedgerLinks({
-      prior,
-      baseLines: linesToSave,
-      expenseLines,
-      dateKey,
-    });
-
-    const next: DailyEntryRow = {
-      ...nextCandidate,
-      expenseLines: syncedExpenseLines,
-      expenses: syncedExpenseLines.reduce((s, line) => s + line.amount, 0),
-    };
-
-    setIsSaving(true);
     try {
-      await flushLedgerWorkspacePersist();
-      const result = await saveDailyEntry(next);
-      if (!result.ok) {
-        setFormNotice({ kind: "global", message: result.message });
+      await loadSalaryWorkspace();
+      const validation = findFirstExpenseValidationError(expenseLines, {
+        dateKey,
+        salaryBundle: getSalaryBundle(),
+      });
+      if (validation) {
+        setFormNotice({
+          kind: "field",
+          message: validation.message,
+          lineId: validation.lineId,
+          part: validation.part,
+        });
         return;
       }
 
-      await refreshEntries();
-      setSavedListVersion((v) => v + 1);
-      setOpeningEdit(false);
-      const baseMsg = prior
-        ? `Updated ${formatDateKeyAsDisplay(dateKey)}. One entry per day — use Edit on a row or Add Entry for another date.`
-        : `Saved ${formatDateKeyAsDisplay(dateKey)}. One entry per day — Add Entry for another date or review the list below.`;
-      setFormNotice({
-        kind: "global",
-        message: ledgerPostFailed
-          ? `${baseMsg} Bills & payments: one or more ledger lines could not be saved — check amounts and types.`
-          : baseMsg,
+      const voidAmtParsed = Math.max(0, parseAmount(voidSale));
+      const voidRemarksTrim = voidSaleRemarks.trim();
+      if (voidAmtParsed > 0 && !voidRemarksTrim) {
+        setFormNotice({
+          kind: "salesField",
+          message: "Remarks are required when void sales is greater than zero.",
+          part: "voidRemarks",
+        });
+        return;
+      }
+
+      const voidAttachmentsToSave = dailyEntryCandidate.voidSaleAttachmentDataUrls;
+      const linesToSave = buildExpenseLinesToSaveFromDrafts(expenseLines);
+      const expenseTotal = expenseTotalFromExpenseLines(linesToSave);
+      const bankWithdrawnToSave = dailyEntryCandidate.bankWithdrawn ?? 0;
+
+      if (bankWithdrawnToSave > expenseTotal) {
+        setFormNotice({
+          kind: "salesField",
+          message: "Withdrawn from bank cannot exceed total expenses for this day.",
+          part: "bankWithdrawn",
+        });
+        return;
+      }
+
+      const prior = entryMap[dateKey];
+      const nextCandidate: DailyEntryRow = {
+        ...dailyEntryCandidate,
+        voidSaleAttachmentDataUrls: voidAttachmentsToSave,
+        expenses: expenseTotal,
+        bankWithdrawn: bankWithdrawnToSave,
+        expenseLines: linesToSave,
+        enteredBy: enteredByName,
+      };
+
+      if (prior && savedEntryBodyEquals(prior, nextCandidate)) {
+        setFormNotice({
+          kind: "global",
+          message:
+            "Nothing changed — this day already has that entry. Edit the form to update it, or choose another date.",
+        });
+        return;
+      }
+
+      const { lines: syncedExpenseLines, failed: ledgerPostFailed } =
+        syncDailyExpenseLedgerLinks({
+          prior,
+          baseLines: linesToSave,
+          expenseLines,
+          dateKey,
+        });
+
+      const staffSync = await syncStaffExpensesToSalaryRegister({
+        dateKey,
+        nextLines: syncedExpenseLines,
+        priorLines: prior?.expenseLines,
       });
-      setActiveView("history");
-    } finally {
-      setIsSaving(false);
+      if (!staffSync.ok) {
+        setFormNotice({ kind: "globalError", message: staffSync.message });
+        return;
+      }
+
+      const next: DailyEntryRow = {
+        ...nextCandidate,
+        expenseLines: staffSync.lines,
+        expenses: expenseTotalFromExpenseLines(staffSync.lines),
+      };
+
+      setIsSaving(true);
+      try {
+        await flushLedgerWorkspacePersist();
+        const result = await saveDailyEntry(next);
+        if (!result.ok) {
+          setFormNotice({ kind: "global", message: result.message });
+          return;
+        }
+
+        await refreshEntries();
+        setSavedListVersion((v) => v + 1);
+        setOpeningEdit(false);
+        const baseMsg = prior
+          ? `Updated ${formatDateKeyAsDisplay(dateKey)}. One entry per day — use Edit on a row or Add Entry for another date.`
+          : `Saved ${formatDateKeyAsDisplay(dateKey)}. One entry per day — Add Entry for another date or review the list below.`;
+        setFormNotice({
+          kind: "global",
+          message: ledgerPostFailed
+            ? `${baseMsg} Cashbook payments: one or more lines could not be saved — check amounts.`
+            : baseMsg,
+        });
+        setActiveView("history");
+      } finally {
+        setIsSaving(false);
+      }
+    } catch (e) {
+      setFormNotice({
+        kind: "globalError",
+        message: e instanceof Error ? e.message : "Could not save this entry.",
+      });
     }
   }
 
@@ -2988,8 +3915,9 @@ export function DailyEntryFormView() {
           </div>
 
           <div className={entrySectionsGridClass}>
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
             <div
-              className={`${columnShellClass} min-w-0 flex-1 !bg-red-50/65 ![border-color:rgba(220,38,38,0.28)]`}
+              className={`${columnShellClass} min-w-0 w-full !bg-red-50/65 ![border-color:rgba(220,38,38,0.28)]`}
             >
               <p className={`${sectionTitleClass} !text-red-800`}>Expenses</p>
               <div className="max-w-[11.5rem]">
@@ -3010,13 +3938,111 @@ export function DailyEntryFormView() {
                   <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
                 </label>
               </div>
-              {expenseLines.length === 0 ? (
+              {cashExpenseLines.length === 0 ? (
                 <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
-                  No expenses for this day yet — add one below.
+                  No cash expenses for this day yet — add one below.
                 </p>
               ) : null}
               <div className="flex flex-col gap-4">
-                {expenseLines.map((line) => {
+                {cashExpenseLines.map((line) => {
+                  if (line.kind === "staff") {
+                    const employeeErr = fieldErrorMessage(formNotice, line.id, "employeeId");
+                    const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
+                    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+                    return (
+                      <div
+                        key={line.id}
+                        data-expense-line-id={line.id}
+                        className={expenseCardClass}
+                      >
+                        <div className={expenseCardRowClass}>
+                          <div
+                            className="flex min-w-0 flex-1 basis-44 flex-col gap-1"
+                            data-field-error-anchor={`${line.id}:employeeId`}
+                          >
+                            <select
+                              className={`${expensePrimarySelectClass} ${employeeErr ? FIELD_ERR_INPUT : ""}`}
+                              value={line.employeeId}
+                              onChange={(e) =>
+                                patchLine(line.id, { employeeId: e.target.value })
+                              }
+                              aria-label="Employee"
+                              aria-invalid={employeeErr ? true : undefined}
+                            >
+                              <option value="">Employee…</option>
+                              {activeEmployees.map((emp) => (
+                                <option key={emp.id} value={emp.id}>
+                                  {emp.name}
+                                </option>
+                              ))}
+                            </select>
+                            <ExpenseFieldErrorBubble message={employeeErr} />
+                          </div>
+                          <div
+                            className="flex w-[8.5rem] shrink-0 flex-col gap-1"
+                            data-field-error-anchor={`${line.id}:amount`}
+                          >
+                            <input
+                              {...amountFieldProps("next")}
+                              value={line.amount}
+                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
+                              placeholder="0"
+                              className={`${amountInputClass} ${amountErr ? FIELD_ERR_INPUT : ""}`}
+                              aria-label="Staff payout amount"
+                              aria-invalid={amountErr ? true : undefined}
+                            />
+                            <ExpenseFieldErrorBubble message={amountErr} />
+                          </div>
+                          <div className="flex shrink-0 items-start gap-1">
+                            {renderExpenseNoteToggle(line)}
+                            {renderReceiptAddControl(line)}
+                            <button
+                              type="button"
+                              onClick={() => removeExpenseLine(line.id)}
+                              className={expenseRemoveBtnClass}
+                              aria-label="Remove expense line"
+                            >
+                              <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                            </button>
+                          </div>
+                        </div>
+                        {openExpenseNoteLineIds.has(line.id) ? (
+                          <input
+                            id={`expense-note-${line.id}`}
+                            type="text"
+                            value={line.note}
+                            onChange={(e) => patchLine(line.id, { note: e.target.value })}
+                            placeholder="Add a note (optional)"
+                            className={expenseQuietInputClass}
+                            autoComplete="off"
+                            aria-label="Note"
+                            data-field-error-anchor={`${line.id}:note`}
+                          />
+                        ) : null}
+                        <label className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--pos-text-2)]">
+                          <input
+                            type="checkbox"
+                            checked={line.staffLineKind === STAFF_ADVANCE_LINE_KIND}
+                            onChange={(e) =>
+                              patchLine(line.id, {
+                                staffLineKind: e.target.checked
+                                  ? STAFF_ADVANCE_LINE_KIND
+                                  : STAFF_LINE_KIND,
+                              })
+                            }
+                            className="size-3.5 shrink-0 accent-[var(--pos-text-1)]"
+                          />
+                          Advance salary
+                        </label>
+                        {attachErr ? (
+                          <div data-field-error-anchor={`${line.id}:attach`}>
+                            <ExpenseFieldErrorBubble message={attachErr} />
+                          </div>
+                        ) : null}
+                        {renderReceiptThumbnails(line)}
+                      </div>
+                    );
+                  }
                   if (line.kind === "regular") {
                     const labelErr = fieldErrorMessage(formNotice, line.id, "label");
                     const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
@@ -3107,12 +4133,8 @@ export function DailyEntryFormView() {
                       "amount",
                     );
                     const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-                    const ledgerKindErr = fieldErrorMessage(formNotice, line.id, "ledgerKind");
+                    const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
                     const ledgerSupplierForLine = resolveLedgerSupplierIdByBookName(trimmed);
-                    const isEmployeeLedgerRow = Boolean(
-                      ledgerSupplierForLine &&
-                        isEmployeesLedgerSupplierId(ledgerSupplierForLine),
-                    );
 
                     return (
                       <div
@@ -3141,22 +4163,11 @@ export function DailyEntryFormView() {
                                 } else if (val === VENDOR_OTHER_VALUE) {
                                   if (inList) patchLine(line.id, { vendor: "", ...ledgerReset });
                                 } else {
-                                  const sid = resolveLedgerSupplierIdByBookName(val);
-                                  if (sid && isEmployeesLedgerSupplierId(sid)) {
-                                    patchLine(line.id, {
-                                      vendor: val,
-                                      ledgerKind: "payment",
-                                      ledgerEmployeeLineKind: "salary",
-                                      ledgerNote: "",
-                                    });
-                                  } else if (sid) {
-                                    patchLine(line.id, {
-                                      vendor: val,
-                                      ...ledgerReset,
-                                    });
-                                  } else {
-                                    patchLine(line.id, { vendor: val });
-                                  }
+                                  patchLine(line.id, {
+                                    vendor: val,
+                                    ledgerKind: "" as const,
+                                    ledgerEmployeeLineKind: "" as const,
+                                  });
                                 }
                               }}
                               aria-label="Cashbook"
@@ -3199,106 +4210,51 @@ export function DailyEntryFormView() {
                             />
                             <ExpenseFieldErrorBubble message={vendorAmountErr} />
                           </div>
-                          <div className="flex w-12 shrink-0 flex-col items-center">
+                          <div className="flex shrink-0 items-start gap-1">
+                            {renderExpenseNoteToggle(line)}
                             {renderReceiptAddControl(line)}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeExpenseLine(line.id)}
-                            className={expenseRemoveBtnClass}
-                            aria-label="Remove expense line"
-                          >
-                            <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
-                          </button>
-                        </div>
-                        {ledgerSupplierForLine ? (
-                          <div className="flex min-w-0 flex-wrap items-start gap-2">
-                            <span className={`${expenseMiniLabelClass} self-center`}>
-                              Ledger
-                            </span>
-                            <div
-                              className="flex w-[10rem] min-w-0 flex-col gap-1"
-                              data-field-error-anchor={`${line.id}:ledgerKind`}
-                            >
-                              {isEmployeeLedgerRow ? (
-                                <select
-                                  name="ledger-employee-line-kind"
-                                  value={line.ledgerEmployeeLineKind}
-                                  onChange={(e) =>
-                                    patchLine(line.id, {
-                                      ledgerEmployeeLineKind: (e.target.value ||
-                                        "") as "" | EmployeeLedgerLineKind,
-                                    })
-                                  }
-                                  className={`${selectClass} h-8 w-full min-w-0 ${ledgerKindErr ? FIELD_ERR_INPUT : ""}`}
-                                  aria-label="Payment type for this staff book"
-                                >
-                                  <option value="">None</option>
-                                  {EMPLOYEE_LEDGER_LINE_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <select
-                                  name="ledger-type"
-                                  value={
-                                    line.ledgerKind === "invoice" || line.ledgerKind === "payment"
-                                      ? line.ledgerKind
-                                      : line.ledgerKind === "return_credit" ||
-                                          line.ledgerKind === "adjustment"
-                                        ? "payment"
-                                        : ""
-                                  }
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    patchLine(line.id, {
-                                      ledgerKind: (v || "") as ExpenseLineDraft["ledgerKind"],
-                                    });
-                                  }}
-                                  className={`${selectClass} h-8 w-full min-w-0 ${ledgerKindErr ? FIELD_ERR_INPUT : ""}`}
-                                  aria-label="Ledger entry type for this book"
-                                >
-                                  <option value="">None</option>
-                                  {LEDGER_DRAWER_KINDS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-                              <ExpenseFieldErrorBubble message={ledgerKindErr} />
-                            </div>
-                            <div
-                              className="min-w-0 flex-1 basis-36"
-                              data-field-error-anchor={`${line.id}:ledgerNote`}
-                            >
-                              <input
-                                name="ledger-note"
-                                type="text"
-                                value={line.ledgerNote}
-                                onChange={(e) => patchLine(line.id, { ledgerNote: e.target.value })}
-                                placeholder="Memo (optional)"
-                                className={`${textInputClass} h-8 min-w-0 py-0`}
-                                autoComplete="off"
-                                aria-label="Ledger note for this expense line"
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                            Match a book from{" "}
                             <button
                               type="button"
-                              onClick={() => dispatchPosSelectLeaf("lm-management")}
+                              onClick={() => removeExpenseLine(line.id)}
+                              className={expenseRemoveBtnClass}
+                              aria-label="Remove expense line"
+                            >
+                              <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                            </button>
+                          </div>
+                        </div>
+                        {openExpenseNoteLineIds.has(line.id) ? (
+                          <div
+                            className="min-w-0"
+                            data-field-error-anchor={`${line.id}:ledgerNote`}
+                          >
+                            <input
+                              id={`expense-note-${line.id}`}
+                              name="ledger-note"
+                              type="text"
+                              value={line.ledgerNote}
+                              onChange={(e) => patchLine(line.id, { ledgerNote: e.target.value })}
+                              placeholder="Add a note (optional)"
+                              className={expenseQuietInputClass}
+                              autoComplete="off"
+                              aria-label="Payment note"
+                            />
+                            <ExpenseFieldErrorBubble message={ledgerNoteErr} />
+                          </div>
+                        ) : null}
+                        {!ledgerSupplierForLine && trimmed ? (
+                          <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
+                            Name doesn’t match a cashbook — expense only. Add bills from{" "}
+                            <button
+                              type="button"
+                              onClick={() => openCashbooksPanel("books")}
                               className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
                             >
-                              cashbooks
-                            </button>{" "}
-                            to post this line to the ledger.
+                              Cashbooks
+                            </button>
+                            .
                           </p>
-                        )}
+                        ) : null}
                         {attachErr ? (
                           <div data-field-error-anchor={`${line.id}:attach`}>
                             <ExpenseFieldErrorBubble message={attachErr} />
@@ -3309,24 +4265,342 @@ export function DailyEntryFormView() {
                     );
                 })}
                 </div>
-                <div className="flex shrink-0 flex-col gap-2 pt-1">
+                <div className="flex shrink-0 flex-wrap gap-2 pt-1 sm:flex-nowrap">
                   <button
                     type="button"
                     onClick={addRegularExpenseLine}
-                    className={expenseAddBtnClass}
+                    className={expenseAddRegularBtnClass}
                   >
                     <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                    Add expense
+                    Expense
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addStaffExpenseLine}
+                    className={expenseAddStaffBtnClass}
+                  >
+                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                    Staff payout
                   </button>
                   <button
                     type="button"
                     onClick={addVendorExpenseLine}
-                    className={expenseAddBtnClass}
+                    className={expenseAddVendorBtnClass}
                   >
                     <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                    Add cashbook expense
+                    Vendor Payment
                   </button>
                 </div>
+
+            </div>
+
+            <div
+              className={`${columnShellClass} w-full !bg-yellow-50/70 ![border-color:rgba(202,138,4,0.35)]`}
+            >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className={`${sectionTitleClass} !text-yellow-900`}>Items purchased</p>
+              {purchaseBillsTotal > 0 ? (
+                <p className="text-[11px] tabular-nums text-[var(--pos-text-2)]">
+                  Bills ৳{formatSummaryMoney(purchaseBillsTotal)}
+                  <span className="ml-1 text-[10px]">(not cash)</span>
+                </p>
+              ) : null}
+            </div>
+            <p className="text-[11px] leading-snug text-[var(--pos-text-2)]">
+              Record stock bought on credit against a vendor — posts as a bill in Cashbooks.
+            </p>
+            {purchaseExpenseLines.length === 0 ? (
+              <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
+                No purchases for this day yet.
+              </p>
+            ) : null}
+            <div className="flex flex-col gap-4">
+              {purchaseExpenseLines.map((line) => {
+                const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
+                const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
+                const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+                const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
+                const vendorGroups = groupPurchaseDraftItemsByVendor(line.items);
+                const lastItemVendor =
+                  [...line.items].reverse().find((i) => i.vendor.trim())?.vendor ?? "";
+                const itemField =
+                  "h-8 w-full rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-1.5 text-[12px] text-[var(--pos-text-1)]";
+                return (
+                  <div
+                    key={line.id}
+                    data-expense-line-id={line.id}
+                    className={expenseCardClass}
+                  >
+                    <div className="space-y-3">
+                      {vendorGroups.map((group) => {
+                        const groupTotal = purchaseItemsTotal(group.items);
+                        const hasVendor = group.vendor.length > 0;
+                        return (
+                          <div
+                            key={`${line.id}-vg-${group.vendor || "unassigned"}`}
+                            data-purchase-vendor={group.vendor}
+                            className="space-y-1.5 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]/50 p-2"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
+                                {hasVendor ? group.vendor : "Select vendor"}
+                              </p>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <div
+                                className="mb-1 grid min-w-[480px] gap-1 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]"
+                                style={{
+                                  gridTemplateColumns:
+                                    "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
+                                }}
+                              >
+                                <span>Vendor</span>
+                                <span>Name</span>
+                                <span className="text-right">Qty</span>
+                                <span>Unit</span>
+                                <span className="text-right">Rate</span>
+                                <span className="text-right">Total</span>
+                                <span />
+                              </div>
+                              <div className="space-y-1.5">
+                                {group.items.map((row) => {
+                                  const idx = line.items.findIndex((i) => i.key === row.key);
+                                  const lineTotal = purchaseItemLineTotal(row);
+                                  return (
+                                    <div
+                                      key={row.key}
+                                      className="grid min-w-[480px] items-center gap-1"
+                                      style={{
+                                        gridTemplateColumns:
+                                          "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
+                                      }}
+                                    >
+                                      <select
+                                        value={row.vendor}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            vendor: e.target.value,
+                                          })
+                                        }
+                                        aria-label={`Item ${idx + 1} vendor`}
+                                        className={itemField}
+                                      >
+                                        <option value="">Vendor…</option>
+                                        {purchaseVendorOptions.map((name) => (
+                                          <option key={name} value={name}>
+                                            {name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="text"
+                                        value={row.name}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            name: e.target.value,
+                                          })
+                                        }
+                                        placeholder="Item name"
+                                        aria-label={`Item ${idx + 1} name`}
+                                        className={itemField}
+                                      />
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min={0}
+                                        step="any"
+                                        value={row.qty}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            qty: e.target.value,
+                                          })
+                                        }
+                                        placeholder="1"
+                                        aria-label={`Item ${idx + 1} quantity`}
+                                        className={`${itemField} text-right font-mono`}
+                                      />
+                                      <select
+                                        value={row.unit}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            unit: e.target.value,
+                                          })
+                                        }
+                                        aria-label={`Item ${idx + 1} unit`}
+                                        className={itemField}
+                                      >
+                                        {PURCHASE_ITEM_UNITS.map((u) => (
+                                          <option key={u} value={u}>
+                                            {u}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min={0}
+                                        step="any"
+                                        value={row.rate}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            rate: e.target.value,
+                                          })
+                                        }
+                                        placeholder="0"
+                                        aria-label={`Item ${idx + 1} rate`}
+                                        className={`${itemField} text-right font-mono`}
+                                      />
+                                      <div
+                                        className="flex h-8 items-center justify-end px-1 font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]"
+                                        aria-label={`Item ${idx + 1} total`}
+                                      >
+                                        {lineTotal !== null ? formatMoney(lineTotal) : "—"}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => removePurchaseItem(line.id, row.key)}
+                                        className="inline-flex size-7 items-center justify-center rounded-full text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                                        aria-label={`Remove item ${idx + 1}`}
+                                      >
+                                        <Trash2
+                                          className="size-3.5"
+                                          strokeWidth={2.25}
+                                        />
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                patchLine(line.id, {
+                                  items: [
+                                    ...line.items,
+                                    newPurchaseItemDraft(group.vendor || lastItemVendor),
+                                  ],
+                                })
+                              }
+                              className="inline-flex h-7 items-center gap-1 rounded-[7px] px-2 text-[11px] font-medium text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                            >
+                              <Plus className="size-3" strokeWidth={2.5} aria-hidden />
+                              Add item
+                            </button>
+                            <div className={expenseCardRowClass}>
+                              <div
+                                className="flex min-w-0 flex-1 flex-col gap-1"
+                                data-field-error-anchor={`${line.id}:amount`}
+                              >
+                                <div className="flex h-[3.125rem] items-center justify-between gap-2 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3">
+                                  <span className="text-[11px] text-[var(--pos-text-2)]">
+                                    Total
+                                  </span>
+                                  <span className="font-mono text-[13px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                                    {groupTotal > 0 ? formatMoney(groupTotal) : "—"}
+                                  </span>
+                                </div>
+                                <ExpenseFieldErrorBubble
+                                  message={amountErr ?? vendorErr}
+                                />
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1">
+                                {renderPurchaseVendorNoteToggle(line, group.vendor, {
+                                  disabled: !hasVendor,
+                                })}
+                                {renderReceiptAddControl(line, {
+                                  purchaseVendor: group.vendor,
+                                  disabled: !hasVendor,
+                                })}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    removePurchaseVendorGroup(line.id, group.vendor)
+                                  }
+                                  className={expenseRemoveBtnClass}
+                                  aria-label={
+                                    hasVendor
+                                      ? `Remove ${group.vendor} purchase`
+                                      : "Remove unassigned items"
+                                  }
+                                >
+                                  <Trash2
+                                    className="size-4 shrink-0"
+                                    strokeWidth={2.25}
+                                    aria-hidden
+                                  />
+                                </button>
+                              </div>
+                            </div>
+                            {openExpenseNoteLineIds.has(
+                              purchaseVendorNoteKey(line.id, group.vendor),
+                            ) && hasVendor ? (
+                              <div
+                                className="min-w-0"
+                                data-field-error-anchor={`${line.id}:ledgerNote`}
+                              >
+                                <input
+                                  id={`purchase-note-${line.id}-${group.vendor}`}
+                                  name="purchase-vendor-note"
+                                  type="text"
+                                  value={line.vendorNotes?.[group.vendor] ?? ""}
+                                  onChange={(e) =>
+                                    patchLine(line.id, {
+                                      vendorNotes: {
+                                        ...(line.vendorNotes ?? {}),
+                                        [group.vendor]: e.target.value,
+                                      },
+                                    })
+                                  }
+                                  placeholder="Bill note (optional)"
+                                  className={expenseQuietInputClass}
+                                  autoComplete="off"
+                                  aria-label={`${group.vendor} bill note`}
+                                />
+                                <ExpenseFieldErrorBubble message={ledgerNoteErr} />
+                              </div>
+                            ) : null}
+                            {renderReceiptThumbnails(line, {
+                              purchaseVendor: group.vendor,
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {purchaseVendorOptions.length === 0 ? (
+                      <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
+                        Add a vendor cashbook in{" "}
+                        <button
+                          type="button"
+                          onClick={() => openCashbooksPanel("books")}
+                          className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
+                        >
+                          Cashbooks
+                        </button>{" "}
+                        first.
+                      </p>
+                    ) : null}
+                    {attachErr ? (
+                      <div data-field-error-anchor={`${line.id}:attach`}>
+                        <ExpenseFieldErrorBubble message={attachErr} />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex shrink-0 flex-col gap-2 pt-1">
+              <button
+                type="button"
+                onClick={addPurchaseExpenseLine}
+                className={expenseAddPurchaseBtnClass}
+              >
+                <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                Add items purchased
+              </button>
+            </div>
+          </div>
+
             </div>
 
             <div
@@ -3472,6 +4746,7 @@ export function DailyEntryFormView() {
                 </div>
               </div>
           </div>
+
         </div>
         </fieldset>
             </form>
@@ -3619,16 +4894,27 @@ export function DailyEntryFormView() {
                         </tr>
                       </thead>
                       <tbody>
-                        {historyDetailRow.expenseLines.map((line, idx) => {
+                        {historyDetailRow.expenseLines
+                          .filter((line) => !isStaffFineExpenseLine(line))
+                          .map((line, idx) => {
                           const kind = savedLineKind(line);
                           const title =
-                            kind === "vendor"
-                              ? (line.vendor ?? "").trim() || "Cashbook"
-                              : (line.label ?? "").trim() || "Regular expense";
+                            kind === "staff"
+                              ? staffExpenseLineTitle(line)
+                              : kind === "vendor"
+                                ? (line.vendor ?? "").trim() || "Cashbook"
+                                : kind === "purchase"
+                                  ? (line.vendor ?? "").trim() || "Purchase"
+                                  : (line.label ?? "").trim() || "Regular expense";
                           const noteText =
-                            kind === "vendor"
-                              ? (line.ledgerNote ?? "").trim()
-                              : (line.note ?? "").trim();
+                            kind === "staff"
+                              ? staffExpenseLineNote(line)
+                              : kind === "vendor" || kind === "purchase"
+                                ? (line.ledgerNote ?? "").trim() ||
+                                  (kind === "purchase" && line.items?.length
+                                    ? `${line.items.length} item${line.items.length === 1 ? "" : "s"}`
+                                    : "")
+                                : (line.note ?? "").trim();
                           const rc = receiptCountForLine(line);
                           return (
                             <tr
@@ -3642,7 +4928,13 @@ export function DailyEntryFormView() {
                                 {title}
                               </td>
                               <td className="whitespace-nowrap px-2 py-1.5 text-[var(--pos-text-2)]">
-                                {kind === "vendor" ? "Cashbook" : "Regular"}
+                                {kind === "staff"
+                                  ? "Payout"
+                                  : kind === "vendor"
+                                    ? "Cashbook"
+                                    : kind === "purchase"
+                                      ? "Purchase"
+                                      : "Regular"}
                               </td>
                               <td className="max-w-[12rem] px-2 py-1.5 break-words text-[var(--pos-text-2)]">
                                 {noteText ? noteText : "—"}
@@ -3916,7 +5208,9 @@ export function DailyEntryFormView() {
               </button>
             </div>
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-3">
-              {historyDetailRow.expenseLines?.map((line, idx) => {
+              {historyDetailRow.expenseLines
+                ?.filter((line) => !isStaffFineExpenseLine(line))
+                .map((line, idx) => {
                 const urls = line.receiptDataUrls ?? [];
                 if (urls.length === 0) return null;
                 if (historyReceiptsLineIndex !== null && idx !== historyReceiptsLineIndex) {
@@ -3924,13 +5218,19 @@ export function DailyEntryFormView() {
                 }
                 const kind = savedLineKind(line);
                 const title =
-                  kind === "vendor"
-                    ? (line.vendor ?? "").trim() || "Cashbook"
-                    : (line.label ?? "").trim() || "Regular expense";
+                  kind === "staff"
+                    ? staffExpenseLineTitle(line)
+                    : kind === "vendor"
+                      ? (line.vendor ?? "").trim() || "Cashbook"
+                      : kind === "purchase"
+                        ? (line.vendor ?? "").trim() || "Purchase"
+                        : (line.label ?? "").trim() || "Regular expense";
                 const lineNote =
-                  kind === "vendor"
-                    ? (line.ledgerNote ?? "").trim()
-                    : (line.note ?? "").trim();
+                  kind === "staff"
+                    ? staffExpenseLineNote(line)
+                    : kind === "vendor" || kind === "purchase"
+                      ? (line.ledgerNote ?? "").trim()
+                      : (line.note ?? "").trim();
                 return (
                   <section key={`receipt-block-${idx}`} className="space-y-2">
                     <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">

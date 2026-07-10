@@ -11,7 +11,9 @@ import {
 
 type ApiEmployeeDirectory = { employees: unknown[]; updatedAt?: string };
 
-let directorySnapshot: Employee[] = defaultEmployeeDirectory();
+let directorySnapshot: Employee[] = isDemoDataMode()
+  ? defaultEmployeeDirectory()
+  : [];
 let activeSnapshot: Employee[] = directorySnapshot.filter((e) => e.active);
 const listeners = new Set<() => void>();
 let loadPromise: Promise<void> | null = null;
@@ -86,15 +88,13 @@ async function fetchDirectoryFromApi(): Promise<{ list: Employee[]; apiWasEmpty:
     token,
   });
   const coerced = coerceEmployeeList(data.employees);
-  if (coerced.length > 0) return { list: coerced, apiWasEmpty: false };
-  if (directorySnapshot.some((e) => e.name.trim())) {
-    return { list: directorySnapshot, apiWasEmpty: true };
-  }
-  return { list: defaultEmployeeDirectory(), apiWasEmpty: true };
+  // Empty API roster is authoritative — do not fall back to demo defaults.
+  return { list: coerced, apiWasEmpty: coerced.length === 0 };
 }
 
 function mergeDirectoryWithApi(remote: Employee[]): Employee[] {
-  if (remote.length === 0) return directorySnapshot;
+  // Empty remote means the branch roster was cleared; keep it empty.
+  if (remote.length === 0) return [];
 
   const remoteByName = new Map<string, Employee>();
   for (const emp of remote) {

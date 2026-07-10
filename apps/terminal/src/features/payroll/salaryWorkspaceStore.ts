@@ -206,6 +206,10 @@ export function setSalaryBundle(updater: (b: SalarySheetBundle) => SalarySheetBu
   localDirty = true;
   saveStateSnapshot = { saving: false, error: null, dirty: true };
   emit();
+  if (isDemoDataMode()) {
+    mirrorToLocalStorage(next);
+    return;
+  }
   schedulePersist();
 }
 
