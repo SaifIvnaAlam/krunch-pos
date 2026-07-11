@@ -93,7 +93,8 @@ type PurchaseItemDraft = {
   name: string;
   qty: string;
   unit: string;
-  rate: string;
+  /** Line total in taka — primary input; rate is derived as total ÷ qty. */
+  total: string;
 };
 
 type ExpenseLineDraft = {
@@ -127,6 +128,11 @@ type ExpenseLineDraft = {
   ledgerNote: string;
   /** Item rows for purchase bills. */
   items: PurchaseItemDraft[];
+  /**
+   * Vendor payment rows auto-created from items purchased — amount stays synced
+   * to that vendor’s purchase total until the user edits vendor/amount.
+   */
+  syncedFromPurchaseVendor?: string;
 };
 
 const PURCHASE_ITEM_UNITS = [
@@ -149,7 +155,7 @@ function newPurchaseItemDraft(vendor = ""): PurchaseItemDraft {
     name: "",
     qty: "1",
     unit: "pcs",
-    rate: "",
+    total: "",
   };
 }
 
@@ -752,12 +758,21 @@ function parseAmount(raw: string): number {
 }
 
 function purchaseItemLineTotal(item: PurchaseItemDraft): number | null {
-  if (!item.name.trim()) return null;
   const qty = parseAmount(item.qty);
-  const rate = parseAmount(item.rate);
-  if (!Number.isFinite(qty) || !Number.isFinite(rate)) return null;
-  if (qty <= 0 || rate < 0) return null;
-  return Math.round(qty * rate * 100) / 100;
+  const total = parseAmount(item.total);
+  if (!Number.isFinite(qty) || !Number.isFinite(total)) return null;
+  if (qty <= 0 || total < 0) return null;
+  if (!item.total.trim()) return null;
+  return Math.round(total * 100) / 100;
+}
+
+/** Unit rate derived from total ÷ qty (display / persist helper). */
+function purchaseItemLineRate(item: PurchaseItemDraft): number | null {
+  const total = purchaseItemLineTotal(item);
+  if (total === null) return null;
+  const qty = parseAmount(item.qty);
+  if (!Number.isFinite(qty) || qty <= 0) return null;
+  return Math.round((total / qty) * 100) / 100;
 }
 
 function purchaseItemsTotal(items: readonly PurchaseItemDraft[]): number {
@@ -787,6 +802,88 @@ function groupPurchaseDraftItemsByVendor(
     map.get(vendor)!.push(item);
   }
   return order.map((vendor) => ({ vendor, items: map.get(vendor)! }));
+}
+
+/** Sum of valid purchase item totals per vendor across all purchase cards. */
+function purchaseVendorTotalsFromLines(
+  lines: readonly ExpenseLineDraft[],
+): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const line of lines) {
+    if (line.kind !== "purchase") continue;
+    for (const group of groupPurchaseDraftItemsByVendor(line.items)) {
+      if (!group.vendor) continue;
+      const groupTotal = purchaseItemsTotal(group.items);
+      if (groupTotal <= 0) continue;
+      const prev = totals.get(group.vendor) ?? 0;
+      totals.set(group.vendor, Math.round((prev + groupTotal) * 100) / 100);
+    }
+  }
+  return totals;
+}
+
+function amountStringFromPurchaseTotal(total: number): string {
+  return total > 0 ? String(total) : "";
+}
+
+/**
+ * Keep a vendor expense row for each purchase vendor: create if missing, update
+ * amount while still synced, drop synced rows when that vendor’s purchases go away.
+ */
+function syncVendorExpensesFromPurchases(
+  lines: readonly ExpenseLineDraft[],
+  dismissedVendors: ReadonlySet<string>,
+): ExpenseLineDraft[] {
+  const totals = purchaseVendorTotalsFromLines(lines);
+  const next: ExpenseLineDraft[] = [];
+  const claimedVendors = new Set<string>();
+
+  for (const line of lines) {
+    if (line.kind === "purchase") {
+      next.push(line);
+      continue;
+    }
+
+    const syncedVendor = line.syncedFromPurchaseVendor?.trim() ?? "";
+    if (line.kind === "vendor" && syncedVendor) {
+      const total = totals.get(syncedVendor);
+      if (total == null || total <= 0) {
+        continue;
+      }
+      claimedVendors.add(syncedVendor);
+      const amount = amountStringFromPurchaseTotal(total);
+      if (line.vendor === syncedVendor && line.amount === amount) {
+        next.push(line);
+      } else {
+        next.push({
+          ...line,
+          vendor: syncedVendor,
+          amount,
+          syncedFromPurchaseVendor: syncedVendor,
+        });
+      }
+      continue;
+    }
+
+    next.push(line);
+  }
+
+  for (const [vendor, total] of totals) {
+    if (claimedVendors.has(vendor)) continue;
+    if (dismissedVendors.has(vendor)) continue;
+    const hasManualVendorExpense = next.some(
+      (line) => line.kind === "vendor" && line.vendor.trim() === vendor,
+    );
+    if (hasManualVendorExpense) continue;
+    next.push({
+      ...newVendorExpenseLine(),
+      vendor,
+      amount: amountStringFromPurchaseTotal(total),
+      syncedFromPurchaseVendor: vendor,
+    });
+  }
+
+  return next;
 }
 
 function purchaseVendorReceiptUrls(
@@ -838,9 +935,9 @@ function committedPurchaseItemsFromDraft(
     const vendor = row.vendor.trim();
     if (!vendor) return null;
     const total = purchaseItemLineTotal(row);
-    if (total === null || total <= 0) return null;
+    const rate = purchaseItemLineRate(row);
+    if (total === null || total <= 0 || rate === null) return null;
     const qty = parseAmount(row.qty);
-    const rate = parseAmount(row.rate);
     out.push({
       id: row.key,
       vendor,
@@ -1023,7 +1120,7 @@ function findFirstExpenseValidationError(
     }
     if (line.kind === "purchase") {
       const hasAnyItemInput = line.items.some(
-        (i) => i.name.trim() || i.rate.trim() || i.vendor.trim() || parseAmount(i.qty) !== 1,
+        (i) => i.name.trim() || i.total.trim() || i.vendor.trim() || parseAmount(i.qty) !== 1,
       );
       const hasAnyVendorNote = Object.values(line.vendorNotes ?? {}).some((n) => n.trim());
       if (!hasAnyItemInput && !line.ledgerNote.trim() && !hasAnyVendorNote) {
@@ -1033,7 +1130,7 @@ function findFirstExpenseValidationError(
         const touched =
           item.name.trim() ||
           item.vendor.trim() ||
-          item.rate.trim() ||
+          item.total.trim() ||
           (item.qty.trim() !== "" && item.qty.trim() !== "1");
         if (!touched) continue;
         if (!item.vendor.trim()) {
@@ -1052,7 +1149,7 @@ function findFirstExpenseValidationError(
         }
         if (!item.name.trim() || purchaseItemLineTotal(item) === null) {
           return {
-            message: "Enter name, qty, and rate for each item.",
+            message: "Enter name, qty, and total for each item.",
             lineId: line.id,
             part: "amount",
           };
@@ -1061,7 +1158,7 @@ function findFirstExpenseValidationError(
       const items = committedPurchaseItemsFromDraft(line.items);
       if (!items || items.length === 0) {
         return {
-          message: "Add at least one item with vendor, name, qty, and rate.",
+          message: "Add at least one item with vendor, name, qty, and total.",
           lineId: line.id,
           part: "amount",
         };
@@ -1461,7 +1558,12 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
                 name: item.name,
                 qty: String(item.qty),
                 unit: item.unit || "pcs",
-                rate: item.rate === 0 ? "" : String(item.rate),
+                total:
+                  item.total > 0
+                    ? String(item.total)
+                    : item.rate > 0 && item.qty > 0
+                      ? String(Math.round(item.qty * item.rate * 100) / 100)
+                      : "",
               }))
             : [newPurchaseItemDraft(lineVendor)];
         const existing = purchaseDraftById.get(draftId);
@@ -1954,6 +2056,9 @@ export function DailyEntryFormView({
   const deleteConfirmInputRef = useRef<HTMLInputElement>(null);
   const expenseLinesRef = useRef<ExpenseLineDraft[]>(expenseLines);
   expenseLinesRef.current = expenseLines;
+  /** Vendors whose auto expense row was removed by the user — skip recreate until totals change. */
+  const dismissedPurchaseExpenseVendorsRef = useRef<Set<string>>(new Set());
+  const lastPurchaseVendorTotalsRef = useRef<Map<string, number>>(new Map());
   const voidSaleAttachmentUrlsRef = useRef<string[]>(voidSaleAttachmentUrls);
   voidSaleAttachmentUrlsRef.current = voidSaleAttachmentUrls;
   const pendingStaffPayoutEmployeeIdRef = useRef<string | null>(null);
@@ -2197,7 +2302,10 @@ export function DailyEntryFormView({
       setVoidSale(amountFieldText(existing.voidSale));
       setVoidSaleRemarks(existing.voidSaleRemarks ?? "");
       setVoidSaleAttachmentUrls([...(existing.voidSaleAttachmentDataUrls ?? [])]);
-      setExpenseLines(draftsFromRow(existing));
+      const loadedDrafts = draftsFromRow(existing);
+      dismissedPurchaseExpenseVendorsRef.current = new Set();
+      lastPurchaseVendorTotalsRef.current = purchaseVendorTotalsFromLines(loadedDrafts);
+      setExpenseLines(loadedDrafts);
       setBankWithdrawn(amountFieldText(existing.bankWithdrawn));
       setFormNotice({ kind: "none" });
       return;
@@ -2214,6 +2322,8 @@ export function DailyEntryFormView({
     setVoidSale("");
     setVoidSaleRemarks("");
     setVoidSaleAttachmentUrls([]);
+    dismissedPurchaseExpenseVendorsRef.current = new Set();
+    lastPurchaseVendorTotalsRef.current = new Map();
     setExpenseLines([]);
     setBankWithdrawn("");
     setFormNotice({ kind: "none" });
@@ -2428,6 +2538,28 @@ export function DailyEntryFormView({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [activeView]);
 
+  function applyPurchaseVendorExpenseSync(
+    lines: ExpenseLineDraft[],
+  ): ExpenseLineDraft[] {
+    const totals = purchaseVendorTotalsFromLines(lines);
+    const prev = lastPurchaseVendorTotalsRef.current;
+    for (const [vendor, total] of totals) {
+      if (prev.get(vendor) !== total) {
+        dismissedPurchaseExpenseVendorsRef.current.delete(vendor);
+      }
+    }
+    for (const vendor of prev.keys()) {
+      if (!totals.has(vendor)) {
+        dismissedPurchaseExpenseVendorsRef.current.delete(vendor);
+      }
+    }
+    lastPurchaseVendorTotalsRef.current = totals;
+    return syncVendorExpensesFromPurchases(
+      lines,
+      dismissedPurchaseExpenseVendorsRef.current,
+    );
+  }
+
   function patchLine(
     id: string,
     patch: Partial<
@@ -2474,9 +2606,27 @@ export function DailyEntryFormView({
       if ("items" in nextPatch && n.part === "amount") return { kind: "none" };
       return n;
     });
-    setExpenseLines((lines) =>
-      lines.map((line) => (line.id === id ? { ...line, ...nextPatch } : line)),
-    );
+    setExpenseLines((lines) => {
+      const updated = lines.map((line) => {
+        if (line.id !== id) return line;
+        const next: ExpenseLineDraft = { ...line, ...nextPatch };
+        if (
+          line.kind === "vendor" &&
+          line.syncedFromPurchaseVendor &&
+          (("amount" in nextPatch && nextPatch.amount !== line.amount) ||
+            ("vendor" in nextPatch && nextPatch.vendor !== line.vendor))
+        ) {
+          const syncedVendor = line.syncedFromPurchaseVendor;
+          dismissedPurchaseExpenseVendorsRef.current.add(syncedVendor);
+          delete next.syncedFromPurchaseVendor;
+        }
+        return next;
+      });
+      if ("items" in nextPatch) {
+        return applyPurchaseVendorExpenseSync(updated);
+      }
+      return updated;
+    });
   }
 
   function patchPurchaseItem(
@@ -2489,8 +2639,8 @@ export function DailyEntryFormView({
       if (n.part === "amount" || n.part === "vendor") return { kind: "none" };
       return n;
     });
-    setExpenseLines((lines) =>
-      lines.map((line) => {
+    setExpenseLines((lines) => {
+      const updated = lines.map((line) => {
         if (line.id !== lineId || line.kind !== "purchase") return line;
         return {
           ...line,
@@ -2500,14 +2650,15 @@ export function DailyEntryFormView({
             if (typeof patch.qty === "string") {
               next.qty = sanitizeNonNegativeDecimalInput(patch.qty);
             }
-            if (typeof patch.rate === "string") {
-              next.rate = sanitizeNonNegativeDecimalInput(patch.rate);
+            if (typeof patch.total === "string") {
+              next.total = sanitizeNonNegativeDecimalInput(patch.total);
             }
             return next;
           }),
         };
-      }),
-    );
+      });
+      return applyPurchaseVendorExpenseSync(updated);
+    });
   }
 
   async function attachReceiptFilesToExpenseLine(
@@ -2678,7 +2829,15 @@ export function DailyEntryFormView({
       n.kind === "field" && n.lineId === id ? { kind: "none" } : n,
     );
     setExpenseLines((lines) => {
-      return lines.filter((l) => l.id !== id);
+      const removed = lines.find((l) => l.id === id);
+      const filtered = lines.filter((l) => l.id !== id);
+      if (removed?.kind === "purchase") {
+        return applyPurchaseVendorExpenseSync(filtered);
+      }
+      if (removed?.syncedFromPurchaseVendor) {
+        dismissedPurchaseExpenseVendorsRef.current.add(removed.syncedFromPurchaseVendor);
+      }
+      return filtered;
     });
   }
 
@@ -2804,8 +2963,8 @@ export function DailyEntryFormView({
         return next;
       });
     }
-    setExpenseLines((lines) =>
-      lines.flatMap((l) => {
+    setExpenseLines((lines) => {
+      const updated = lines.flatMap((l) => {
         if (l.id !== lineId || l.kind !== "purchase") return [l];
         const nextItems = l.items.filter((i) => i.key !== itemKey);
         if (nextItems.length === 0) return [];
@@ -2827,8 +2986,9 @@ export function DailyEntryFormView({
             vendorNotes: nextNotes,
           },
         ];
-      }),
-    );
+      });
+      return applyPurchaseVendorExpenseSync(updated);
+    });
   }
 
   function removePurchaseVendorGroup(lineId: string, vendor: string) {
@@ -2840,8 +3000,8 @@ export function DailyEntryFormView({
       next.delete(purchaseVendorNoteKey(lineId, vendor));
       return next;
     });
-    setExpenseLines((lines) =>
-      lines.flatMap((line) => {
+    setExpenseLines((lines) => {
+      const updated = lines.flatMap((line) => {
         if (line.id !== lineId || line.kind !== "purchase") return [line];
         const remaining = line.items.filter((i) => i.vendor.trim() !== vendor);
         if (remaining.length === 0) return [];
@@ -2857,8 +3017,9 @@ export function DailyEntryFormView({
             vendorNotes: nextNotes,
           },
         ];
-      }),
-    );
+      });
+      return applyPurchaseVendorExpenseSync(updated);
+    });
   }
 
   /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
@@ -3918,6 +4079,313 @@ export function DailyEntryFormView({
           <div className={entrySectionsGridClass}>
             <div className="flex min-w-0 flex-1 flex-col gap-3">
             <div
+              className={`${columnShellClass} w-full !bg-yellow-50/70 ![border-color:rgba(202,138,4,0.35)]`}
+            >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className={`${sectionTitleClass} !text-yellow-900`}>Items purchased</p>
+              {purchaseBillsTotal > 0 ? (
+                <p className="text-[11px] tabular-nums text-[var(--pos-text-2)]">
+                  Bills ৳{formatSummaryMoney(purchaseBillsTotal)}
+                  <span className="ml-1 text-[10px]">(not cash)</span>
+                </p>
+              ) : null}
+            </div>
+            <p className="text-[11px] leading-snug text-[var(--pos-text-2)]">
+              Record stock bought on credit against a vendor — posts as a bill in Cashbooks.
+            </p>
+            {purchaseExpenseLines.length === 0 ? (
+              <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
+                No purchases for this day yet.
+              </p>
+            ) : null}
+            <div className="flex flex-col gap-4">
+              {purchaseExpenseLines.map((line) => {
+                const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
+                const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
+                const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+                const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
+                const vendorGroups = groupPurchaseDraftItemsByVendor(line.items);
+                const lastItemVendor =
+                  [...line.items].reverse().find((i) => i.vendor.trim())?.vendor ?? "";
+                const itemField =
+                  "h-8 w-full rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-1.5 text-[12px] text-[var(--pos-text-1)]";
+                return (
+                  <div
+                    key={line.id}
+                    data-expense-line-id={line.id}
+                    className={expenseCardClass}
+                  >
+                    <div className="space-y-3">
+                      {vendorGroups.map((group) => {
+                        const groupTotal = purchaseItemsTotal(group.items);
+                        const hasVendor = group.vendor.length > 0;
+                        return (
+                          <div
+                            key={`${line.id}-vg-${group.vendor || "unassigned"}`}
+                            data-purchase-vendor={group.vendor}
+                            className="space-y-1.5 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]/50 p-2"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
+                                {hasVendor ? group.vendor : "Select vendor"}
+                              </p>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <div
+                                className="mb-1 grid min-w-[480px] gap-1 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]"
+                                style={{
+                                  gridTemplateColumns:
+                                    "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
+                                }}
+                              >
+                                <span>Vendor</span>
+                                <span>Name</span>
+                                <span className="text-right">Qty</span>
+                                <span>Unit</span>
+                                <span className="text-right">Total</span>
+                                <span className="text-right">Rate</span>
+                                <span />
+                              </div>
+                              <div className="space-y-1.5">
+                                {group.items.map((row) => {
+                                  const idx = line.items.findIndex((i) => i.key === row.key);
+                                  const lineRate = purchaseItemLineRate(row);
+                                  return (
+                                    <div
+                                      key={row.key}
+                                      className="grid min-w-[480px] items-center gap-1"
+                                      style={{
+                                        gridTemplateColumns:
+                                          "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
+                                      }}
+                                    >
+                                      <select
+                                        value={row.vendor}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            vendor: e.target.value,
+                                          })
+                                        }
+                                        aria-label={`Item ${idx + 1} vendor`}
+                                        className={itemField}
+                                      >
+                                        <option value="">Vendor…</option>
+                                        {purchaseVendorOptions.map((name) => (
+                                          <option key={name} value={name}>
+                                            {name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="text"
+                                        value={row.name}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            name: e.target.value,
+                                          })
+                                        }
+                                        placeholder="Item name"
+                                        aria-label={`Item ${idx + 1} name`}
+                                        className={itemField}
+                                      />
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min={0}
+                                        step="any"
+                                        value={row.qty}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            qty: e.target.value,
+                                          })
+                                        }
+                                        placeholder="1"
+                                        aria-label={`Item ${idx + 1} quantity`}
+                                        className={`${itemField} text-right font-mono`}
+                                      />
+                                      <select
+                                        value={row.unit}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            unit: e.target.value,
+                                          })
+                                        }
+                                        aria-label={`Item ${idx + 1} unit`}
+                                        className={itemField}
+                                      >
+                                        {PURCHASE_ITEM_UNITS.map((u) => (
+                                          <option key={u} value={u}>
+                                            {u}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min={0}
+                                        step="any"
+                                        value={row.total}
+                                        onChange={(e) =>
+                                          patchPurchaseItem(line.id, row.key, {
+                                            total: e.target.value,
+                                          })
+                                        }
+                                        placeholder="0"
+                                        aria-label={`Item ${idx + 1} total`}
+                                        className={`${itemField} text-right font-mono`}
+                                      />
+                                      <div
+                                        className="flex h-8 items-center justify-end px-1 font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]"
+                                        aria-label={`Item ${idx + 1} rate`}
+                                      >
+                                        {lineRate !== null ? formatMoney(lineRate) : "—"}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => removePurchaseItem(line.id, row.key)}
+                                        className="inline-flex size-7 items-center justify-center rounded-full text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                                        aria-label={`Remove item ${idx + 1}`}
+                                      >
+                                        <Trash2
+                                          className="size-3.5"
+                                          strokeWidth={2.25}
+                                        />
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                patchLine(line.id, {
+                                  items: [
+                                    ...line.items,
+                                    newPurchaseItemDraft(group.vendor || lastItemVendor),
+                                  ],
+                                })
+                              }
+                              className="inline-flex h-7 items-center gap-1 rounded-[7px] px-2 text-[11px] font-medium text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                            >
+                              <Plus className="size-3" strokeWidth={2.5} aria-hidden />
+                              Add item
+                            </button>
+                            <div className={expenseCardRowClass}>
+                              <div
+                                className="flex min-w-0 flex-1 flex-col gap-1"
+                                data-field-error-anchor={`${line.id}:amount`}
+                              >
+                                <div className="flex h-[3.125rem] items-center justify-between gap-2 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3">
+                                  <span className="text-[11px] text-[var(--pos-text-2)]">
+                                    Total
+                                  </span>
+                                  <span className="font-mono text-[13px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                                    {groupTotal > 0 ? formatMoney(groupTotal) : "—"}
+                                  </span>
+                                </div>
+                                <ExpenseFieldErrorBubble
+                                  message={amountErr ?? vendorErr}
+                                />
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1">
+                                {renderPurchaseVendorNoteToggle(line, group.vendor, {
+                                  disabled: !hasVendor,
+                                })}
+                                {renderReceiptAddControl(line, {
+                                  purchaseVendor: group.vendor,
+                                  disabled: !hasVendor,
+                                })}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    removePurchaseVendorGroup(line.id, group.vendor)
+                                  }
+                                  className={expenseRemoveBtnClass}
+                                  aria-label={
+                                    hasVendor
+                                      ? `Remove ${group.vendor} purchase`
+                                      : "Remove unassigned items"
+                                  }
+                                >
+                                  <Trash2
+                                    className="size-4 shrink-0"
+                                    strokeWidth={2.25}
+                                    aria-hidden
+                                  />
+                                </button>
+                              </div>
+                            </div>
+                            {openExpenseNoteLineIds.has(
+                              purchaseVendorNoteKey(line.id, group.vendor),
+                            ) && hasVendor ? (
+                              <div
+                                className="min-w-0"
+                                data-field-error-anchor={`${line.id}:ledgerNote`}
+                              >
+                                <input
+                                  id={`purchase-note-${line.id}-${group.vendor}`}
+                                  name="purchase-vendor-note"
+                                  type="text"
+                                  value={line.vendorNotes?.[group.vendor] ?? ""}
+                                  onChange={(e) =>
+                                    patchLine(line.id, {
+                                      vendorNotes: {
+                                        ...(line.vendorNotes ?? {}),
+                                        [group.vendor]: e.target.value,
+                                      },
+                                    })
+                                  }
+                                  placeholder="Bill note (optional)"
+                                  className={expenseQuietInputClass}
+                                  autoComplete="off"
+                                  aria-label={`${group.vendor} bill note`}
+                                />
+                                <ExpenseFieldErrorBubble message={ledgerNoteErr} />
+                              </div>
+                            ) : null}
+                            {renderReceiptThumbnails(line, {
+                              purchaseVendor: group.vendor,
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {purchaseVendorOptions.length === 0 ? (
+                      <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
+                        Add a vendor cashbook in{" "}
+                        <button
+                          type="button"
+                          onClick={() => openCashbooksPanel("books")}
+                          className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
+                        >
+                          Cashbooks
+                        </button>{" "}
+                        first.
+                      </p>
+                    ) : null}
+                    {attachErr ? (
+                      <div data-field-error-anchor={`${line.id}:attach`}>
+                        <ExpenseFieldErrorBubble message={attachErr} />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex shrink-0 flex-col gap-2 pt-1">
+              <button
+                type="button"
+                onClick={addPurchaseExpenseLine}
+                className={expenseAddPurchaseBtnClass}
+              >
+                <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                Add items purchased
+              </button>
+            </div>
+          </div>
+
+            <div
               className={`${columnShellClass} min-w-0 w-full !bg-red-50/65 ![border-color:rgba(220,38,38,0.28)]`}
             >
               <p className={`${sectionTitleClass} !text-red-800`}>Expenses</p>
@@ -4308,312 +4776,6 @@ export function DailyEntryFormView({
 
             </div>
 
-            <div
-              className={`${columnShellClass} w-full !bg-yellow-50/70 ![border-color:rgba(202,138,4,0.35)]`}
-            >
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <p className={`${sectionTitleClass} !text-yellow-900`}>Items purchased</p>
-              {purchaseBillsTotal > 0 ? (
-                <p className="text-[11px] tabular-nums text-[var(--pos-text-2)]">
-                  Bills ৳{formatSummaryMoney(purchaseBillsTotal)}
-                  <span className="ml-1 text-[10px]">(not cash)</span>
-                </p>
-              ) : null}
-            </div>
-            <p className="text-[11px] leading-snug text-[var(--pos-text-2)]">
-              Record stock bought on credit against a vendor — posts as a bill in Cashbooks.
-            </p>
-            {purchaseExpenseLines.length === 0 ? (
-              <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
-                No purchases for this day yet.
-              </p>
-            ) : null}
-            <div className="flex flex-col gap-4">
-              {purchaseExpenseLines.map((line) => {
-                const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
-                const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
-                const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-                const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
-                const vendorGroups = groupPurchaseDraftItemsByVendor(line.items);
-                const lastItemVendor =
-                  [...line.items].reverse().find((i) => i.vendor.trim())?.vendor ?? "";
-                const itemField =
-                  "h-8 w-full rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-1.5 text-[12px] text-[var(--pos-text-1)]";
-                return (
-                  <div
-                    key={line.id}
-                    data-expense-line-id={line.id}
-                    className={expenseCardClass}
-                  >
-                    <div className="space-y-3">
-                      {vendorGroups.map((group) => {
-                        const groupTotal = purchaseItemsTotal(group.items);
-                        const hasVendor = group.vendor.length > 0;
-                        return (
-                          <div
-                            key={`${line.id}-vg-${group.vendor || "unassigned"}`}
-                            data-purchase-vendor={group.vendor}
-                            className="space-y-1.5 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]/50 p-2"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
-                                {hasVendor ? group.vendor : "Select vendor"}
-                              </p>
-                            </div>
-                            <div className="overflow-x-auto">
-                              <div
-                                className="mb-1 grid min-w-[480px] gap-1 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]"
-                                style={{
-                                  gridTemplateColumns:
-                                    "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
-                                }}
-                              >
-                                <span>Vendor</span>
-                                <span>Name</span>
-                                <span className="text-right">Qty</span>
-                                <span>Unit</span>
-                                <span className="text-right">Rate</span>
-                                <span className="text-right">Total</span>
-                                <span />
-                              </div>
-                              <div className="space-y-1.5">
-                                {group.items.map((row) => {
-                                  const idx = line.items.findIndex((i) => i.key === row.key);
-                                  const lineTotal = purchaseItemLineTotal(row);
-                                  return (
-                                    <div
-                                      key={row.key}
-                                      className="grid min-w-[480px] items-center gap-1"
-                                      style={{
-                                        gridTemplateColumns:
-                                          "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
-                                      }}
-                                    >
-                                      <select
-                                        value={row.vendor}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            vendor: e.target.value,
-                                          })
-                                        }
-                                        aria-label={`Item ${idx + 1} vendor`}
-                                        className={itemField}
-                                      >
-                                        <option value="">Vendor…</option>
-                                        {purchaseVendorOptions.map((name) => (
-                                          <option key={name} value={name}>
-                                            {name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="text"
-                                        value={row.name}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            name: e.target.value,
-                                          })
-                                        }
-                                        placeholder="Item name"
-                                        aria-label={`Item ${idx + 1} name`}
-                                        className={itemField}
-                                      />
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min={0}
-                                        step="any"
-                                        value={row.qty}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            qty: e.target.value,
-                                          })
-                                        }
-                                        placeholder="1"
-                                        aria-label={`Item ${idx + 1} quantity`}
-                                        className={`${itemField} text-right font-mono`}
-                                      />
-                                      <select
-                                        value={row.unit}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            unit: e.target.value,
-                                          })
-                                        }
-                                        aria-label={`Item ${idx + 1} unit`}
-                                        className={itemField}
-                                      >
-                                        {PURCHASE_ITEM_UNITS.map((u) => (
-                                          <option key={u} value={u}>
-                                            {u}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min={0}
-                                        step="any"
-                                        value={row.rate}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            rate: e.target.value,
-                                          })
-                                        }
-                                        placeholder="0"
-                                        aria-label={`Item ${idx + 1} rate`}
-                                        className={`${itemField} text-right font-mono`}
-                                      />
-                                      <div
-                                        className="flex h-8 items-center justify-end px-1 font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]"
-                                        aria-label={`Item ${idx + 1} total`}
-                                      >
-                                        {lineTotal !== null ? formatMoney(lineTotal) : "—"}
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => removePurchaseItem(line.id, row.key)}
-                                        className="inline-flex size-7 items-center justify-center rounded-full text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
-                                        aria-label={`Remove item ${idx + 1}`}
-                                      >
-                                        <Trash2
-                                          className="size-3.5"
-                                          strokeWidth={2.25}
-                                        />
-                                      </button>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                patchLine(line.id, {
-                                  items: [
-                                    ...line.items,
-                                    newPurchaseItemDraft(group.vendor || lastItemVendor),
-                                  ],
-                                })
-                              }
-                              className="inline-flex h-7 items-center gap-1 rounded-[7px] px-2 text-[11px] font-medium text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                            >
-                              <Plus className="size-3" strokeWidth={2.5} aria-hidden />
-                              Add item
-                            </button>
-                            <div className={expenseCardRowClass}>
-                              <div
-                                className="flex min-w-0 flex-1 flex-col gap-1"
-                                data-field-error-anchor={`${line.id}:amount`}
-                              >
-                                <div className="flex h-[3.125rem] items-center justify-between gap-2 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3">
-                                  <span className="text-[11px] text-[var(--pos-text-2)]">
-                                    Total
-                                  </span>
-                                  <span className="font-mono text-[13px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-                                    {groupTotal > 0 ? formatMoney(groupTotal) : "—"}
-                                  </span>
-                                </div>
-                                <ExpenseFieldErrorBubble
-                                  message={amountErr ?? vendorErr}
-                                />
-                              </div>
-                              <div className="flex shrink-0 items-center gap-1">
-                                {renderPurchaseVendorNoteToggle(line, group.vendor, {
-                                  disabled: !hasVendor,
-                                })}
-                                {renderReceiptAddControl(line, {
-                                  purchaseVendor: group.vendor,
-                                  disabled: !hasVendor,
-                                })}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    removePurchaseVendorGroup(line.id, group.vendor)
-                                  }
-                                  className={expenseRemoveBtnClass}
-                                  aria-label={
-                                    hasVendor
-                                      ? `Remove ${group.vendor} purchase`
-                                      : "Remove unassigned items"
-                                  }
-                                >
-                                  <Trash2
-                                    className="size-4 shrink-0"
-                                    strokeWidth={2.25}
-                                    aria-hidden
-                                  />
-                                </button>
-                              </div>
-                            </div>
-                            {openExpenseNoteLineIds.has(
-                              purchaseVendorNoteKey(line.id, group.vendor),
-                            ) && hasVendor ? (
-                              <div
-                                className="min-w-0"
-                                data-field-error-anchor={`${line.id}:ledgerNote`}
-                              >
-                                <input
-                                  id={`purchase-note-${line.id}-${group.vendor}`}
-                                  name="purchase-vendor-note"
-                                  type="text"
-                                  value={line.vendorNotes?.[group.vendor] ?? ""}
-                                  onChange={(e) =>
-                                    patchLine(line.id, {
-                                      vendorNotes: {
-                                        ...(line.vendorNotes ?? {}),
-                                        [group.vendor]: e.target.value,
-                                      },
-                                    })
-                                  }
-                                  placeholder="Bill note (optional)"
-                                  className={expenseQuietInputClass}
-                                  autoComplete="off"
-                                  aria-label={`${group.vendor} bill note`}
-                                />
-                                <ExpenseFieldErrorBubble message={ledgerNoteErr} />
-                              </div>
-                            ) : null}
-                            {renderReceiptThumbnails(line, {
-                              purchaseVendor: group.vendor,
-                            })}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {purchaseVendorOptions.length === 0 ? (
-                      <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                        Add a vendor cashbook in{" "}
-                        <button
-                          type="button"
-                          onClick={() => openCashbooksPanel("books")}
-                          className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
-                        >
-                          Cashbooks
-                        </button>{" "}
-                        first.
-                      </p>
-                    ) : null}
-                    {attachErr ? (
-                      <div data-field-error-anchor={`${line.id}:attach`}>
-                        <ExpenseFieldErrorBubble message={attachErr} />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex shrink-0 flex-col gap-2 pt-1">
-              <button
-                type="button"
-                onClick={addPurchaseExpenseLine}
-                className={expenseAddPurchaseBtnClass}
-              >
-                <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                Add items purchased
-              </button>
-            </div>
-          </div>
 
             </div>
 
