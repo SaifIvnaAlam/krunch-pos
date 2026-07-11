@@ -67,6 +67,33 @@ function emptyDailyEntryRow(
   };
 }
 
+/** Prefer a real name; treat blank / "Unknown" as missing. */
+function resolveEnteredByName(
+  preferred?: string,
+  ...fallbacks: Array<string | undefined>
+): string {
+  const candidates = [preferred, ...fallbacks];
+  for (const candidate of candidates) {
+    const name = candidate?.trim();
+    if (name && name !== "Unknown") return name;
+  }
+  for (const candidate of candidates) {
+    const name = candidate?.trim();
+    if (name) return name;
+  }
+  return "Unknown";
+}
+
+/** Keep an existing real name; fill in when missing or previously Unknown. */
+function mergeEnteredByName(
+  existing: string | undefined,
+  incoming: string,
+): string {
+  const prior = existing?.trim();
+  if (prior && prior !== "Unknown") return prior;
+  return incoming;
+}
+
 function centsToTaka(cents: number): number {
   return Math.round(cents) / 100;
 }
@@ -200,11 +227,11 @@ export async function upsertDailyPurchaseFromLedgerInvoice(
     }
   }
 
-  const enteredBy =
-    params.enteredBy?.trim() ||
-    targetPrior?.enteredBy?.trim() ||
-    linked?.line && map[linked.date]?.enteredBy?.trim() ||
-    "Unknown";
+  const enteredBy = resolveEnteredByName(
+    params.enteredBy,
+    targetPrior?.enteredBy,
+    linked ? map[linked.date]?.enteredBy : undefined,
+  );
 
   const datesToSave = new Set<string>([dateKey]);
   if (linked) datesToSave.add(linked.date);
@@ -234,7 +261,7 @@ export async function upsertDailyPurchaseFromLedgerInvoice(
   nextMap[dateKey] = finalizeRow({
     ...targetRow,
     expenseLines: [...withoutLink, purchaseLine],
-    enteredBy: targetRow.enteredBy ?? enteredBy,
+    enteredBy: mergeEnteredByName(targetRow.enteredBy, enteredBy),
   });
 
   for (const d of datesToSave) {

@@ -1,5 +1,5 @@
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   bankNetAfterWithdrawals,
   bankSaleNetAfterServiceCharge,
@@ -141,9 +141,17 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
   );
 }
 
+const fieldClass =
+  "mt-1 h-9 w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)] focus:outline-none";
+const labelClass = "text-[11px] text-[var(--pos-text-2)]";
+const statCell =
+  "min-w-[120px] flex-1 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2";
+
 export function SalesReportView() {
   const { map, loading, error } = useDailyEntryMap();
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const allRows = useMemo(
     () => listDailyEntriesDescendingFromMap(map).map(rowFromEntry),
@@ -151,27 +159,23 @@ export function SalesReportView() {
   );
 
   const query = search.trim().toLowerCase();
-  const filteredRows = useMemo(
-    () => allRows.filter((row) => rowMatchesQuery(row, query)),
-    [allRows, query],
-  );
-
-  const grandTotalNet = useMemo(
-    () => filteredRows.reduce((s, row) => s + row.total, 0),
-    [filteredRows],
-  );
-
-  const grandTotalExpenses = useMemo(
-    () => filteredRows.reduce((s, row) => s + row.expenses, 0),
-    [filteredRows],
-  );
-
-  const grandTotalBankWithdrawn = useMemo(
-    () => filteredRows.reduce((s, row) => s + row.bankWithdrawn, 0),
-    [filteredRows],
-  );
+  const filteredRows = useMemo(() => {
+    let rows = allRows;
+    if (dateFrom) rows = rows.filter((row) => row.dateKey >= dateFrom);
+    if (dateTo) rows = rows.filter((row) => row.dateKey <= dateTo);
+    if (query) rows = rows.filter((row) => rowMatchesQuery(row, query));
+    return rows;
+  }, [allRows, dateFrom, dateTo, query]);
 
   const footerTotals = useMemo(() => sumFooter(filteredRows), [filteredRows]);
+
+  const hasFilters = search.trim() !== "" || dateFrom !== "" || dateTo !== "";
+
+  const clearFilters = useCallback(() => {
+    setSearch("");
+    setDateFrom("");
+    setDateTo("");
+  }, []);
 
   const thClass =
     "whitespace-nowrap px-2 py-2 text-center text-[11px] font-semibold text-[var(--pos-text-2)]";
@@ -186,48 +190,99 @@ export function SalesReportView() {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
         <div>
           <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Sales report</h1>
-          <p className="text-[12px] text-[var(--pos-text-2)]">
-            Saved daily entries: channel sales, voids, net sales, expenses, and closing balance
-            (same figures as Daily Entry Form). Bank column is net after a 1.75% bank service charge.
-            Bank withdrawn is expenses paid from the bank; bank balance is net bank sales minus
-            withdrawn.
-          </p>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
+      <div className="flex flex-wrap items-end gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
         <label className="relative min-w-[220px] flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--pos-text-2)]"
-            strokeWidth={2}
-          />
+          <span className={labelClass}>Search</span>
+          <div className="relative mt-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--pos-text-2)]"
+              strokeWidth={2}
+            />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search date, entered by, or void note"
+              className="h-9 w-full cursor-text rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none"
+              aria-label="Search sales report"
+            />
+          </div>
+        </label>
+        <label className="block min-w-[120px] max-w-[140px]">
+          <span className={labelClass}>From</span>
           <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search date, entered by, or void note"
-            className="h-9 w-full cursor-text rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none"
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className={fieldClass}
+            aria-label="From date"
           />
         </label>
-        <div className="ml-auto text-right text-[11px] text-[var(--pos-text-2)]">
-          <div>
+        <label className="block min-w-[120px] max-w-[140px]">
+          <span className={labelClass}>To</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className={fieldClass}
+            aria-label="To date"
+          />
+        </label>
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          {hasFilters ? (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="h-9 cursor-pointer rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-card)] px-3 text-[12px] font-medium text-[var(--pos-text-1)] transition-colors hover:bg-[var(--pos-nav-hover)]/40"
+            >
+              Clear
+            </button>
+          ) : null}
+          <span className="text-[11px] text-[var(--pos-text-2)]">
             <span className="font-semibold text-[var(--pos-text-1)]">{filteredRows.length}</span>{" "}
-            day
-            {filteredRows.length === 1 ? "" : "s"}
+            day{filteredRows.length === 1 ? "" : "s"} shown
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Net sales</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.netSales)}
           </div>
-          <div>
-            Net sales{" "}
-            <span className="font-semibold text-[var(--pos-text-1)]">{formatMoney(grandTotalNet)}</span>
-            {" · "}
-            Expenses{" "}
-            <span className="font-semibold text-[var(--pos-text-1)]">
-              {formatMoney(grandTotalExpenses)}
-            </span>
-            {" · "}
-            Bank withdrawn{" "}
-            <span className="font-semibold text-[var(--pos-text-1)]">
-              {formatMoney(grandTotalBankWithdrawn)}
-            </span>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Gross sales</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.grossSales)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Void</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.voidSale)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Expenses</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.expenses)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Bank withdrawn</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.bankWithdrawn)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Days</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {filteredRows.length}
           </div>
         </div>
       </div>
@@ -245,7 +300,7 @@ export function SalesReportView() {
           <div className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]">
             {allRows.length === 0
               ? "No daily entries yet. Save a daily entry from Daily Entry Form to see sales here."
-              : "No rows match your search."}
+              : "No rows match your filters."}
           </div>
         ) : (
           <table className="w-full min-w-[1560px] border-collapse text-center">

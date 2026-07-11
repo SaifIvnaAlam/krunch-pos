@@ -2,7 +2,8 @@ import { apiFetch } from "@/features/api-client";
 import { readValidAccessToken } from "@/features/auth/authSession";
 import { isDemoDataMode } from "@/shared/config/env";
 
-export type LedgerBookPurpose = "vendor" | "owners";
+/** Kept for persisted workspace shape; all cashbooks are vendor books. */
+export type LedgerBookPurpose = "vendor";
 
 export type LedgerAttachment = {
   fileName: string;
@@ -171,7 +172,10 @@ function requireToken(): string | null {
   return readValidAccessToken();
 }
 
-/** Drop retired “employees” cashbooks and any bills/payments tied to them. */
+/**
+ * Drop retired “employees” cashbooks (and their lines), and normalize legacy
+ * “owners” books to vendor — owner book type was removed from the product.
+ */
 function stripEmployeeCashbooks(data: LedgerWorkspaceData): {
   data: LedgerWorkspaceData;
   removed: boolean;
@@ -181,18 +185,24 @@ function stripEmployeeCashbooks(data: LedgerWorkspaceData): {
       .filter((s) => (s as { bookPurpose?: string }).bookPurpose === "employees")
       .map((s) => s.id),
   );
+  let convertedOwners = false;
   const suppliers = data.suppliers
     .filter((s) => !employeeIds.has(s.id))
-    .map((s) => ({
-      ...s,
-      bookPurpose: (s.bookPurpose === "owners" ? "owners" : "vendor") as LedgerBookPurpose,
-    }));
+    .map((s) => {
+      const prior = (s as { bookPurpose?: string }).bookPurpose;
+      if (prior === "owners") convertedOwners = true;
+      return {
+        ...s,
+        bookPurpose: "vendor" as LedgerBookPurpose,
+      };
+    });
   const moves = data.moves.filter((m) => !employeeIds.has(m.supplierId));
   const ledger = data.ledger
     .filter((e) => !employeeIds.has(e.supplierId))
     .map(normalizeLedgerEntryAttachments);
   const removed =
     employeeIds.size > 0 ||
+    convertedOwners ||
     suppliers.length !== data.suppliers.length ||
     moves.length !== data.moves.length ||
     ledger.length !== data.ledger.length;

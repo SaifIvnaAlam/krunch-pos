@@ -3144,15 +3144,6 @@ export function DailyEntryFormView({
       const expenseTotal = expenseTotalFromExpenseLines(linesToSave);
       const bankWithdrawnToSave = dailyEntryCandidate.bankWithdrawn ?? 0;
 
-      if (bankWithdrawnToSave > expenseTotal) {
-        setFormNotice({
-          kind: "salesField",
-          message: "Withdrawn from bank cannot exceed total expenses for this day.",
-          part: "bankWithdrawn",
-        });
-        return;
-      }
-
       const prior = entryMap[dateKey];
       const nextCandidate: DailyEntryRow = {
         ...dailyEntryCandidate,

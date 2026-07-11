@@ -6,8 +6,10 @@ import {
   useState,
   useSyncExternalStore,
   type ChangeEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Banknote,
   FileText,
@@ -29,6 +31,7 @@ import {
   unlinkDailyExpenseLinesForLedgerEntry,
   upsertDailyPurchaseFromLedgerInvoice,
 } from "@/features/daily-entry";
+import { useSession } from "@/features/auth";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
 import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
@@ -123,16 +126,8 @@ function isItemsLedgerLeaf(leafId: string): boolean {
   return leafId === "lm-items";
 }
 
-/** Why this cashbook exists — vendor AP or owner equity/draws. */
+/** Cashbooks are vendor AP books (legacy owner type removed). */
 export type { LedgerBookPurpose };
-
-export const LEDGER_BOOK_PURPOSE_OPTIONS: {
-  value: LedgerBookPurpose;
-  label: string;
-}[] = [
-  { value: "vendor", label: "Vendor" },
-  { value: "owners", label: "Owners" },
-];
 
 type Supplier = LedgerSupplier;
 type Workspace = LedgerWorkspace;
@@ -179,25 +174,22 @@ const ledgerBookNamesCacheByPurpose = new Map<
   { contentKey: string; names: string[] }
 >();
 
-/** Sorted unique names from Cashbooks — for Daily Entry vendor lines and pickers. */
+/** Sorted unique cashbook names — for Daily Entry vendor lines and pickers. */
 export function subscribeLedgerWorkspace(cb: () => void): () => void {
   return subscribeWorkspace(cb);
 }
 
 export function getLedgerBookNamesSnapshot(
-  purpose: LedgerBookPurpose | "all" = "all",
+  _purpose: LedgerBookPurpose | "all" = "all",
 ): string[] {
   const names = getWorkspace()
-    .suppliers.filter(
-      (s) => purpose === "all" || (s.bookPurpose ?? "vendor") === purpose,
-    )
-    .map((s) => s.name.trim())
+    .suppliers.map((s) => s.name.trim())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
   const contentKey = names.join("\0");
-  const cached = ledgerBookNamesCacheByPurpose.get(purpose);
+  const cached = ledgerBookNamesCacheByPurpose.get("all");
   if (cached && cached.contentKey === contentKey) return cached.names;
-  ledgerBookNamesCacheByPurpose.set(purpose, { contentKey, names });
+  ledgerBookNamesCacheByPurpose.set("all", { contentKey, names });
   return names;
 }
 
@@ -214,11 +206,6 @@ function supplierBalance(supplierId: string, ledger: LedgerEntry[]): number {
   return ledger
     .filter((e) => e.supplierId === supplierId)
     .reduce((s, e) => s + e.amountCents, 0);
-}
-
-function ledgerBookPurposeLabel(p: LedgerBookPurpose | undefined): string {
-  const v = p ?? "vendor";
-  return LEDGER_BOOK_PURPOSE_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
 
 function purchaseTotalCents(p: PurchaseOrder): number {
@@ -537,7 +524,9 @@ function LedgerCenterModal({
   onClose: () => void;
   titleId?: string;
 }) {
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/45 p-0 sm:items-center sm:p-4">
       <button
         type="button"
@@ -580,7 +569,8 @@ function LedgerCenterModal({
           </div>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -857,14 +847,6 @@ function PrimaryButton({
   );
 }
 
-function CashbookBookTypeChip({ purpose }: { purpose: LedgerBookPurpose | undefined }) {
-  return (
-    <span className="inline-flex shrink-0 rounded-full bg-[var(--pos-page)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)] ring-1 ring-[var(--pos-divider)]">
-      {ledgerBookPurposeLabel(purpose)}
-    </span>
-  );
-}
-
 const cashbookUnderlineInput =
   "w-full border-0 border-b border-solid [border-color:var(--pos-divider)] bg-transparent px-0 py-0.5 text-[12px] font-medium text-[var(--pos-text-1)] outline-none placeholder:text-[var(--pos-text-2)] focus:[border-color:var(--pos-text-1)]";
 
@@ -881,7 +863,6 @@ const cashbookFieldRow = "px-2.5 py-1.5";
 
 type CashbookEditableField =
   | "name"
-  | "bookPurpose"
   | "contactPerson"
   | "phone"
   | "email"
@@ -1014,7 +995,6 @@ function CashbookModalPanel({
   recentEntries: LedgerEntry[];
   onSaveField: (patch: Partial<Supplier>) => void;
 }) {
-  const purpose = supplier.bookPurpose ?? "vendor";
   const balanceTone =
     balanceCents > 0
       ? "text-[#6a3030]"
@@ -1061,36 +1041,6 @@ function CashbookModalPanel({
             valueClassName="mt-0.5 text-[14px] font-semibold leading-tight text-[var(--pos-text-1)]"
             inputClassName={cashbookUnderlineInputLg}
           />
-        </div>
-
-        <div className={cashbookFieldRow}>
-          <div className="flex items-center justify-between gap-1.5">
-            <span className={cashbookFieldLabel}>Book type</span>
-            {activeField !== "bookPurpose" ? (
-              <CashbookFieldEditButton
-                label="Book type"
-                onClick={() => setActiveField("bookPurpose")}
-              />
-            ) : null}
-          </div>
-          {activeField === "bookPurpose" ? (
-            <div className="mt-1">
-              <ChoiceChips
-                label=""
-                value={purpose}
-                options={LEDGER_BOOK_PURPOSE_OPTIONS}
-                onChange={(bookPurpose) => {
-                  onSaveField({ bookPurpose });
-                  setActiveField(null);
-                }}
-                ariaLabel="Cashbook type"
-              />
-            </div>
-          ) : (
-            <div className="mt-0.5">
-              <CashbookBookTypeChip purpose={purpose} />
-            </div>
-          )}
         </div>
 
         <div className={cashbookFieldRow}>
@@ -1214,7 +1164,6 @@ function CashbookCreateForm({
   draft: Partial<Supplier>;
   onDraftChange: (patch: Partial<Supplier>) => void;
 }) {
-  const purpose = draft.bookPurpose ?? "vendor";
   const patch = (p: Partial<Supplier>) => onDraftChange({ ...draft, ...p });
 
   return (
@@ -1229,15 +1178,6 @@ function CashbookCreateForm({
           autoFocus
         />
       </label>
-      <div className="sm:col-span-2">
-        <ChoiceChips
-          label="Book type"
-          value={purpose}
-          options={LEDGER_BOOK_PURPOSE_OPTIONS}
-          onChange={(bookPurpose) => patch({ bookPurpose })}
-          ariaLabel="Cashbook type"
-        />
-      </div>
       <label className="block sm:col-span-2">
         <span className={purchaseLabel}>Contact person</span>
         <input
@@ -1292,7 +1232,7 @@ function GhostButton({
   disabled = false,
 }: {
   children: ReactNode;
-  onClick?: () => void;
+  onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
   type?: "button" | "submit";
   variant?: "default" | "bill" | "pay";
   disabled?: boolean;
@@ -1313,58 +1253,6 @@ function GhostButton({
     >
       {children}
     </button>
-  );
-}
-
-const BOOK_TYPE_FILTER_OPTIONS: {
-  value: "all" | LedgerBookPurpose;
-  label: string;
-}[] = [{ value: "all", label: "All types" }, ...LEDGER_BOOK_PURPOSE_OPTIONS];
-
-function ChoiceChips<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-  ariaLabel,
-  className = "",
-}: {
-  label: string;
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (value: T) => void;
-  ariaLabel?: string;
-  className?: string;
-}) {
-  return (
-    <div className={`block min-w-0 ${className}`.trim()}>
-      <span className={purchaseLabel}>{label}</span>
-      <div
-        role="group"
-        aria-label={ariaLabel ?? label}
-        className="mt-1 flex flex-wrap gap-1.5"
-      >
-        {options.map((opt) => {
-          const active = value === opt.value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              aria-pressed={active}
-              onClick={() => onChange(opt.value)}
-              className={[
-                "h-8 cursor-pointer rounded-full border border-solid px-3 text-[11px] font-medium transition-colors",
-                active
-                  ? "border-[var(--pos-sb-base)] bg-[var(--pos-sb-base)]/12 font-semibold text-[var(--pos-text-1)]"
-                  : "border-[color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)]/45 hover:text-[var(--pos-text-1)]",
-              ].join(" ")}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -1393,10 +1281,13 @@ function DangerGhostButton({
 function SupplierListView() {
   const ws = useWorkspace();
   const [q, setQ] = useState("");
-  const [purposeFilter, setPurposeFilter] = useState<"all" | LedgerBookPurpose>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<Supplier>>({});
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
+  const [pendingDeleteSupplierId, setPendingDeleteSupplierId] = useState<string | null>(
+    null,
+  );
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const selectedSupplier = useMemo(
     () => ws.suppliers.find((s) => s.id === selectedSupplierId) ?? null,
@@ -1415,21 +1306,17 @@ function SupplierListView() {
   const rows = useMemo(() => {
     const t = q.trim().toLowerCase();
     let list = ws.suppliers;
-    if (purposeFilter !== "all") {
-      list = list.filter((s) => (s.bookPurpose ?? "vendor") === purposeFilter);
-    }
     if (t) {
       list = list.filter(
         (s) =>
           s.name.toLowerCase().includes(t) ||
           s.contactPerson.toLowerCase().includes(t) ||
           s.email.toLowerCase().includes(t) ||
-          s.phone.includes(t) ||
-          ledgerBookPurposeLabel(s.bookPurpose).toLowerCase().includes(t),
+          s.phone.includes(t),
       );
     }
     return list.slice().sort((a, b) => a.name.localeCompare(b.name));
-  }, [ws.suppliers, q, purposeFilter]);
+  }, [ws.suppliers, q]);
 
   const startCreate = useCallback(() => {
     setSelectedSupplierId(null);
@@ -1505,7 +1392,7 @@ function SupplierListView() {
         address:
           patch.address !== undefined ? patch.address.trim() : current.address,
         notes: patch.notes !== undefined ? patch.notes.trim() : current.notes,
-        bookPurpose: patch.bookPurpose ?? current.bookPurpose,
+        bookPurpose: "vendor",
       };
 
       setWorkspace((w) => ({
@@ -1553,12 +1440,55 @@ function SupplierListView() {
       .slice(0, 4);
   }, [ws.ledger, selectedSupplierId]);
 
+  const pendingDeleteSupplier = useMemo(
+    () =>
+      pendingDeleteSupplierId
+        ? ws.suppliers.find((s) => s.id === pendingDeleteSupplierId) ?? null
+        : null,
+    [ws.suppliers, pendingDeleteSupplierId],
+  );
+
+  const pendingDeleteEntryCount = useMemo(() => {
+    if (!pendingDeleteSupplierId) return 0;
+    return ws.ledger.filter((e) => e.supplierId === pendingDeleteSupplierId).length;
+  }, [ws.ledger, pendingDeleteSupplierId]);
+
+  const confirmDeleteCashbook = useCallback(async () => {
+    if (!pendingDeleteSupplierId || deleteBusy) return;
+    const supplierId = pendingDeleteSupplierId;
+    const entryIds = getWorkspace()
+      .ledger.filter((e) => e.supplierId === supplierId)
+      .map((e) => e.id);
+
+    setDeleteBusy(true);
+    try {
+      for (const entryId of entryIds) {
+        const unlink = await unlinkDailyExpenseLinesForLedgerEntry(entryId);
+        if (!unlink.ok) {
+          window.alert(unlink.message);
+          return;
+        }
+      }
+      const result = removeCashbookById(supplierId);
+      if (!result.ok) {
+        window.alert(result.message);
+        return;
+      }
+      setPendingDeleteSupplierId(null);
+      setSelectedSupplierId((prev) => (prev === supplierId ? null : prev));
+      setEditingId(null);
+      setDraft({});
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [pendingDeleteSupplierId, deleteBusy]);
+
   return (
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
           title="Books"
-          subtitle="Vendor and owner books. Balances update from bills and payments."
+          subtitle="Cashbooks for vendors. Balances update from bills and payments."
         />
         <PrimaryButton type="button" onClick={startCreate}>
           Add cashbook
@@ -1587,25 +1517,18 @@ function SupplierListView() {
             <span className="font-semibold text-[var(--pos-text-1)]">{rows.length}</span> cashbooks
           </p>
         </div>
-        <ChoiceChips
-          label="Book type"
-          value={purposeFilter}
-          options={BOOK_TYPE_FILTER_OPTIONS}
-          onChange={setPurposeFilter}
-          ariaLabel="Filter by book type"
-        />
       </div>
 
       <div className={`${purchaseStats} sm:grid-cols-2`}>
         <div className={purchaseStatCell}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Books on file</div>
-          <div className="mt-0.5 text-[14px] font-semibold text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold leading-tight text-[var(--pos-text-1)]">
             {ws.suppliers.length}
           </div>
         </div>
         <div className={purchaseStatCell}>
           <div className="text-[11px] text-[var(--pos-text-2)]">With open payable</div>
-          <div className="mt-0.5 text-[14px] font-semibold text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold leading-tight text-[var(--pos-text-1)]">
             {openPayableCount}
           </div>
         </div>
@@ -1616,7 +1539,6 @@ function SupplierListView() {
           <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
             <tr className="border-b border-solid [border-color:var(--pos-divider)]">
               <th className={purchaseTh}>Name</th>
-              <th className={purchaseTh}>Book type</th>
               <th className={purchaseTh}>Contact</th>
               <th className={`${purchaseTh} text-right`}>Payable</th>
               <th className={`${purchaseTh} text-right`}>Actions</th>
@@ -1626,7 +1548,7 @@ function SupplierListView() {
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={4}
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
                   No cashbooks match. Add one or clear the search.
@@ -1635,37 +1557,27 @@ function SupplierListView() {
             ) : (
               rows.map((s) => {
                 const bal = supplierBalance(s.id, ws.ledger);
-                const rowOpen = selectedSupplierId === s.id;
                 return (
                   <tr
                     key={s.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() =>
-                      setSelectedSupplierId((prev) => (prev === s.id ? null : s.id))
-                    }
+                    onClick={() => setSelectedSupplierId(s.id)}
                     onKeyDown={(ev) => {
                       if (ev.key === "Enter" || ev.key === " ") {
                         ev.preventDefault();
-                        setSelectedSupplierId((prev) => (prev === s.id ? null : s.id));
+                        setSelectedSupplierId(s.id);
                       }
                     }}
-                    aria-expanded={rowOpen}
-                    aria-label={`${s.name}, show details`}
-                    className={`cursor-pointer border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/35 ${
-                      rowOpen ? "bg-[var(--pos-nav-hover)]/50" : ""
-                    }`}
+                    aria-haspopup="dialog"
+                    aria-label={`Open ${s.name}`}
+                    className="cursor-pointer border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/35"
                   >
                     <td className="px-4 py-2">
                       <p className="font-medium text-[var(--pos-text-1)]">{s.name}</p>
                       <p className="mt-0.5 max-w-[280px] truncate text-[11px] text-[var(--pos-text-2)]">
                         {s.address || "—"}
                       </p>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2">
-                      <span className="inline-flex rounded-full bg-[var(--pos-nav-hover)]/50 px-2 py-0.5 text-[10px] font-semibold text-[var(--pos-text-2)]">
-                        {ledgerBookPurposeLabel(s.bookPurpose)}
-                      </span>
                     </td>
                     <td className="max-w-[220px] px-4 py-2 text-[11px] text-[var(--pos-text-2)]">
                       {s.contactPerson ? (
@@ -1679,19 +1591,27 @@ function SupplierListView() {
                     <td className="px-4 py-2 text-right tabular-nums text-[var(--pos-text-1)]">
                       {formatMoney(bal)}
                     </td>
-                    <td
-                      className="px-4 py-2 text-right"
-                      onClick={(ev) => ev.stopPropagation()}
-                      onKeyDown={(ev) => ev.stopPropagation()}
-                    >
+                    <td className="px-4 py-2 text-right">
                       <div className="flex flex-wrap justify-end gap-1.5">
-                        <GhostButton variant="bill" onClick={() => startNewPurchaseFor(s.id)}>
+                        <GhostButton
+                          variant="bill"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            startNewPurchaseFor(s.id);
+                          }}
+                        >
                           <span className="inline-flex items-center gap-1">
                             <Receipt className="size-3.5" strokeWidth={2} />
                             Bill
                           </span>
                         </GhostButton>
-                        <GhostButton variant="pay" onClick={() => startPaymentFor(s.id)}>
+                        <GhostButton
+                          variant="pay"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            startPaymentFor(s.id);
+                          }}
+                        >
                           <span className="inline-flex items-center gap-1">
                             <Banknote className="size-3.5" strokeWidth={2} />
                             Pay
@@ -1713,10 +1633,7 @@ function SupplierListView() {
             isCreatingNew ? (
               "New cashbook"
             ) : selectedSupplier ? (
-              <>
-                <span className="min-w-0 truncate">{selectedSupplier.name}</span>
-                <CashbookBookTypeChip purpose={selectedSupplier.bookPurpose} />
-              </>
+              <span className="min-w-0 truncate">{selectedSupplier.name}</span>
             ) : (
               "Cashbook"
             )
@@ -1749,7 +1666,7 @@ function SupplierListView() {
                 </button>
               </div>
             ) : selectedSupplier ? (
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full flex-wrap items-center gap-2">
                 <GhostButton
                   variant="bill"
                   onClick={() => startNewPurchaseFor(selectedSupplier.id)}
@@ -1765,6 +1682,16 @@ function SupplierListView() {
                     Pay
                   </span>
                 </GhostButton>
+                <div className="ml-auto">
+                  <DangerGhostButton
+                    onClick={() => setPendingDeleteSupplierId(selectedSupplier.id)}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Trash2 className="size-3.5" strokeWidth={2} aria-hidden />
+                      Delete cashbook
+                    </span>
+                  </DangerGhostButton>
+                </div>
               </div>
             ) : null
           }
@@ -1784,6 +1711,70 @@ function SupplierListView() {
           ) : null}
         </LedgerCenterModal>
       ) : null}
+
+      {pendingDeleteSupplier
+        ? createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-cashbook-title"
+              className="fixed inset-0 z-[210] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+              onClick={() => {
+                if (!deleteBusy) setPendingDeleteSupplierId(null);
+              }}
+            >
+              <div
+                className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2
+                  id="delete-cashbook-title"
+                  className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+                >
+                  Delete cashbook?
+                </h2>
+                <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+                  This removes{" "}
+                  <span className="font-semibold text-[var(--pos-text-1)]">
+                    {pendingDeleteSupplier.name}
+                  </span>
+                  {pendingDeleteEntryCount > 0 ? (
+                    <>
+                      {" "}
+                      and its{" "}
+                      <span className="font-semibold text-[var(--pos-text-1)]">
+                        {pendingDeleteEntryCount}
+                      </span>{" "}
+                      bill{pendingDeleteEntryCount === 1 ? "" : "s"}/payment
+                      {pendingDeleteEntryCount === 1 ? "" : "s"}
+                    </>
+                  ) : null}
+                  . Linked Daily Entry purchase lines are cleared. This cannot be undone.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                    disabled={deleteBusy}
+                    onClick={() => setPendingDeleteSupplierId(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-[#c45a5a]/55 bg-[#c45a5a] px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                    disabled={deleteBusy}
+                    onClick={() => void confirmDeleteCashbook()}
+                  >
+                    <Trash2 className="size-3.5" strokeWidth={2.25} aria-hidden />
+                    {deleteBusy ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -2289,6 +2280,46 @@ function removeLedgerEntryById(id: string): boolean {
   return true;
 }
 
+export type RemoveCashbookResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+/** Removes a cashbook and all of its bills, payments, and purchase moves. */
+function removeCashbookById(supplierId: string): RemoveCashbookResult {
+  const id = supplierId.trim();
+  if (!id) return { ok: false, message: "Cashbook is required." };
+
+  const w0 = getWorkspace();
+  const supplier = w0.suppliers.find((s) => s.id === id);
+  if (!supplier) return { ok: false, message: "Cashbook not found." };
+
+  const bookEntries = w0.ledger.filter((e) => e.supplierId === id);
+  if (bookEntries.some((e) => isLedgerEntryLocked(e))) {
+    return {
+      ok: false,
+      message:
+        "This cashbook has locked bills or payments. Unlock them before deleting the book.",
+    };
+  }
+
+  setWorkspace((w) => ({
+    ...w,
+    suppliers: w.suppliers.filter((s) => s.id !== id),
+    ledger: w.ledger.filter((e) => e.supplierId !== id),
+    moves: w.moves.filter((m) => m.supplierId !== id),
+    ledgerSupplierFilter: w.ledgerSupplierFilter === id ? "" : w.ledgerSupplierFilter,
+    ledgerInvoiceDrawerPrefillSupplierId:
+      w.ledgerInvoiceDrawerPrefillSupplierId === id
+        ? null
+        : w.ledgerInvoiceDrawerPrefillSupplierId,
+    ledgerPaymentDrawerPrefillSupplierId:
+      w.ledgerPaymentDrawerPrefillSupplierId === id
+        ? null
+        : w.ledgerPaymentDrawerPrefillSupplierId,
+  }));
+  return { ok: true };
+}
+
 /** Same rules as the ledger drawer amount field — used to validate before daily save posts a line. */
 export function validateLedgerAmountForKind(
   kind: LedgerEntry["type"],
@@ -2563,7 +2594,7 @@ function LedgerEntryDrawerForm({
               <option value="">Select…</option>
               {ws.suppliers.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({ledgerBookPurposeLabel(s.bookPurpose)})
+                  {s.name}
                 </option>
               ))}
             </select>
@@ -2836,6 +2867,7 @@ function LedgerEntryDrawerForm({
 
 function SupplierLedgerView() {
   const ws = useWorkspace();
+  const { userName } = useSession();
   const filter = ws.ledgerSupplierFilter;
   const [ledgerDrawerOpen, setLedgerDrawerOpen] = useState(false);
   const [editingLedgerEntryId, setEditingLedgerEntryId] = useState<string | null>(null);
@@ -2910,9 +2942,6 @@ function SupplierLedgerView() {
     if (q) {
       e = e.filter((x) => {
         const kindLabel = ledgerEntryLineLabel(x).toLowerCase();
-        const purposeLabel = ledgerBookPurposeLabel(
-          ws.suppliers.find((s) => s.id === x.supplierId)?.bookPurpose,
-        ).toLowerCase();
         const itemNames = (x.items ?? [])
           .map((it) => it.name.toLowerCase())
           .join(" ");
@@ -2922,7 +2951,6 @@ function SupplierLedgerView() {
           supplierName(x.supplierId).toLowerCase().includes(q) ||
           x.type.includes(q) ||
           kindLabel.includes(q) ||
-          purposeLabel.includes(q) ||
           itemNames.includes(q)
         );
       });
@@ -3069,6 +3097,7 @@ function SupplierLedgerView() {
           totalCents: i.totalCents,
         })),
         attachmentRefs: draftSnapshot.attachments.map((a) => a.dataUrl),
+        enteredBy: userName.trim() || undefined,
       });
       if (!sync.ok) {
         window.alert(
@@ -3077,7 +3106,7 @@ function SupplierLedgerView() {
       }
       closeDrawer();
     })();
-  }, [editingLedgerEntryId, ledgerDraft]);
+  }, [editingLedgerEntryId, ledgerDraft, userName]);
 
   const removeEntry = useCallback((id: string) => {
     const entry = getWorkspace().ledger.find((e) => e.id === id);
@@ -3152,7 +3181,7 @@ function SupplierLedgerView() {
       {ws.suppliers.length === 0 ? (
         <div className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-3">
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            Add a cashbook first — vendor or owner — then record bills and payments here.
+            Add a cashbook first, then record bills and payments here.
           </p>
           <button
             type="button"
@@ -3169,19 +3198,19 @@ function SupplierLedgerView() {
           <div className="text-[11px] text-[var(--pos-text-2)]">
             {filter ? "Balance" : "Payable (all)"}
           </div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoneyWholeTaka(dueCents)}
           </div>
         </div>
         <div className={`${purchaseStatCell} min-w-[120px] flex-1`}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Bills (view)</div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoneyWholeTaka(ledgerEntriesViewStats.billsAddedCents)}
           </div>
         </div>
         <div className={`${purchaseStatCell} min-w-[120px] flex-1`}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Paid (view)</div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoneyWholeTaka(ledgerEntriesViewStats.paidOutCents)}
           </div>
         </div>
@@ -3219,8 +3248,7 @@ function SupplierLedgerView() {
             <option value="">All books</option>
             {ws.suppliers.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name} ({ledgerBookPurposeLabel(s.bookPurpose)}) ·{" "}
-                {formatMoneyWholeTaka(runningBySupplier.get(s.id) ?? 0)}
+                {s.name} · {formatMoneyWholeTaka(runningBySupplier.get(s.id) ?? 0)}
               </option>
             ))}
           </select>
@@ -3642,10 +3670,7 @@ function PurchasedItemsView() {
 
   const vendorBooks = useMemo(
     () =>
-      ws.suppliers
-        .filter((s) => (s.bookPurpose ?? "vendor") === "vendor")
-        .slice()
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      ws.suppliers.slice().sort((a, b) => a.name.localeCompare(b.name)),
     [ws.suppliers],
   );
 
@@ -3860,25 +3885,25 @@ function PurchasedItemsView() {
       <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
         <div className={`${purchaseStatCell} min-w-[120px] flex-1`}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Spend (view)</div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoneyWholeTaka(stats.spendCents)}
           </div>
         </div>
         <div className={`${purchaseStatCell} min-w-[100px] flex-1`}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Lines</div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {stats.lineCount}
           </div>
         </div>
         <div className={`${purchaseStatCell} min-w-[100px] flex-1`}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Unique items</div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {stats.uniqueItems}
           </div>
         </div>
         <div className={`${purchaseStatCell} min-w-[100px] flex-1`}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Vendors</div>
-          <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {stats.vendorCount}
           </div>
         </div>
