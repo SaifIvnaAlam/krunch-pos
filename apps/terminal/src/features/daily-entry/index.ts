@@ -7,10 +7,7 @@ export type {
   PersistResult,
 } from "./types";
 export {
-  BANK_SALE_SERVICE_CHARGE_RATE,
   bankNetAfterWithdrawals,
-  bankSaleNetAfterServiceCharge,
-  bankSaleServiceChargeAmount,
   carriedOpeningBalanceForDate,
   computeRemainingBalanceForRow,
   dateAddDays,

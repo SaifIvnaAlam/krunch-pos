@@ -8,7 +8,6 @@ const prisma = new PrismaClient();
 
 const BRANCH_ID = 'a0000000-0000-4000-8000-000000000001';
 const STAFF_ID = 'staff-seed-owner';
-const BANK_NET_RATE = 1 - 0.0175;
 
 /** Net sales targets (BDT) — shaped like the reference chart. */
 const APRIL_2026_NET_SALES = [
@@ -36,10 +35,9 @@ const MAY_2026_EXPENSES = [
 
 function splitChannels(netSales: number) {
   const cashSale = netSales * 0.45;
-  const bankNet = netSales * 0.3;
+  const bankSale = netSales * 0.3;
   const bkashSale = netSales * 0.15;
   const pathaoSale = netSales * 0.1;
-  const bankSale = bankNet / BANK_NET_RATE;
   return {
     cashSale,
     bankSale,
@@ -54,7 +52,7 @@ function splitChannels(netSales: number) {
 function netSalesFromParts(parts: ReturnType<typeof splitChannels>, voidSale = 0) {
   return (
     parts.cashSale +
-    parts.bankSale * BANK_NET_RATE +
+    parts.bankSale +
     parts.bkashSale +
     parts.nagadSale +
     parts.pathaoSale +
@@ -80,7 +78,8 @@ async function seedMonth(
     const expenses = expensesByDay[i]!;
     const channels = splitChannels(targetNet);
     const net = netSalesFromParts(channels);
-    const remaining = opening + net - expenses;
+    // Closing cash excludes bank sales (deposited to bank, not cash on hand).
+    const remaining = opening + net - channels.bankSale - expenses;
 
     await prisma.dailyEntry.upsert({
       where: { branchId_date: { branchId: BRANCH_ID, date } },

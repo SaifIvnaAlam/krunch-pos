@@ -47,8 +47,6 @@ import {
 import type { LedgerAttachment } from "@/features/ledger";
 import {
   bankNetAfterWithdrawals,
-  bankSaleNetAfterServiceCharge,
-  bankSaleServiceChargeAmount,
   carriedOpeningBalanceForDate,
   deleteDailyEntry,
   expenseTotalFromExpenseLines,
@@ -77,11 +75,13 @@ import {
   loadSalaryWorkspace,
   STAFF_ADVANCE_LINE_KIND,
   STAFF_LINE_KIND,
+  syncLoadedSalaryBundleToEmployees,
   syncStaffExpensesToSalaryRegister,
   validateStaffPayoutAmount,
   type StaffLineKind,
 } from "@/features/payroll";
 import { flushLedgerWorkspacePersist, loadLedgerWorkspace } from "@/features/ledger";
+import { getEmployeeDirectoryLoadState, loadEmployeeDirectory } from "@/features/employees";
 import { getEmployeeById, useActiveEmployees } from "../../lib/employeeDirectoryStorage";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
 import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
@@ -1546,7 +1546,6 @@ function computeRemainingFromParts(
   openingBalance: string,
   sales: {
     cashSale: string;
-    bankSale: string;
     bkashSale: string;
     nagadSale: string;
     pathaoSale: string;
@@ -1556,9 +1555,9 @@ function computeRemainingFromParts(
   },
   expenseLineDrafts: ExpenseLineDraft[],
 ): number {
+  // Bank sales go straight to the bank — exclude from closing cash.
   const salesSum =
     parseAmount(sales.cashSale) +
-    bankSaleNetAfterServiceCharge(parseAmount(sales.bankSale)) +
     parseAmount(sales.bkashSale) +
     parseAmount(sales.nagadSale) +
     parseAmount(sales.pathaoSale) +
@@ -1588,7 +1587,7 @@ function buildVendorOptions(
 function salesTotal(r: DailyEntryRow): number {
   return (
     r.cashSale +
-    bankSaleNetAfterServiceCharge(r.bankSale) +
+    r.bankSale +
     r.bkashSale +
     r.nagadSale +
     r.pathaoSale +
@@ -1683,9 +1682,7 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
   }
   const dateStr = `${r.date} ${formatDateKeyAsDisplay(r.date)}`.toLowerCase();
   const cashS = `cash ${amountSearchText(r.cashSale)}`;
-  const bankGross = r.bankSale;
-  const bankNet = bankSaleNetAfterServiceCharge(bankGross);
-  const bankS = `bank ${amountSearchText(bankGross)} ${amountSearchText(bankNet)}`;
+  const bankS = `bank ${amountSearchText(r.bankSale)}`;
   const bkashS = `bkash ${amountSearchText(r.bkashSale)}`;
   const nagadS = `nagad ${amountSearchText(r.nagadSale)}`;
   const pathaoS = `pathao ${amountSearchText(r.pathaoSale)}`;
@@ -1896,10 +1893,15 @@ export function DailyEntryFormView({
 } = {}) {
   const { userName } = useSession();
   const activeEmployees = useActiveEmployees();
+  const staffSelectEmployees = useMemo(
+    () => [...activeEmployees].sort((a, b) => a.name.localeCompare(b.name)),
+    [activeEmployees],
+  );
   const { map: entryMap, loading: entriesLoading, error: entriesLoadError, refresh: refreshEntries } =
     useDailyEntryMap();
 
   useEffect(() => {
+    void loadEmployeeDirectory();
     void loadLedgerWorkspace();
   }, []);
 
@@ -2061,7 +2063,7 @@ export function DailyEntryFormView({
   const channelSalesGross = useMemo(
     () =>
       parseAmount(cashSale) +
-      bankSaleNetAfterServiceCharge(parseAmount(bankSale)) +
+      parseAmount(bankSale) +
       parseAmount(bkashSale) +
       parseAmount(nagadSale) +
       parseAmount(pathaoSale) +
@@ -2082,7 +2084,6 @@ export function DailyEntryFormView({
         openingBalance,
         {
           cashSale,
-          bankSale,
           bkashSale,
           nagadSale,
           pathaoSale,
@@ -2095,7 +2096,6 @@ export function DailyEntryFormView({
     [
       openingBalance,
       cashSale,
-      bankSale,
       bkashSale,
       nagadSale,
       pathaoSale,
@@ -2222,6 +2222,15 @@ export function DailyEntryFormView({
   useEffect(() => {
     const employeeId = pendingStaffPayoutEmployeeIdRef.current;
     if (!employeeId || activeView !== "entry") return;
+    // Wait for the roster so the employee select can show the name.
+    const dirState = getEmployeeDirectoryLoadState();
+    if (
+      (dirState.loading || !dirState.loaded) &&
+      staffSelectEmployees.length === 0 &&
+      !getEmployeeById(employeeId)
+    ) {
+      return;
+    }
     pendingStaffPayoutEmployeeIdRef.current = null;
     setExpenseLines((lines) => {
       if (
@@ -2234,7 +2243,7 @@ export function DailyEntryFormView({
       }
       return [...lines, { ...newStaffExpenseLine(), employeeId }];
     });
-  }, [dateKey, entryMap, savedListVersion, activeView]);
+  }, [dateKey, entryMap, savedListVersion, activeView, staffSelectEmployees]);
 
   useEffect(() => {
     if (openingEdit) openingInputRef.current?.focus();
@@ -3113,7 +3122,8 @@ export function DailyEntryFormView({
     if (isSaving || isFormLocked || isAttachmentUploadBusy) return;
 
     try {
-      await loadSalaryWorkspace();
+      await Promise.all([loadEmployeeDirectory(), loadSalaryWorkspace()]);
+      syncLoadedSalaryBundleToEmployees();
       const validation = findFirstExpenseValidationError(expenseLines, {
         dateKey,
         salaryBundle: getSalaryBundle(),
@@ -3872,7 +3882,7 @@ export function DailyEntryFormView({
             </div>
             <div
               className={statCardHintClass}
-              title="All sales channels − void sales (bank net of 1.75% fee)"
+              title="All sales channels − void sales"
             >
               <p className={labelClass}>Sales</p>
               <p className={statValueClass}>
@@ -3887,7 +3897,7 @@ export function DailyEntryFormView({
             </div>
             <div
               className={statCardHintClass}
-              title="Net bank sales (after 1.75% fee) − withdrawn today"
+              title="Bank sales − withdrawn today"
             >
               <p className={labelClass}>Bank balance (today)</p>
               <p className={statValueClass}>
@@ -3896,7 +3906,7 @@ export function DailyEntryFormView({
             </div>
             <div
               className={`${statCardHintClass} relative before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,var(--pos-card))]`}
-              title="Opening balance + net sales − expenses"
+              title="Opening + sales (excl. bank) − void − expenses · bank sales stay in bank balance"
             >
               <p className={labelClass}>Closing Balance</p>
               <p className={statValueHighlightClass}>
@@ -3961,7 +3971,20 @@ export function DailyEntryFormView({
                               aria-invalid={employeeErr ? true : undefined}
                             >
                               <option value="">Employee…</option>
-                              {activeEmployees.map((emp) => (
+                              {(() => {
+                                const selectedId = line.employeeId.trim();
+                                const selectedInList =
+                                  !selectedId ||
+                                  staffSelectEmployees.some((emp) => emp.id === selectedId);
+                                if (selectedInList) return null;
+                                const orphan = getEmployeeById(selectedId);
+                                return (
+                                  <option value={selectedId}>
+                                    {orphan?.name?.trim() || "Unknown employee"}
+                                  </option>
+                                );
+                              })()}
+                              {staffSelectEmployees.map((emp) => (
                                 <option key={emp.id} value={emp.id}>
                                   {emp.name}
                                 </option>
@@ -4614,17 +4637,7 @@ export function DailyEntryFormView({
                     />
                   </label>
                   <label className={salesFieldGroupClass} htmlFor="daily-bank">
-                    <span className="flex min-w-0 w-full items-baseline justify-between gap-1">
-                      <span className={labelClass}>Bank</span>
-                      {parseAmount(bankSale) > 0 ? (
-                        <span
-                          className="shrink-0 text-right text-[10px] font-normal text-[var(--pos-text-2)] tabular-nums"
-                          title={`Net in totals: ${formatSummaryMoney(bankSaleNetAfterServiceCharge(parseAmount(bankSale)))}`}
-                        >
-                          {`-1.75% = ${formatSummaryMoney(bankSaleServiceChargeAmount(parseAmount(bankSale)))}`}
-                        </span>
-                      ) : null}
-                    </span>
+                    <span className={labelClass}>Bank</span>
                     <input
                       id="daily-bank"
                       {...amountFieldProps("next")}
@@ -5000,14 +5013,10 @@ export function DailyEntryFormView({
                     <tbody>
                       {(() => {
                         const bankGross = historyDetailRow.bankSale;
-                        const bankFee = bankSaleServiceChargeAmount(bankGross);
                         const bankWithdrawnHist = historyDetailRow.bankWithdrawn ?? 0;
                         const rows: readonly (readonly [string, number])[] = [
                           ["Cash", historyDetailRow.cashSale],
-                          ["Bank (gross)", bankGross],
-                          ...(bankGross > 0
-                            ? ([["Bank service charge (1.75%)", -bankFee]] as const)
-                            : ([] as const)),
+                          ["Bank", bankGross],
                           ...(bankWithdrawnHist > 0
                             ? ([["Withdrawn from bank (expenses)", -bankWithdrawnHist]] as const)
                             : ([] as const)),

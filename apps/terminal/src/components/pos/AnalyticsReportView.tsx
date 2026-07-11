@@ -11,7 +11,6 @@ import {
   YAxis,
 } from "recharts";
 import {
-  bankSaleNetAfterServiceCharge,
   listDailyEntriesDescendingFromMap,
   useDailyEntryMap,
   type DailyEntryRow,
@@ -27,7 +26,7 @@ type ChartPoint = {
 function netSalesForRow(r: DailyEntryRow): number {
   const gross =
     r.cashSale +
-    bankSaleNetAfterServiceCharge(r.bankSale) +
+    r.bankSale +
     r.bkashSale +
     r.nagadSale +
     r.pathaoSale +

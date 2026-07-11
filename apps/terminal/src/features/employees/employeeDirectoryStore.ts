@@ -20,6 +20,8 @@ let loadPromise: Promise<void> | null = null;
 let loadedFromApi = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistInFlight: Promise<void> | null = null;
+/** Local edits while the first API load is still in flight — flush after load merges. */
+let persistAfterLoad = false;
 let loadError: string | null = null;
 let loading = false;
 
@@ -135,6 +137,11 @@ async function persistDirectoryToApi(list: Employee[]): Promise<void> {
 
 function schedulePersist() {
   if (isDemoDataMode()) return;
+  // Never PUT an incomplete roster over the API while the first load is in flight.
+  if (!loadedFromApi) {
+    persistAfterLoad = true;
+    return;
+  }
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
@@ -204,18 +211,25 @@ export function loadEmployeeDirectory(): Promise<void> {
       list = mergeDirectoryWithApi(list);
       directorySnapshot = list;
       rebuildActiveSnapshot(list);
-      if (fetched.apiWasEmpty && list.some((e) => e.name.trim()) && requireToken()) {
+      loadedFromApi = true;
+      loadError = null;
+
+      const shouldPersistMerged =
+        persistAfterLoad ||
+        (fetched.apiWasEmpty && list.some((e) => e.name.trim()));
+      persistAfterLoad = false;
+      if (shouldPersistMerged && requireToken()) {
         try {
           await persistDirectoryToApi(list);
         } catch {
-          /* roster still usable locally */
+          schedulePersist();
         }
       }
-      loadedFromApi = true;
-      loadError = null;
     } catch (e) {
       loadError =
         e instanceof Error ? e.message : "Could not load employee directory.";
+      // Allow a later retry (e.g. after sign-in) instead of caching a failed load.
+      loadPromise = null;
     } finally {
       loading = false;
       emit();
@@ -232,5 +246,11 @@ export async function flushEmployeeDirectoryPersist(): Promise<void> {
   }
   if (persistInFlight) await persistInFlight;
   if (isDemoDataMode() || !requireToken()) return;
+  // Wait for the initial load/merge so we never overwrite the API with a partial roster.
+  if (!loadedFromApi) {
+    persistAfterLoad = true;
+    await loadEmployeeDirectory();
+    return;
+  }
   await persistDirectoryToApi(directorySnapshot);
 }

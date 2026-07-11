@@ -25,7 +25,7 @@ export class UpsertDailyEntryDto {
   @Min(0)
   cashSale!: number;
 
-  @ApiProperty({ description: 'Gross bank sales before service charge' })
+  @ApiProperty({ description: 'Bank sales amount' })
   @IsNumber()
   @Min(0)
   bankSale!: number;

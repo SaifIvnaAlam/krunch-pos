@@ -1,35 +1,19 @@
 import type { DailyEntryMap, DailyEntryRow, ExpenseLineSaved } from "./types";
 
-/** Applied to `bankSale` (gross) when summing sales and closing balance. */
-export const BANK_SALE_SERVICE_CHARGE_RATE = 0.0175;
-
-/** Whole-taka rounding for POS totals and bank net after service charge. */
+/** Whole-taka rounding for POS totals. */
 export function roundTaka(amount: number): number {
   const n = Number(amount);
   if (!Number.isFinite(n)) return 0;
   return Math.round(n);
 }
 
-export function bankSaleNetAfterServiceCharge(gross: number): number {
-  const g = Number(gross);
-  if (!Number.isFinite(g) || g <= 0) return 0;
-  return roundTaka(g * (1 - BANK_SALE_SERVICE_CHARGE_RATE));
-}
-
-export function bankSaleServiceChargeAmount(gross: number): number {
-  const g = Number(gross);
-  if (!Number.isFinite(g) || g <= 0) return 0;
-  return Math.max(0, g - bankSaleNetAfterServiceCharge(g));
-}
-
-/** Net bank sales (after service charge) minus expenses withdrawn from the bank. */
+/** Bank sales minus expenses withdrawn from the bank. */
 export function bankNetAfterWithdrawals(
-  bankSaleGross: number,
+  bankSale: number,
   bankWithdrawn: number,
 ): number {
   return roundTaka(
-    bankSaleNetAfterServiceCharge(bankSaleGross) -
-      Math.max(0, Number(bankWithdrawn) || 0),
+    Math.max(0, Number(bankSale) || 0) - Math.max(0, Number(bankWithdrawn) || 0),
   );
 }
 
@@ -95,11 +79,13 @@ export function expenseTotalFromExpenseLines(
   }, 0);
 }
 
-/** Closing balance from a saved daily entry row (matches Daily Entry Form). */
+/**
+ * Closing cash from a saved daily entry row (matches Daily Entry Form).
+ * Bank sales are omitted — they deposit to the bank, not cash on hand.
+ */
 export function computeRemainingBalanceForRow(row: DailyEntryRow): number {
   const salesSum =
     row.cashSale +
-    bankSaleNetAfterServiceCharge(row.bankSale) +
     row.bkashSale +
     row.nagadSale +
     row.pathaoSale +

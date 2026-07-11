@@ -2,14 +2,19 @@ import { useEffect, useMemo, useState, useSyncExternalStore, type ComponentProps
 import { Plus } from "lucide-react";
 import { dispatchOpenEmployeeSalaryHistory } from "../../lib/posNavEvents";
 import {
+  addEmployee,
+  useEmployeeDirectory,
+} from "../../lib/employeeDirectoryStorage";
+import {
+  flushEmployeeDirectoryPersist,
   getEmployeeDirectoryLoadState,
   loadEmployeeDirectory,
   subscribeEmployeeDirectoryStore,
 } from "@/features/employees";
 import {
-  addEmployee,
-  useEmployeeDirectory,
-} from "../../lib/employeeDirectoryStorage";
+  loadSalaryWorkspace,
+  syncLoadedSalaryBundleToEmployees,
+} from "@/features/payroll";
 import {
   EmployeeFormModal,
   emptyEmployeeDraft,
@@ -115,6 +120,15 @@ export function EmployeeDirectoryView() {
     }
     setStatusMessage(`Added ${res.employee.name}.`);
     closeAdd();
+    void (async () => {
+      try {
+        await flushEmployeeDirectoryPersist();
+        await loadSalaryWorkspace();
+        syncLoadedSalaryBundleToEmployees();
+      } catch {
+        /* directory save error is surfaced via store loadError */
+      }
+    })();
   };
 
   return (

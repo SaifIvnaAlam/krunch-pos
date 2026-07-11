@@ -18,6 +18,7 @@ import {
   updateEmployee,
   useEmployeeDirectory,
 } from "../../lib/employeeDirectoryStorage";
+import { loadEmployeeDirectory } from "@/features/employees";
 import { dispatchOpenDailyEntry } from "../../lib/posNavEvents";
 import { isMonthKey, isSalaryPaymentPosted } from "../../lib/salarySheetStorage";
 import {
@@ -126,6 +127,10 @@ export function EmployeeSalaryHistoryView({
     () => buildEmployeeSalaryHistory(bundle, employeeId, displayName),
     [bundle, employeeId, displayName],
   );
+
+  useEffect(() => {
+    void loadEmployeeDirectory();
+  }, []);
 
   useEffect(() => {
     if (!loadState.loaded) return;

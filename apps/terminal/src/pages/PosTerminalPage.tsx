@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "@/features/auth";
+import { loadEmployeeDirectory } from "@/features/employees";
 import {
   resolveInitialLeafId,
   writeStoredLastLeafId,
@@ -41,6 +42,10 @@ export function PosTerminalPage() {
   >(null);
   const [employeeSalaryHistoryId, setEmployeeSalaryHistoryId] = useState<string | null>(null);
   const [employeeProfileReturnLeafId, setEmployeeProfileReturnLeafId] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadEmployeeDirectory();
+  }, []);
 
   const handleSelectLeaf = useCallback((leafId: string) => {
     if (leafId === activeLeafId) return;

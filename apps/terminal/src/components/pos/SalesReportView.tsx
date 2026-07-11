@@ -2,7 +2,6 @@ import { Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import {
   bankNetAfterWithdrawals,
-  bankSaleNetAfterServiceCharge,
   listDailyEntriesDescendingFromMap,
   useDailyEntryMap,
   type DailyEntryRow,
@@ -19,7 +18,7 @@ function formatMoney(value: number) {
 function channelSalesTotal(r: DailyEntryRow): number {
   return (
     r.cashSale +
-    bankSaleNetAfterServiceCharge(r.bankSale) +
+    r.bankSale +
     r.bkashSale +
     r.nagadSale +
     r.pathaoSale +
@@ -61,7 +60,7 @@ function rowFromEntry(r: DailyEntryRow): SalesRow {
     displayDate: formatDateKeyAsDisplay(r.date),
     openingBalance: r.openingBalance,
     cash: r.cashSale,
-    bank: bankSaleNetAfterServiceCharge(r.bankSale),
+    bank: r.bankSale,
     bankWithdrawn,
     bankBalance: bankNetAfterWithdrawals(r.bankSale, bankWithdrawn),
     bkash: r.bkashSale,
@@ -311,12 +310,7 @@ export function SalesReportView() {
                   Opening
                 </th>
                 <th className={thClass}>Cash</th>
-                <th
-                  className={thClass}
-                  title="Net after 1.75% bank service charge (daily entry stores gross bank sales)"
-                >
-                  Bank
-                </th>
+                <th className={thClass}>Bank</th>
                 <th
                   className={thClass}
                   title="Portion of the day's expenses paid by withdrawing from the bank account"
@@ -325,7 +319,7 @@ export function SalesReportView() {
                 </th>
                 <th
                   className={thClass}
-                  title="Bank (net after 1.75% charge) minus bank withdrawn"
+                  title="Bank sales minus bank withdrawn"
                 >
                   Bank balance
                 </th>
