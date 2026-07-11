@@ -32,26 +32,14 @@ function findEmployeeRow(doc: SalarySheetBundle["months"][string] | undefined, e
 
 function paidForRow(
   row: SalarySheetRow,
-  monthKey: string,
-  exclusionMonthKey: string | null,
   options?: EmployeeMonthBalanceOptions,
 ): number {
   let paid = 0;
-  const applyExclusions =
-    exclusionMonthKey !== null &&
-    monthKey === exclusionMonthKey &&
-    Boolean(options?.excludeLineId || options?.excludePaymentId);
+  const excludeLineId = options?.excludeLineId?.trim();
+  const excludePaymentId = options?.excludePaymentId?.trim();
   for (const payment of row.payments) {
-    if (applyExclusions && options?.excludePaymentId && payment.id === options.excludePaymentId) {
-      continue;
-    }
-    if (
-      applyExclusions &&
-      options?.excludeLineId &&
-      payment.dailyEntryLineId === options.excludeLineId
-    ) {
-      continue;
-    }
+    if (excludePaymentId && payment.id === excludePaymentId) continue;
+    if (excludeLineId && payment.dailyEntryLineId === excludeLineId) continue;
     paid += payment.amount;
   }
   return paid;
@@ -72,8 +60,6 @@ export function computeEmployeeMonthBalances(
     .sort((a, b) => a.localeCompare(b));
 
   const through = options?.throughMonthKey;
-  const exclusionMonthKey =
-    options?.excludeLineId || options?.excludePaymentId ? (through ?? null) : null;
   let unappliedAdvance = 0;
 
   for (const monthKey of monthKeys) {
@@ -81,7 +67,7 @@ export function computeEmployeeMonthBalances(
 
     const row = findEmployeeRow(bundle.months[monthKey], empId);
     const payable = row ? totalPayableForRow(row) : 0;
-    const paid = row ? paidForRow(row, monthKey, exclusionMonthKey, options) : 0;
+    const paid = row ? paidForRow(row, options) : 0;
     const carryIn = unappliedAdvance;
 
     const stillOwed = Math.max(0, payable - carryIn - paid);
@@ -125,6 +111,45 @@ export function stillOwedForEmployeeInMonth(
   options?: Omit<EmployeeMonthBalanceOptions, "throughMonthKey">,
 ): number {
   return getEmployeeMonthBalance(bundle, monthKey, employeeId, options)?.stillOwed ?? 0;
+}
+
+/**
+ * Sum of still-owed across salary months up to and including `throughMonthKey`
+ * (oldest arrears + current month). Used when a payout may clear prior months first.
+ */
+export function totalStillOwedForEmployeeThroughMonth(
+  bundle: SalarySheetBundle,
+  employeeId: string,
+  throughMonthKey: string,
+  options?: Omit<EmployeeMonthBalanceOptions, "throughMonthKey">,
+): number {
+  const balances = computeEmployeeMonthBalances(bundle, employeeId, {
+    ...options,
+    throughMonthKey,
+  });
+  let total = 0;
+  for (const balance of balances.values()) {
+    total += balance.stillOwed;
+  }
+  return total;
+}
+
+/** Oldest month (≤ throughMonthKey) that still has Due for this employee. */
+export function oldestOwingMonthForEmployee(
+  bundle: SalarySheetBundle,
+  employeeId: string,
+  throughMonthKey: string,
+  options?: Omit<EmployeeMonthBalanceOptions, "throughMonthKey">,
+): string | null {
+  const balances = computeEmployeeMonthBalances(bundle, employeeId, {
+    ...options,
+    throughMonthKey,
+  });
+  const monthKeys = [...balances.keys()].sort((a, b) => a.localeCompare(b));
+  for (const monthKey of monthKeys) {
+    if ((balances.get(monthKey)?.stillOwed ?? 0) > 0) return monthKey;
+  }
+  return null;
 }
 
 /** Advance credit carried out of a month into the next month's salary. */

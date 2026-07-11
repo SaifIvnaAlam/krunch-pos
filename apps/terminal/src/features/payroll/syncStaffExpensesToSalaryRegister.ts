@@ -8,20 +8,23 @@ import {
   isStaffFineExpenseLine,
 } from "@/features/daily-entry/staffExpenseLine";
 import type { DailyEntryMap, DailyEntryRow, ExpenseLineSaved } from "@/features/daily-entry/types";
-import { getEmployeeById } from "../../lib/employeeDirectoryStorage";
 import {
   createSalaryPayment,
   ensureMonthDoc,
+  isMonthKey,
+  salaryRowForEmployeeRecord,
   type SalaryPayment,
   type SalarySheetBundle,
-  type SalarySheetRow,
+  type SalarySheetDoc,
 } from "../../lib/salarySheetStorage";
+import { getEmployeeById } from "../../lib/employeeDirectoryStorage";
 import {
   flushSalaryWorkspacePersist,
   getSalaryBundle,
   loadSalaryWorkspace,
   setSalaryBundle,
 } from "./salaryWorkspaceStore";
+import { oldestOwingMonthForEmployee } from "./employeeSalaryBalance";
 import { STAFF_ADVANCE_LINE_KIND, STAFF_LINE_KIND } from "./staffLineKinds";
 
 export type SyncStaffExpensesResult =
@@ -88,61 +91,59 @@ function buildPaymentFromStaffLine(
   };
 }
 
-function indexExistingPayments(docRows: SalarySheetRow[]): {
+function indexExistingPaymentsAcrossBundle(bundle: SalarySheetBundle): {
   byId: Map<string, SalaryPayment>;
   byLineId: Map<string, SalaryPayment>;
 } {
   const byId = new Map<string, SalaryPayment>();
   const byLineId = new Map<string, SalaryPayment>();
-  for (const row of docRows) {
-    for (const payment of row.payments) {
-      byId.set(payment.id, payment);
-      if (payment.dailyEntryLineId) {
-        byLineId.set(payment.dailyEntryLineId, payment);
+  for (const doc of Object.values(bundle.months)) {
+    if (!doc) continue;
+    for (const row of doc.rows) {
+      for (const payment of row.payments) {
+        byId.set(payment.id, payment);
+        if (payment.dailyEntryLineId) {
+          byLineId.set(payment.dailyEntryLineId, payment);
+        }
       }
     }
   }
   return { byId, byLineId };
 }
 
-/** Rebuild one month's salary payouts from daily-entry staff lines (source of truth). */
-export function reconcileSalaryMonthFromDailyMap(
+function clearAllRowPayments(doc: SalarySheetDoc): SalarySheetDoc {
+  return {
+    ...doc,
+    rows: doc.rows.map((row) => ({ ...row, payments: [] as SalaryPayment[] })),
+  };
+}
+
+function appendPaymentToEmployeeMonth(
   bundle: SalarySheetBundle,
   monthKey: string,
-  dailyMap: DailyEntryMap,
+  employeeId: string,
+  payment: SalaryPayment,
+  employees: ReturnType<typeof getActiveEmployeesStoreSnapshot>,
 ): SalarySheetBundle {
-  const employees = getActiveEmployeesStoreSnapshot();
   const doc = ensureMonthDoc(monthKey, bundle.months[monthKey], employees);
-  const { byId, byLineId } = indexExistingPayments(doc.rows);
-
-  const payoutsByEmployee = new Map<string, SalaryPayment[]>();
-
-  for (const row of Object.values(dailyMap)) {
-    if (!row.date.startsWith(monthKey)) continue;
-    for (const line of row.expenseLines ?? []) {
-      const normalized = normalizeStaffLine(line);
-      if (!normalized?.employeeId || !normalized.lineId) continue;
-
-      const existing =
-        (normalized.salaryPaymentId ? byId.get(normalized.salaryPaymentId) : undefined) ??
-        byLineId.get(normalized.lineId);
-
-      const payment = buildPaymentFromStaffLine(normalized, row.date, existing);
-      const list = payoutsByEmployee.get(normalized.employeeId) ?? [];
-      list.push(payment);
-      payoutsByEmployee.set(normalized.employeeId, list);
+  let rows = doc.rows;
+  const rowIndex = rows.findIndex((row) => row.employeeId === employeeId);
+  if (rowIndex < 0) {
+    const emp =
+      employees.find((e) => e.id === employeeId) ?? getEmployeeById(employeeId);
+    if (!emp) {
+      return {
+        ...bundle,
+        months: { ...bundle.months, [monthKey]: doc },
+      };
     }
+    rows = [...rows, { ...salaryRowForEmployeeRecord(emp), payments: [payment] }];
+  } else {
+    rows = rows.map((row, index) => {
+      if (index !== rowIndex) return row;
+      return { ...row, payments: [...row.payments, payment] };
+    });
   }
-
-  for (const [, payments] of payoutsByEmployee) {
-    payments.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
-  }
-
-  const rows = doc.rows.map((salaryRow) => ({
-    ...salaryRow,
-    payments: payoutsByEmployee.get(salaryRow.employeeId) ?? [],
-  }));
-
   return {
     ...bundle,
     months: {
@@ -150,6 +151,118 @@ export function reconcileSalaryMonthFromDailyMap(
       [monthKey]: { ...doc, rows, updatedAt: new Date().toISOString() },
     },
   };
+}
+
+type PendingStaffPayout = {
+  dateKey: string;
+  line: ExpenseLineSaved;
+};
+
+/**
+ * Rebuild salary-register payouts from daily-entry staff lines.
+ * Regular payouts apply to the oldest owing month first (through the payout date);
+ * advances always post to the payout date's month.
+ *
+ * `monthKey` is kept for call-site compatibility; reconcile covers all months.
+ */
+export function reconcileSalaryMonthFromDailyMap(
+  bundle: SalarySheetBundle,
+  monthKey: string,
+  dailyMap: DailyEntryMap,
+): SalarySheetBundle {
+  void monthKey;
+  const employees = getActiveEmployeesStoreSnapshot();
+  const { byId, byLineId } = indexExistingPaymentsAcrossBundle(bundle);
+
+  const pending: PendingStaffPayout[] = [];
+  for (const row of Object.values(dailyMap)) {
+    for (const line of row.expenseLines ?? []) {
+      const normalized = normalizeStaffLine(line);
+      if (!normalized?.employeeId || !normalized.lineId) continue;
+      pending.push({ dateKey: row.date, line: normalized });
+    }
+  }
+  pending.sort(
+    (a, b) =>
+      a.dateKey.localeCompare(b.dateKey) ||
+      (a.line.lineId ?? "").localeCompare(b.line.lineId ?? ""),
+  );
+
+  const monthKeys = new Set<string>();
+  for (const key of Object.keys(bundle.months)) {
+    if (isMonthKey(key)) monthKeys.add(key);
+  }
+  for (const item of pending) {
+    monthKeys.add(monthKeyFromDateKey(item.dateKey));
+  }
+
+  let working: SalarySheetBundle = {
+    ...bundle,
+    months: { ...bundle.months },
+  };
+
+  for (const key of [...monthKeys].sort((a, b) => a.localeCompare(b))) {
+    const ensured = ensureMonthDoc(key, working.months[key], employees);
+    working = {
+      ...working,
+      months: {
+        ...working.months,
+        [key]: clearAllRowPayments(ensured),
+      },
+    };
+  }
+
+  for (const item of pending) {
+    const employeeId = item.line.employeeId!.trim();
+    const paymentMonth = monthKeyFromDateKey(item.dateKey);
+    const lineKind = staffLineKindFromSaved(item.line);
+
+    let targetMonth = paymentMonth;
+    if (lineKind !== STAFF_ADVANCE_LINE_KIND) {
+      const oldestOwing = oldestOwingMonthForEmployee(
+        working,
+        employeeId,
+        paymentMonth,
+      );
+      if (oldestOwing) targetMonth = oldestOwing;
+    }
+
+    // Ensure target month exists even if it was not in the payout-date set.
+    if (!working.months[targetMonth]) {
+      working = {
+        ...working,
+        months: {
+          ...working.months,
+          [targetMonth]: clearAllRowPayments(
+            ensureMonthDoc(targetMonth, undefined, employees),
+          ),
+        },
+      };
+    }
+
+    const existing =
+      (item.line.salaryPaymentId ? byId.get(item.line.salaryPaymentId) : undefined) ??
+      (item.line.lineId ? byLineId.get(item.line.lineId) : undefined);
+
+    const payment = buildPaymentFromStaffLine(item.line, item.dateKey, existing);
+    working = appendPaymentToEmployeeMonth(
+      working,
+      targetMonth,
+      employeeId,
+      payment,
+      employees,
+    );
+  }
+
+  const stampedMonths = { ...working.months };
+  const now = new Date().toISOString();
+  for (const key of Object.keys(stampedMonths)) {
+    const doc = stampedMonths[key];
+    if (!doc) continue;
+    stampedMonths[key] = { ...doc, updatedAt: now };
+  }
+
+  return { ...working, months: stampedMonths };
 }
 
 function overlayExpenseLinesOnMap(
@@ -180,17 +293,15 @@ function overlayExpenseLinesOnMap(
   return { ...map, [dateKey]: stub };
 }
 
-function paymentIdByLineIdForMonth(
-  bundle: SalarySheetBundle,
-  monthKey: string,
-): Map<string, string> {
+function paymentIdByLineIdAcrossBundle(bundle: SalarySheetBundle): Map<string, string> {
   const out = new Map<string, string>();
-  const doc = bundle.months[monthKey];
-  if (!doc) return out;
-  for (const row of doc.rows) {
-    for (const payment of row.payments) {
-      if (payment.dailyEntryLineId) {
-        out.set(payment.dailyEntryLineId, payment.id);
+  for (const doc of Object.values(bundle.months)) {
+    if (!doc) continue;
+    for (const row of doc.rows) {
+      for (const payment of row.payments) {
+        if (payment.dailyEntryLineId) {
+          out.set(payment.dailyEntryLineId, payment.id);
+        }
       }
     }
   }
@@ -227,7 +338,7 @@ export async function reconcileSalaryMonthFromDailyEntries(
   return { ok: true };
 }
 
-/** Keeps salary-register payouts in sync with daily-entry staff lines for the month. */
+/** Keeps salary-register payouts in sync with daily-entry staff lines. */
 export async function syncStaffExpensesToSalaryRegister(params: {
   dateKey: string;
   nextLines: ExpenseLineSaved[];
@@ -249,7 +360,7 @@ export async function syncStaffExpensesToSalaryRegister(params: {
     return bundleForLines;
   });
 
-  const paymentIdByLineId = paymentIdByLineIdForMonth(bundleForLines, monthKey);
+  const paymentIdByLineId = paymentIdByLineIdAcrossBundle(bundleForLines);
   const mergedLines = attachSalaryPaymentIds(params.nextLines, paymentIdByLineId);
   try {
     await flushSalaryWorkspacePersist();

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, useSyncExternalStore, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { ExternalLink, X } from "lucide-react";
 import {
-  getEmployeeMonthBalance,
   getSalaryBundle,
   recordStaffPayout,
   subscribeSalaryBundle,
+  totalStillOwedForEmployeeThroughMonth,
 } from "@/features/payroll";
 import { useSession } from "@/features/auth";
 import { formatDateKeyAsDisplay, todayDateKey } from "../../lib/dateDisplay";
@@ -79,11 +79,10 @@ export function StaffPayoutModal({
   const [busy, setBusy] = useState(false);
 
   const monthKey = dateKey.slice(0, 7);
-  const monthBalance = useMemo(
-    () => getEmployeeMonthBalance(bundle, monthKey, employeeId),
+  const stillOwed = useMemo(
+    () => totalStillOwedForEmployeeThroughMonth(bundle, employeeId, monthKey),
     [bundle, monthKey, employeeId],
   );
-  const stillOwed = monthBalance?.stillOwed ?? 0;
 
   useEffect(() => {
     if (!open) return;
@@ -161,17 +160,20 @@ export function StaffPayoutModal({
         </div>
 
         {/* Context summary */}
-        {!isAdvance && monthBalance ? (
+        {!isAdvance ? (
           <div className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-sidebar)]/25 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
-                  Due this month
+                  Total due
                 </p>
                 <p
                   className={`mt-0.5 font-mono text-[18px] font-semibold ${stillOwedTone(stillOwed, 0, stillOwed)}`}
                 >
                   ৳{formatWhole(stillOwed)}
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--pos-text-2)]">
+                  Includes unpaid prior months; payouts clear oldest first.
                 </p>
               </div>
               {stillOwed > 0 ? (
@@ -184,11 +186,6 @@ export function StaffPayoutModal({
                 </button>
               ) : null}
             </div>
-            {monthBalance.advanceApplied > 0 ? (
-              <p className="mt-2 text-[11px] text-sky-700 dark:text-sky-400">
-                Prior advance applied: ৳{formatWhole(monthBalance.advanceApplied)}
-              </p>
-            ) : null}
           </div>
         ) : null}
 

@@ -30,9 +30,11 @@ export {
   advanceCarriedOutForEmployeeInMonth,
   computeEmployeeMonthBalances,
   getEmployeeMonthBalance,
+  oldestOwingMonthForEmployee,
   remainingAdvanceCreditForEmployee,
   stillOwedForEmployeeInMonth,
   totalStillOwedForEmployee,
+  totalStillOwedForEmployeeThroughMonth,
   type EmployeeMonthBalance,
   type EmployeeMonthBalanceOptions,
 } from "./employeeSalaryBalance";
