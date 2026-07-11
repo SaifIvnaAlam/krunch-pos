@@ -15,6 +15,7 @@ import {
   Lock,
   LockOpen,
   Plus,
+  Trash2,
   Users,
 } from "lucide-react";
 import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
@@ -56,6 +57,7 @@ import {
 } from "@/features/payroll";
 import {
   distributeServiceChargePool,
+  emptySalarySheetBundle,
   ensureMonthDoc,
   isMonthKey,
   isSalarySheetLocked,
@@ -182,6 +184,10 @@ function PayrollSalaries({
   const [poolDraft, setPoolDraft] = useState("");
   const [historyTarget, setHistoryTarget] = useState<EmployeeHistoryTarget | null>(null);
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [generateMonthOpen, setGenerateMonthOpen] = useState(false);
+  const [generateMonthDraft, setGenerateMonthDraft] = useState(monthKeyFromDate());
+  const [deleteMonthTarget, setDeleteMonthTarget] = useState<string | null>(null);
+  const [deleteMonthBusy, setDeleteMonthBusy] = useState(false);
   const [salaryLockModalOpen, setSalaryLockModalOpen] = useState(false);
   const [salaryUnlockModalOpen, setSalaryUnlockModalOpen] = useState(false);
   const [salaryLockBusy, setSalaryLockBusy] = useState(false);
@@ -359,8 +365,22 @@ function PayrollSalaries({
     }
   }
 
+  /** Switch to an existing sheet only — never creates a new month. */
   const selectMonth = (monthKey: string) => {
     if (!isMonthKey(monthKey)) return;
+    if (!bundle.months[monthKey]) return;
+    setMonthPickerOpen(false);
+    setSalaryBundle((b) => ({
+      ...b,
+      selectedMonthKey: monthKey,
+    }));
+  };
+
+  /** Explicitly create (or open) a salary sheet for the chosen month. */
+  const generateMonth = (monthKey: string) => {
+    if (!isMonthKey(monthKey)) return;
+    const alreadyExists = Boolean(bundle.months[monthKey]);
+    setGenerateMonthOpen(false);
     setMonthPickerOpen(false);
     setSalaryBundle((b) => ({
       ...b,
@@ -370,7 +390,51 @@ function PayrollSalaries({
         [monthKey]: ensureMonthDoc(monthKey, b.months[monthKey], employees),
       },
     }));
+    setSalarySheetNotice(
+      alreadyExists
+        ? `Opened ${labelFromMonthKey(monthKey)}.`
+        : `Generated salary sheet for ${labelFromMonthKey(monthKey)}.`,
+    );
   };
+
+  function openDeleteMonthModal(monthKey: string) {
+    if (!isMonthKey(monthKey) || !bundle.months[monthKey]) return;
+    setMonthPickerOpen(false);
+    setDeleteMonthTarget(monthKey);
+  }
+
+  async function executeDeleteMonth() {
+    const monthKey = deleteMonthTarget;
+    if (!monthKey || !isMonthKey(monthKey) || deleteMonthBusy) return;
+    setDeleteMonthBusy(true);
+    try {
+      const label = labelFromMonthKey(monthKey);
+      setSalaryBundle((b) => {
+        if (!b.months[monthKey]) return b;
+        const remaining = { ...b.months };
+        delete remaining[monthKey];
+        const remainingKeys = Object.keys(remaining).filter(isMonthKey).sort();
+        if (remainingKeys.length === 0) {
+          return emptySalarySheetBundle(monthKeyFromDate(), employees);
+        }
+        let nextSelected = b.selectedMonthKey;
+        if (nextSelected === monthKey || !remaining[nextSelected]) {
+          const older = remainingKeys.filter((k) => k < monthKey);
+          const newer = remainingKeys.filter((k) => k > monthKey);
+          nextSelected =
+            older[older.length - 1] ?? newer[0] ?? remainingKeys[remainingKeys.length - 1]!;
+        }
+        return { selectedMonthKey: nextSelected, months: remaining };
+      });
+      await flushSalaryWorkspacePersist();
+      setDeleteMonthTarget(null);
+      setSalarySheetNotice(`Deleted salary sheet for ${label}.`);
+    } catch {
+      setSalarySheetNotice("Could not delete month. Try again.");
+    } finally {
+      setDeleteMonthBusy(false);
+    }
+  }
 
   const monthOverviewRows = useMemo(() => {
     return Object.keys(bundle.months)
@@ -382,6 +446,33 @@ function PayrollSalaries({
         return { monthKey, label: labelFromMonthKey(monthKey), ...s };
       });
   }, [bundle.months]);
+
+  const existingMonthKeysAsc = useMemo(
+    () => monthOverviewRows.map((r) => r.monthKey).slice().reverse(),
+    [monthOverviewRows],
+  );
+
+  const activeMonthIndex = existingMonthKeysAsc.indexOf(activeKey);
+  const prevExistingMonthKey =
+    activeMonthIndex > 0 ? existingMonthKeysAsc[activeMonthIndex - 1]! : null;
+  const nextExistingMonthKey =
+    activeMonthIndex >= 0 && activeMonthIndex < existingMonthKeysAsc.length - 1
+      ? existingMonthKeysAsc[activeMonthIndex + 1]!
+      : null;
+
+  function openGenerateMonthModal() {
+    const current = monthKeyFromDate();
+    const latest = existingMonthKeysAsc[existingMonthKeysAsc.length - 1];
+    const suggestion =
+      !bundle.months[current]
+        ? current
+        : latest
+          ? shiftMonthKey(latest, 1)
+          : current;
+    setGenerateMonthDraft(suggestion);
+    setMonthPickerOpen(false);
+    setGenerateMonthOpen(true);
+  }
 
   const totals = useMemo(() => {
     let basic = 0;
@@ -410,6 +501,14 @@ function PayrollSalaries({
 
   const monthLabel = labelFromMonthKey(activeKey);
   const needsTeamSetup = employees.length === 0;
+  const deleteTargetDoc =
+    deleteMonthTarget && bundle.months[deleteMonthTarget]
+      ? bundle.months[deleteMonthTarget]
+      : null;
+  const deleteTargetPaid = deleteTargetDoc
+    ? deleteTargetDoc.rows.reduce((sum, r) => sum + sumPaymentsForRow(r), 0)
+    : 0;
+  const deleteTargetLocked = isSalarySheetLocked(deleteTargetDoc ?? undefined);
 
   const updateRow = (id: string, patch: Partial<SalarySheetRow>) => {
     patchDoc((d) => ({
@@ -536,12 +635,13 @@ function PayrollSalaries({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Month navigation */}
+            {/* Month navigation — only among sheets that already exist */}
             <div className="flex items-center rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-sidebar)]/30">
               <button
                 type="button"
-                onClick={() => selectMonth(shiftMonthKey(activeKey, -1))}
-                className="inline-flex size-8 items-center justify-center rounded-l-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
+                disabled={!prevExistingMonthKey}
+                onClick={() => prevExistingMonthKey && selectMonth(prevExistingMonthKey)}
+                className="inline-flex size-8 items-center justify-center rounded-l-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)] disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Previous month"
               >
                 <ChevronLeft className="size-4" strokeWidth={2} />
@@ -566,42 +666,88 @@ function PayrollSalaries({
                     aria-label="Select month"
                     className="absolute right-0 top-full z-20 mt-1 max-h-[240px] min-w-[200px] overflow-y-auto rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] py-1 shadow-lg"
                   >
-                    {monthOverviewRows.map((row) => (
-                      <li key={row.monthKey} role="option" aria-selected={row.monthKey === activeKey}>
-                        <button
-                          type="button"
-                          onClick={() => selectMonth(row.monthKey)}
-                          className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-[var(--pos-sidebar)]/60 ${
-                            row.monthKey === activeKey
-                              ? "bg-[var(--pos-nav-active-bg)]/12 font-semibold text-[var(--pos-text-1)]"
-                              : "text-[var(--pos-text-2)]"
-                          }`}
-                        >
-                          <span>{row.label}</span>
-                          {row.outstanding > 0 ? (
-                            <span className="font-mono text-[11px] text-red-600 dark:text-red-400">
-                              ৳{formatWhole(row.outstanding)} due
-                            </span>
-                          ) : (
-                            <span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-400">
-                              Settled
-                            </span>
-                          )}
-                        </button>
+                    {monthOverviewRows.length === 0 ? (
+                      <li className="px-3 py-2.5 text-[13px] text-[var(--pos-text-2)]">
+                        No sheets yet
                       </li>
-                    ))}
+                    ) : (
+                      monthOverviewRows.map((row) => (
+                        <li key={row.monthKey} role="option" aria-selected={row.monthKey === activeKey}>
+                          <div
+                            className={`flex w-full items-center gap-1 px-1 py-0.5 ${
+                              row.monthKey === activeKey
+                                ? "bg-[var(--pos-nav-active-bg)]/12"
+                                : ""
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => selectMonth(row.monthKey)}
+                              className={`flex min-w-0 flex-1 items-center justify-between gap-3 rounded-[6px] px-2 py-2 text-left text-[13px] transition-colors hover:bg-[var(--pos-sidebar)]/60 ${
+                                row.monthKey === activeKey
+                                  ? "font-semibold text-[var(--pos-text-1)]"
+                                  : "text-[var(--pos-text-2)]"
+                              }`}
+                            >
+                              <span className="truncate">{row.label}</span>
+                              {row.outstanding > 0 ? (
+                                <span className="shrink-0 font-mono text-[11px] text-red-600 dark:text-red-400">
+                                  ৳{formatWhole(row.outstanding)} due
+                                </span>
+                              ) : (
+                                <span className="shrink-0 font-mono text-[11px] text-emerald-700 dark:text-emerald-400">
+                                  Settled
+                                </span>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDeleteMonthModal(row.monthKey);
+                              }}
+                              className="inline-flex size-8 shrink-0 items-center justify-center rounded-[6px] text-[var(--pos-text-2)] transition-colors hover:bg-red-500/10 hover:text-red-700"
+                              aria-label={`Delete ${row.label}`}
+                              title="Delete month"
+                            >
+                              <Trash2 className="size-3.5" strokeWidth={2} />
+                            </button>
+                          </div>
+                        </li>
+                      ))
+                    )}
                   </ul>
                 ) : null}
               </div>
               <button
                 type="button"
-                onClick={() => selectMonth(shiftMonthKey(activeKey, 1))}
-                className="inline-flex size-8 items-center justify-center rounded-r-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)]"
+                disabled={!nextExistingMonthKey}
+                onClick={() => nextExistingMonthKey && selectMonth(nextExistingMonthKey)}
+                className="inline-flex size-8 items-center justify-center rounded-r-[8px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-sidebar)] hover:text-[var(--pos-text-1)] disabled:cursor-not-allowed disabled:opacity-40"
                 aria-label="Next month"
               >
                 <ChevronRight className="size-4" strokeWidth={2} />
               </button>
             </div>
+
+            <PrimaryButton
+              type="button"
+              className="h-10 px-3 text-[13px]"
+              onClick={openGenerateMonthModal}
+            >
+              New month
+            </PrimaryButton>
+
+            <button
+              type="button"
+              disabled={!bundle.months[activeKey] || deleteMonthBusy}
+              onClick={() => openDeleteMonthModal(activeKey)}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-red-500/40 bg-red-500/5 px-3 text-[13px] font-semibold text-red-700 transition-opacity hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label={`Delete ${monthLabel}`}
+            >
+              <Trash2 className="size-3.5" strokeWidth={2.25} aria-hidden />
+              Delete
+            </button>
 
             <button
               type="button"
@@ -794,6 +940,122 @@ function PayrollSalaries({
               >
                 <LockOpen className="size-3.5" strokeWidth={2.25} />
                 {salaryLockBusy ? "Unlocking…" : "Unlock month"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {generateMonthOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="generate-salary-month-title"
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => setGenerateMonthOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="generate-salary-month-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Generate salary sheet
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Choose the month to create. Existing sheets are not changed — use the month list to
+              open them.
+            </p>
+            <label className="mt-4 block">
+              <span className="mb-1.5 block text-[12px] font-medium text-[var(--pos-text-2)]">
+                Month
+              </span>
+              <input
+                type="month"
+                value={generateMonthDraft}
+                onChange={(e) => setGenerateMonthDraft(e.target.value)}
+                className="h-10 w-full rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 text-[14px] font-medium text-[var(--pos-text-1)] outline-none focus:border-[var(--pos-text-2)]"
+              />
+            </label>
+            {isMonthKey(generateMonthDraft) && bundle.months[generateMonthDraft] ? (
+              <p className="mt-2 text-[12px] text-amber-800 dark:text-amber-300">
+                {labelFromMonthKey(generateMonthDraft)} already exists — Generate will open it.
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                onClick={() => setGenerateMonthOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!isMonthKey(generateMonthDraft)}
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] bg-[var(--pos-text-1)] px-3 text-[12px] font-semibold text-[var(--pos-page)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
+                onClick={() => generateMonth(generateMonthDraft)}
+              >
+                <Plus className="size-3.5" strokeWidth={2} />
+                {bundle.months[generateMonthDraft] ? "Open month" : "Generate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteMonthTarget && deleteTargetDoc ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-salary-month-title"
+          className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => !deleteMonthBusy && setDeleteMonthTarget(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="delete-salary-month-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              Delete {labelFromMonthKey(deleteMonthTarget)}?
+            </h2>
+            <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              This removes the salary sheet for that month. You can generate it again later if
+              needed.
+            </p>
+            {deleteTargetLocked ? (
+              <p className="mt-2 text-[12px] font-medium text-amber-800 dark:text-amber-300">
+                This month is locked. Deleting it still removes the sheet permanently.
+              </p>
+            ) : null}
+            {deleteTargetPaid > 0 ? (
+              <p className="mt-2 text-[12px] font-medium text-red-700 dark:text-red-400">
+                This sheet has ৳{formatWhole(deleteTargetPaid)} in recorded payouts. Daily Entry
+                lines are not deleted, but salary history for this month will be gone.
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={deleteMonthBusy}
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 disabled:opacity-40 sm:flex-none"
+                onClick={() => setDeleteMonthTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteMonthBusy}
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-red-500/55 bg-red-600 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
+                onClick={() => void executeDeleteMonth()}
+              >
+                <Trash2 className="size-3.5" strokeWidth={2.25} />
+                {deleteMonthBusy ? "Deleting…" : "Delete month"}
               </button>
             </div>
           </div>
