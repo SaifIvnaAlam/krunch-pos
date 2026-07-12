@@ -192,6 +192,45 @@ export function SalesReportView() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Net sales</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.netSales)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Gross sales</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.grossSales)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Void</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.voidSale)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Expenses</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.expenses)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Bank withdrawn</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.bankWithdrawn)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Days</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {filteredRows.length}
+          </div>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-end gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
         <label className="relative min-w-[220px] flex-1">
           <span className={labelClass}>Search</span>
@@ -244,45 +283,6 @@ export function SalesReportView() {
             <span className="font-semibold text-[var(--pos-text-1)]">{filteredRows.length}</span>{" "}
             day{filteredRows.length === 1 ? "" : "s"} shown
           </span>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Net sales</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(footerTotals.netSales)}
-          </div>
-        </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Gross sales</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(footerTotals.grossSales)}
-          </div>
-        </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Void</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(footerTotals.voidSale)}
-          </div>
-        </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Expenses</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(footerTotals.expenses)}
-          </div>
-        </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Bank withdrawn</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(footerTotals.bankWithdrawn)}
-          </div>
-        </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Days</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {filteredRows.length}
-          </div>
         </div>
       </div>
 

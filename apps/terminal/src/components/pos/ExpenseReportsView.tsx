@@ -1,5 +1,5 @@
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   listDailyEntriesDescendingFromMap,
   savedLineKind,
@@ -18,6 +18,12 @@ function formatMoney(value: number) {
     maximumFractionDigits: 2,
   }).format(value);
 }
+
+const fieldClass =
+  "mt-1 h-9 w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)] focus:outline-none";
+const labelClass = "text-[11px] text-[var(--pos-text-2)]";
+const statCell =
+  "min-w-[120px] flex-1 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2";
 
 type FlatLine = {
   kind: "vendor" | "regular" | "staff" | "purchase";
@@ -96,6 +102,7 @@ type ReportRow = {
   id: string;
   dateKey: string;
   displayDate: string;
+  kind: FlatLine["kind"];
   lineKindLabel: string;
   description: string;
   note: string;
@@ -117,6 +124,7 @@ function buildReportRows(saved: DailyEntryRow[]): ReportRow[] {
         id: line.stableKey,
         dateKey: r.date,
         displayDate,
+        kind: line.kind,
         lineKindLabel: line.lineKindLabel,
         description: line.description,
         note: line.note,
@@ -128,6 +136,32 @@ function buildReportRows(saved: DailyEntryRow[]): ReportRow[] {
     });
   }
   return out;
+}
+
+type ExpenseStatTotals = {
+  total: number;
+  cashbook: number;
+  regular: number;
+  payout: number;
+  purchase: number;
+  days: number;
+};
+
+function sumExpenseStats(rows: ReportRow[]): ExpenseStatTotals {
+  const dayKeys = new Set<string>();
+  const totals = rows.reduce(
+    (acc, row) => {
+      dayKeys.add(row.dateKey);
+      acc.total += row.amount;
+      if (row.kind === "vendor") acc.cashbook += row.amount;
+      else if (row.kind === "regular") acc.regular += row.amount;
+      else if (row.kind === "staff") acc.payout += row.amount;
+      else if (row.kind === "purchase") acc.purchase += row.amount;
+      return acc;
+    },
+    { total: 0, cashbook: 0, regular: 0, payout: 0, purchase: 0 },
+  );
+  return { ...totals, days: dayKeys.size };
 }
 
 function rowMatchesQuery(row: ReportRow, q: string): boolean {
@@ -147,6 +181,8 @@ function rowMatchesQuery(row: ReportRow, q: string): boolean {
 export function ExpenseReportsView() {
   const { map, loading, error } = useDailyEntryMap();
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const allRows = useMemo(
     () => buildReportRows(listDailyEntriesDescendingFromMap(map)),
@@ -154,15 +190,23 @@ export function ExpenseReportsView() {
   );
 
   const query = search.trim().toLowerCase();
-  const filteredRows = useMemo(
-    () => allRows.filter((row) => rowMatchesQuery(row, query)),
-    [allRows, query],
-  );
+  const filteredRows = useMemo(() => {
+    let rows = allRows;
+    if (dateFrom) rows = rows.filter((row) => row.dateKey >= dateFrom);
+    if (dateTo) rows = rows.filter((row) => row.dateKey <= dateTo);
+    if (query) rows = rows.filter((row) => rowMatchesQuery(row, query));
+    return rows;
+  }, [allRows, dateFrom, dateTo, query]);
 
-  const grandTotal = useMemo(
-    () => filteredRows.reduce((s, row) => s + row.amount, 0),
-    [filteredRows],
-  );
+  const stats = useMemo(() => sumExpenseStats(filteredRows), [filteredRows]);
+
+  const hasFilters = search.trim() !== "" || dateFrom !== "" || dateTo !== "";
+
+  const clearFilters = useCallback(() => {
+    setSearch("");
+    setDateFrom("");
+    setDateTo("");
+  }, []);
 
   const thBase =
     "px-3 py-2 text-[11px] font-semibold text-[var(--pos-text-2)]";
@@ -179,26 +223,97 @@ export function ExpenseReportsView() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
+      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Total</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(stats.total)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Cashbook</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(stats.cashbook)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Regular</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(stats.regular)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Payout</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(stats.payout)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Purchase</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(stats.purchase)}
+          </div>
+        </div>
+        <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Days</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {stats.days}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3">
         <label className="relative min-w-[220px] flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--pos-text-2)]"
-            strokeWidth={2}
-          />
+          <span className={labelClass}>Search</span>
+          <div className="relative mt-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--pos-text-2)]"
+              strokeWidth={2}
+            />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search date, book, note, ledger entry, entered by…"
+              className="h-9 w-full cursor-text rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none"
+              aria-label="Search expense reports"
+            />
+          </div>
+        </label>
+        <label className="block min-w-[120px] max-w-[140px]">
+          <span className={labelClass}>From</span>
           <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search date, book, note, ledger entry, entered by…"
-            className="h-9 w-full cursor-text rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] pl-9 pr-3 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)] focus:outline-none"
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className={fieldClass}
+            aria-label="From date"
           />
         </label>
-        <div className="ml-auto text-[11px] text-[var(--pos-text-2)]">
-          <span className="font-semibold text-[var(--pos-text-1)]">{filteredRows.length}</span>{" "}
-          expense
-          {filteredRows.length === 1 ? "" : "s"} ·{" "}
-          <span className="font-semibold text-[var(--pos-text-1)]">{formatMoney(grandTotal)}</span>{" "}
-          total
+        <label className="block min-w-[120px] max-w-[140px]">
+          <span className={labelClass}>To</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className={fieldClass}
+            aria-label="To date"
+          />
+        </label>
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          {hasFilters ? (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="h-9 cursor-pointer rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-card)] px-3 text-[12px] font-medium text-[var(--pos-text-1)] transition-colors hover:bg-[var(--pos-nav-hover)]/40"
+            >
+              Clear
+            </button>
+          ) : null}
+          <span className="text-[11px] text-[var(--pos-text-2)]">
+            <span className="font-semibold text-[var(--pos-text-1)]">{filteredRows.length}</span>{" "}
+            expense{filteredRows.length === 1 ? "" : "s"} shown
+          </span>
         </div>
       </div>
 
@@ -215,7 +330,7 @@ export function ExpenseReportsView() {
           <div className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]">
             {allRows.length === 0
               ? "No expenses yet. Save a daily entry with expense lines to see them here."
-              : "No expenses match your search."}
+              : "No expenses match your filters."}
           </div>
         ) : (
           <table className="w-full min-w-[880px] border-collapse text-center">
@@ -275,7 +390,7 @@ export function ExpenseReportsView() {
                   Total (filtered)
                 </th>
                 <td className="px-3 py-2 text-center text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-                  {formatMoney(grandTotal)}
+                  {formatMoney(stats.total)}
                 </td>
                 <td className="px-3 py-2 text-center text-[11px] text-[var(--pos-text-2)]" colSpan={2}>
                   —
