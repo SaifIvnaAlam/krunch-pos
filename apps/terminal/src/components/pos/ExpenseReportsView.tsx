@@ -108,9 +108,18 @@ type ReportRow = {
   note: string;
   ledgerEntryLabel: string;
   amount: number;
+  /**
+   * Cash paid: for purchases, same-day cashbook payment applied to the bill;
+   * for payout / regular / cashbook rows, the expense amount (already cash out).
+   */
+  paidAmount: number;
   receiptCount: number;
   enteredBy: string;
 };
+
+function vendorKey(description: string): string {
+  return description.trim().toLowerCase();
+}
 
 function buildReportRows(saved: DailyEntryRow[]): ReportRow[] {
   const out: ReportRow[] = [];
@@ -130,10 +139,104 @@ function buildReportRows(saved: DailyEntryRow[]): ReportRow[] {
         note: line.note,
         ledgerEntryLabel: line.ledgerEntryLabel,
         amount: line.amount,
+        // Purchases start unpaid until a same-day cashbook payment is folded in.
+        // Payout, regular, and cashbook lines are cash out — Paid equals Amount.
+        paidAmount: line.kind === "purchase" ? 0 : line.amount,
         receiptCount: line.receiptCount,
         enteredBy,
       });
     });
+  }
+  return foldSameDayPaymentsIntoPurchases(out);
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * Same-day cashbook payments for a purchase vendor are shown as Paid on the bill
+ * row instead of a duplicate Cashbook payment row.
+ */
+function foldSameDayPaymentsIntoPurchases(rows: ReportRow[]): ReportRow[] {
+  const paidByPurchaseId = new Map<string, number>();
+  /** Payment row id → remaining amount to keep (0 = hide). Absent = keep original. */
+  const paymentRemainderById = new Map<string, number>();
+
+  const rowsByDate = new Map<string, ReportRow[]>();
+  for (const row of rows) {
+    const list = rowsByDate.get(row.dateKey);
+    if (list) list.push(row);
+    else rowsByDate.set(row.dateKey, [row]);
+  }
+
+  for (const dayRows of rowsByDate.values()) {
+    const purchasesByVendor = new Map<string, ReportRow[]>();
+    const paymentsByVendor = new Map<string, ReportRow[]>();
+
+    for (const row of dayRows) {
+      const key = vendorKey(row.description);
+      if (!key) continue;
+      if (row.kind === "purchase") {
+        const list = purchasesByVendor.get(key);
+        if (list) list.push(row);
+        else purchasesByVendor.set(key, [row]);
+      } else if (row.kind === "vendor") {
+        const list = paymentsByVendor.get(key);
+        if (list) list.push(row);
+        else paymentsByVendor.set(key, [row]);
+      }
+    }
+
+    for (const [key, purchases] of purchasesByVendor) {
+      const payments = paymentsByVendor.get(key);
+      if (!payments || payments.length === 0) continue;
+
+      let payPool = payments.reduce((sum, p) => sum + p.amount, 0);
+      if (payPool <= 0) continue;
+
+      let appliedTotal = 0;
+      for (const purchase of purchases) {
+        if (payPool <= 0) break;
+        const applied = Math.min(purchase.amount, payPool);
+        paidByPurchaseId.set(purchase.id, applied);
+        appliedTotal = roundMoney(appliedTotal + applied);
+        payPool = roundMoney(payPool - applied);
+      }
+
+      let absorbBudget = appliedTotal;
+      for (const payment of payments) {
+        if (absorbBudget <= 0) {
+          paymentRemainderById.set(payment.id, payment.amount);
+          continue;
+        }
+        if (payment.amount <= absorbBudget + 1e-9) {
+          paymentRemainderById.set(payment.id, 0);
+          absorbBudget = roundMoney(absorbBudget - payment.amount);
+        } else {
+          paymentRemainderById.set(payment.id, roundMoney(payment.amount - absorbBudget));
+          absorbBudget = 0;
+        }
+      }
+    }
+  }
+
+  const out: ReportRow[] = [];
+  for (const row of rows) {
+    if (row.kind === "purchase") {
+      out.push({
+        ...row,
+        paidAmount: paidByPurchaseId.get(row.id) ?? 0,
+      });
+      continue;
+    }
+    if (row.kind === "vendor" && paymentRemainderById.has(row.id)) {
+      const remainder = paymentRemainderById.get(row.id)!;
+      if (remainder <= 0) continue;
+      out.push({ ...row, amount: remainder, paidAmount: remainder });
+      continue;
+    }
+    out.push(row);
   }
   return out;
 }
@@ -152,11 +255,21 @@ function sumExpenseStats(rows: ReportRow[]): ExpenseStatTotals {
   const totals = rows.reduce(
     (acc, row) => {
       dayKeys.add(row.dateKey);
-      acc.total += row.amount;
-      if (row.kind === "vendor") acc.cashbook += row.amount;
-      else if (row.kind === "regular") acc.regular += row.amount;
-      else if (row.kind === "staff") acc.payout += row.amount;
-      else if (row.kind === "purchase") acc.purchase += row.amount;
+      if (row.kind === "purchase") {
+        acc.purchase += row.amount;
+        const paid = row.paidAmount;
+        acc.total += paid;
+        acc.cashbook += paid;
+      } else if (row.kind === "vendor") {
+        acc.total += row.amount;
+        acc.cashbook += row.amount;
+      } else if (row.kind === "regular") {
+        acc.total += row.amount;
+        acc.regular += row.amount;
+      } else if (row.kind === "staff") {
+        acc.total += row.amount;
+        acc.payout += row.amount;
+      }
       return acc;
     },
     { total: 0, cashbook: 0, regular: 0, payout: 0, purchase: 0 },
@@ -174,6 +287,7 @@ function rowMatchesQuery(row: ReportRow, q: string): boolean {
     row.lineKindLabel.toLowerCase(),
     row.ledgerEntryLabel.toLowerCase(),
     row.enteredBy.toLowerCase(),
+    String(row.paidAmount),
   ].join(" ");
   return hay.includes(q);
 }
@@ -217,20 +331,20 @@ export function ExpenseReportsView() {
         <div>
           <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Expense reports</h1>
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            One row per saved expense line (cashbooks and regular), including ledger entry type
-            and receipts — aligned with Daily Entry Form.
+            Purchase bills show a Paid column for same-day cashbook payments — those payments are
+            not listed again as separate rows.
           </p>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Total</div>
+        <div className={statCell} title="Cash out: cashbook payments, regular, and payouts">
+          <div className="text-[11px] text-[var(--pos-text-2)]">Cash total</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoney(stats.total)}
           </div>
         </div>
-        <div className={statCell}>
+        <div className={statCell} title="Includes paid amounts on purchase bills">
           <div className="text-[11px] text-[var(--pos-text-2)]">Cashbook</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoney(stats.cashbook)}
@@ -248,8 +362,11 @@ export function ExpenseReportsView() {
             {formatMoney(stats.payout)}
           </div>
         </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Purchase</div>
+        <div
+          className={statCell}
+          title="Purchase bill amounts (payables) — cash paid is in Cashbook / Paid"
+        >
+          <div className="text-[11px] text-[var(--pos-text-2)]">Purchase bills</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoney(stats.purchase)}
           </div>
@@ -333,7 +450,7 @@ export function ExpenseReportsView() {
               : "No expenses match your filters."}
           </div>
         ) : (
-          <table className="w-full min-w-[880px] border-collapse text-center">
+          <table className="w-full min-w-[960px] border-collapse text-center">
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)]">
                 <th className={`whitespace-nowrap ${thBase}`}>Date</th>
@@ -346,7 +463,15 @@ export function ExpenseReportsView() {
                 >
                   Ledger entry
                 </th>
-                <th className={thBase}>Amount</th>
+                <th className={thBase} title="Bill amount for purchases; expense amount otherwise">
+                  Amount
+                </th>
+                <th
+                  className={thBase}
+                  title="Cash paid: same-day payment on purchase bills; full amount for payouts, regular, and cashbook"
+                >
+                  Paid
+                </th>
                 <th className={`w-24 ${thBase}`}>Receipts</th>
                 <th className={`min-w-[100px] ${thBase}`}>Entered by</th>
               </tr>
@@ -371,6 +496,9 @@ export function ExpenseReportsView() {
                   <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
                     {formatMoney(row.amount)}
                   </td>
+                  <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                    {row.paidAmount > 0 ? formatMoney(row.paidAmount) : "—"}
+                  </td>
                   <td className="px-3 py-2 text-[var(--pos-text-2)]">
                     {row.receiptCount > 0 ? row.receiptCount : "—"}
                   </td>
@@ -387,9 +515,13 @@ export function ExpenseReportsView() {
                   colSpan={5}
                   scope="row"
                 >
-                  Total (filtered)
+                  Cash total (filtered)
                 </th>
-                <td className="px-3 py-2 text-center text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                <td className="px-3 py-2 text-center text-[11px] text-[var(--pos-text-2)]">—</td>
+                <td
+                  className="px-3 py-2 text-center text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]"
+                  title="Cash out only (paid on bills + other cash expenses)"
+                >
                   {formatMoney(stats.total)}
                 </td>
                 <td className="px-3 py-2 text-center text-[11px] text-[var(--pos-text-2)]" colSpan={2}>
