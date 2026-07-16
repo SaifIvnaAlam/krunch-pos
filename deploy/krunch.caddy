@@ -11,6 +11,14 @@ steakandmarrow.inventivelab.bd {
 		reverse_proxy 127.0.0.1:3001
 	}
 
+	# Postgres web GUI (pgAdmin container, published on 127.0.0.1:8080).
+	redir /pgadmin /pgadmin/
+	handle_path /pgadmin/* {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up X-Script-Name /pgadmin
+		}
+	}
+
 	root * /opt/krunch-pos/deploy/pos-static
 	handle {
 		try_files {path} /index.html

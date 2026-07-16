@@ -84,6 +84,29 @@ services:
       "
     networks: [krunch]
 
+  # Web GUI for Postgres, served by the shared host Caddy at
+  # https://<POS_DOMAIN>/pgadmin/ (published on loopback only).
+  # Log in with PGADMIN_DEFAULT_EMAIL / PGADMIN_DEFAULT_PASSWORD; the
+  # krunch-pos server is pre-registered (enter POSTGRES_PASSWORD on connect).
+  pgadmin:
+    <<: *default_dns
+    image: dpage/pgadmin4:latest
+    restart: always
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "True"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [krunch]
+
   # Existing automation — unchanged; not exposed on 80/443 by Caddy.
   n8n:
     image: docker.n8n.io/n8nio/n8n
@@ -108,6 +131,7 @@ services:
 volumes:
   pg_data:
   n8n_data:
+  pgadmin_data:
 
 networks:
   krunch:
