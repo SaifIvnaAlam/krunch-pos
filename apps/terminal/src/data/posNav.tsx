@@ -1,13 +1,14 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
-  BookMarked,
+  KeyRound,
   LineChart,
   NotebookPen,
   Package,
   Receipt,
   TrendingUp,
   UserRound,
+  Wallet,
 } from "lucide-react";
 
 export type NavLeaf = {
@@ -17,6 +18,8 @@ export type NavLeaf = {
   icon: LucideIcon;
   addon?: boolean;
   beta?: boolean;
+  /** If set, leaf is hidden unless the session has this permission (UI only). */
+  permission?: string;
 };
 
 export type NavBranch = {
@@ -27,6 +30,7 @@ export type NavBranch = {
   addon?: boolean;
   beta?: boolean;
   children: NavNode[];
+  permission?: string;
 };
 
 export type NavNode = NavLeaf | NavBranch;
@@ -39,8 +43,9 @@ export type NavSection = {
 
 const OFFICE_NAV_NODES: NavNode[] = [
   { kind: "leaf", id: "exp-daily", label: "Daily Entry Form", icon: NotebookPen },
-  { kind: "leaf", id: "lm-cashbooks", label: "Cashbooks", icon: BookMarked },
-  { kind: "leaf", id: "lm-items", label: "Items purchased", icon: Package },
+  { kind: "leaf", id: "all-expenses", label: "All Expenses", icon: Wallet },
+  { kind: "leaf", id: "ip-home", label: "Item Purchases", icon: Package },
+  { kind: "leaf", id: "oe-home", label: "Other Expenses", icon: Receipt },
   {
     kind: "branch",
     id: "rep-branch",
@@ -60,6 +65,13 @@ const OFFICE_NAV_NODES: NavNode[] = [
     children: [
       { kind: "leaf", id: "hr-employees", label: "Employee Management", icon: UserRound },
       { kind: "leaf", id: "hr-payroll", label: "Employee Salaries", icon: Receipt },
+      {
+        kind: "leaf",
+        id: "hr-users",
+        label: "Users & Access",
+        icon: KeyRound,
+        permission: "staff:read",
+      },
     ],
   },
 ];
@@ -68,21 +80,32 @@ export const POS_NAV_SECTIONS: NavSection[] = [
   { id: "office", label: "", nodes: OFFICE_NAV_NODES },
 ];
 
-export function filterVisibleNavNodes(nodes: NavNode[]): NavNode[] {
+function nodeAllowed(node: NavNode, permissions: string[] | undefined): boolean {
+  if (!node.permission) return true;
+  if (!permissions?.length) return false;
+  if (permissions.includes("*")) return true;
+  return permissions.includes(node.permission);
+}
+
+export function filterVisibleNavNodes(
+  nodes: NavNode[],
+  permissions?: string[],
+): NavNode[] {
   return nodes
-    .filter((node) => node.kind !== "branch" || filterVisibleNavNodes(node.children).length > 0)
+    .filter((node) => nodeAllowed(node, permissions))
     .map((node) =>
       node.kind === "branch"
-        ? { ...node, children: filterVisibleNavNodes(node.children) }
+        ? { ...node, children: filterVisibleNavNodes(node.children, permissions) }
         : node,
-    );
+    )
+    .filter((node) => node.kind !== "branch" || node.children.length > 0);
 }
 
 /** Sidebar / mobile nav sections (empty sections dropped). */
-export function getVisibleNavSections(): NavSection[] {
+export function getVisibleNavSections(permissions?: string[]): NavSection[] {
   return POS_NAV_SECTIONS.map((section) => ({
     ...section,
-    nodes: filterVisibleNavNodes(section.nodes),
+    nodes: filterVisibleNavNodes(section.nodes, permissions),
   })).filter((section) => section.nodes.length > 0);
 }
 

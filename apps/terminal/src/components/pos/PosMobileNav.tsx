@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { useSession } from "@/features/auth";
 import { getVisibleNavSections, leavesFromNodes } from "../../data/posNav";
 
 function MobileNavButton({
@@ -47,13 +48,14 @@ export function PosMobileNav({
   activeLeafId: string;
   onSelectLeaf: (id: string) => void;
 }) {
+  const { permissions } = useSession();
   return (
     <nav
       aria-label="Main navigation"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-solid [border-color:var(--pos-sb-border)] [background:var(--pos-sb-bg)] pb-[env(safe-area-inset-bottom,0px)] lg:hidden"
     >
       <div className="flex flex-col gap-1 px-1 py-1.5">
-        {getVisibleNavSections().map((section, sectionIndex) => {
+        {getVisibleNavSections(permissions).map((section, sectionIndex) => {
           const leaves = leavesFromNodes(section.nodes);
           if (leaves.length === 0) return null;
           return (

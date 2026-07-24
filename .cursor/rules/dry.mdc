@@ -1,0 +1,20 @@
+---
+description: DRY — do not duplicate logic; extract shared helpers; use dry-refactoring when clones pile up.
+alwaysApply: true
+---
+
+# DRY (always on)
+
+Read and follow `.cursor/skills/dry-refactoring/SKILL.md` when cleaning duplication.
+
+## Rules
+
+- Before writing new helpers, search the repo for an existing one (especially money, dates, expense status, API fetch).
+- If you paste the same block twice in one change, extract it in that same change.
+- Prefer one shared function over parallel copies that will drift (e.g. bill drawer hosted from Suppliers vs Bills page).
+- Do not invent layers “for reuse later” — extract when a second real call site exists (pairs with Ponytail).
+- Meaningful clones: run `npx jscpd --reporters ai <path>` then apply the dry-refactoring workflow (highest line-count first).
+
+## This codebase hotspots
+
+Money formatting, expense status pills, daily-entry line drafts, and ledger bill/pay drawers have already forked once — extend the shared path instead of adding a third copy.

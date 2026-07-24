@@ -10,6 +10,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { ThemeToggle } from "../ThemeToggle";
+import { useSession } from "@/features/auth";
 import {
   getVisibleNavSections,
   branchPathToLeaf,
@@ -390,11 +391,12 @@ export function PosSidebar({
   branchName?: string;
   branchAddress?: string | null;
 }) {
+  const { permissions } = useSession();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [openBranches, setOpenBranches] = useState<Record<string, boolean>>({});
   const navRef = useRef<HTMLElement | null>(null);
   const [collapsedCanScrollDown, setCollapsedCanScrollDown] = useState(false);
-  const navSections = getVisibleNavSections();
+  const navSections = getVisibleNavSections(permissions);
   const userInitials = initialsFromName(userName);
   const userDisplayName = userName.trim() || "Signed in";
 

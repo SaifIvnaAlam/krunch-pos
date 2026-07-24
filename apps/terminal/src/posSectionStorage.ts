@@ -8,6 +8,9 @@ export const POS_DEFAULT_LEAF_ID = "exp-daily";
 
 /** Legacy ids removed from the sidebar tree but still restorable via map. */
 const EXTRA_RESTORE_LEAF_IDS = new Set([
+  // Cashbook module retired from the sidebar; kept as a reachable frozen backup.
+  "lm-cashbooks",
+  "lm-items",
   "lm-suppliers",
   "lm-management",
   "lm-ledger",
@@ -48,9 +51,18 @@ const LEGACY_LEAF_ID_MAP: Record<string, string> = {
   "fd-cat": POS_DEFAULT_LEAF_ID,
   "fd-items": POS_DEFAULT_LEAF_ID,
   "fd-addon": POS_DEFAULT_LEAF_ID,
-  "lm-suppliers": "lm-cashbooks",
-  "lm-management": "lm-cashbooks",
-  "lm-ledger": "lm-cashbooks",
+  // Cashbook retired + Suppliers folded into Item Purchases → land on the new home.
+  "lm-cashbooks": "ip-home",
+  "lm-items": "ip-home",
+  "lm-suppliers": "ip-home",
+  "lm-management": "ip-home",
+  "lm-ledger": "ip-home",
+  "pay-purchases": "ip-home",
+  // Payables retired → All Expenses overview; standalone expenses live in Other Expenses.
+  "pay-dashboard": "all-expenses",
+  "pay-list": "oe-home",
+  "pay-quick": "oe-home",
+  "pay-categories": "all-expenses",
   "hr-directory": "hr-employees",
   "hr-roster": "hr-employees",
   "hr-leave": "hr-employees",

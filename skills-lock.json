@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "dry-principle": {
+      "source": "oimiragieo/agent-studio",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/dry-principle/SKILL.md",
+      "computedHash": "00ef79f41935a617424cb26a197ed06235da59d5b6b94726ae4aa719bcd955cf"
+    },
+    "dry-refactoring": {
+      "source": "kucherenko/jscpd",
+      "sourceType": "github",
+      "skillPath": "skills/dry-refactoring/SKILL.md",
+      "computedHash": "21c7e0663ef01366fe4b934883ae09dd485f97aecae31885bfbf4b39939ba370"
+    },
+    "ponytail": {
+      "source": "dietrichgebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail/SKILL.md",
+      "computedHash": "210fa0831f649ce9f8a305f7b7c8cf2a0dd09ac4dd53067109941b96e7811d4e"
+    }
+  }
+}

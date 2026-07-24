@@ -42,18 +42,18 @@ import {
   resolveLedgerSupplierIdByBookName,
   subscribeLedgerWorkspace,
   validateDailyExpenseLedgerAmount,
-  openCashbooksPanel,
 } from "./LedgerModuleView";
+import { openItemPurchaseSuppliers } from "./ItemPurchaseModuleView";
 import type { LedgerAttachment } from "@/features/ledger";
 import {
   bankNetAfterWithdrawals,
   carriedOpeningBalanceForDate,
+  commitDailyEntry,
   deleteDailyEntry,
   expenseTotalFromExpenseLines,
   listDailyEntriesDescendingFromMap,
   lockDailyEntry,
   roundTaka,
-  saveDailyEntry,
   savedLineKind,
   setDailyEntryNavGuard,
   suggestedNewEntryDateKey,
@@ -71,8 +71,11 @@ import {
   staffLineKindFromSaved,
 } from "@/features/daily-entry/staffExpenseLine";
 import {
+  cancelSalaryWorkspacePersist,
   getSalaryBundle,
+  flushSalaryWorkspacePersist,
   loadSalaryWorkspace,
+  reloadSalaryWorkspace,
   STAFF_ADVANCE_LINE_KIND,
   STAFF_LINE_KIND,
   syncLoadedSalaryBundleToEmployees,
@@ -80,8 +83,19 @@ import {
   validateStaffPayoutAmount,
   type StaffLineKind,
 } from "@/features/payroll";
-import { flushLedgerWorkspacePersist, loadLedgerWorkspace } from "@/features/ledger";
+import {
+  cancelLedgerWorkspacePersist,
+  flushLedgerWorkspacePersist,
+  getWorkspace,
+  loadLedgerWorkspace,
+  reloadLedgerWorkspace,
+} from "@/features/ledger";
 import { getEmployeeDirectoryLoadState, loadEmployeeDirectory } from "@/features/employees";
+import {
+  createExpenseCategory,
+  listExpenseCategories,
+  type ExpenseCategory,
+} from "@/features/payables";
 import { getEmployeeById, useActiveEmployees } from "../../lib/employeeDirectoryStorage";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
 import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
@@ -93,8 +107,12 @@ type PurchaseItemDraft = {
   name: string;
   qty: string;
   unit: string;
-  /** Line total in taka — primary input; rate is derived as total ÷ qty. */
+  /** Unit price — editable; kept in sync with total via qty. */
+  rate: string;
+  /** Line total in taka — editable; kept in sync with rate via qty. */
   total: string;
+  /** Which of rate/total the user last typed, so qty edits hold the right one. */
+  lastEdited?: "rate" | "total";
 };
 
 type ExpenseLineDraft = {
@@ -103,6 +121,8 @@ type ExpenseLineDraft = {
   vendor: string;
   /** Regular expense title (no vendor) */
   label: string;
+  /** Other Expenses category (regular lines). */
+  expenseCategoryId: string;
   /** Staff expense — employee directory id */
   employeeId: string;
   /** Regular payout vs advance salary */
@@ -111,7 +131,10 @@ type ExpenseLineDraft = {
   note: string;
   /** Links to salary register when synced from a prior save. */
   salaryPaymentId?: string;
+  /** Payable total (regular) or cash amount (vendor/staff). */
   amount: string;
+  /** Cash paid now on a regular expense (defaults to total). */
+  paidAmount: string;
   receiptDataUrls: string[];
   /**
    * Purchase bills only — attachments keyed by vendor cashbook name so each
@@ -155,6 +178,7 @@ function newPurchaseItemDraft(vendor = ""): PurchaseItemDraft {
     name: "",
     qty: "1",
     unit: "pcs",
+    rate: "",
     total: "",
   };
 }
@@ -163,10 +187,12 @@ function emptyExpenseLineFields(): Omit<ExpenseLineDraft, "id" | "kind"> {
   return {
     vendor: "",
     label: "",
+    expenseCategoryId: "",
     employeeId: "",
     staffLineKind: STAFF_LINE_KIND,
     note: "",
     amount: "",
+    paidAmount: "",
     receiptDataUrls: [],
     vendorReceipts: {},
     vendorNotes: {},
@@ -472,11 +498,18 @@ function buildExpenseLinesToSaveFromDrafts(
       const expenseTitle = line.label.trim();
       if (expenseTitle && amt > 0) {
         const noteTrim = line.note.trim();
+        const paid =
+          line.paidAmount.trim() === ""
+            ? amt
+            : Math.min(amt, Math.max(0, parseAmount(line.paidAmount)));
+        const catId = line.expenseCategoryId.trim();
         linesToSave.push({
           kind: "regular",
           label: expenseTitle,
           amount: amt,
+          paidAmount: paid,
           ...lineIdField,
+          ...(catId ? { expenseCategoryId: catId } : {}),
           ...(noteTrim ? { note: noteTrim } : {}),
           ...receiptField,
         });
@@ -621,6 +654,8 @@ async function mergeVoidAttachmentDataUrls(
 
 /** Select value for free-typed vendor (not yet in the saved list). */
 const VENDOR_OTHER_VALUE = "__vendor_other__";
+/** Category select sentinel — opens the new-category modal. */
+const NEW_EXPENSE_CATEGORY_VALUE = "__new_expense_category__";
 
 const inputClass =
   "h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] tabular-nums text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
@@ -649,13 +684,14 @@ const expenseCardClass = "flex min-w-0 flex-col gap-1.5";
 const expenseCardRowClass = "flex min-w-0 flex-wrap items-start gap-2";
 const expensePrimaryInputClass =
   "h-[3.125rem] w-full min-w-0 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[14px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
-const expenseTitleInputClass = `${expensePrimaryInputClass} text-[16px] font-semibold`;
 const expensePrimarySelectClass = `${expensePrimaryInputClass} cursor-pointer`;
 /** Regular-line memo: reads as quiet placeholder text until focused. */
 const expenseQuietInputClass =
   "h-8 w-full min-w-0 rounded-[6px] border border-solid border-transparent bg-transparent px-2 text-[12px] text-[var(--pos-text-1)] transition-[border-color,background-color,box-shadow] placeholder:text-[var(--pos-text-2)]/70 focus:border-[var(--pos-input-border)] focus:bg-[var(--pos-input-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
 const expenseRemoveBtnClass =
   "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700";
+const expenseRemoveBtnCompactClass =
+  "inline-flex size-7 shrink-0 items-center justify-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700";
 
 function AttachmentCountBadge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -672,6 +708,8 @@ function AttachmentCountBadge({ count }: { count: number }) {
 
 const expenseIconBtnClass =
   "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]";
+const expenseIconBtnCompactClass =
+  "inline-flex size-7 shrink-0 items-center justify-center rounded-[6px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]";
 const expenseNoteBtnActiveClass =
   "border-[var(--pos-sb-base)] bg-[var(--pos-nav-hover)]/20 text-[var(--pos-text-1)]";
 const expenseAddBtnBaseClass =
@@ -773,6 +811,57 @@ function purchaseItemLineRate(item: PurchaseItemDraft): number | null {
   const qty = parseAmount(item.qty);
   if (!Number.isFinite(qty) || qty <= 0) return null;
   return Math.round((total / qty) * 100) / 100;
+}
+
+/** Format a computed rate/total to a clean 2-decimal string (empty if invalid). */
+function formatPurchaseComputed(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "";
+  return String(Math.round(n * 100) / 100);
+}
+
+/**
+ * Keep rate ↔ total in sync after a field edit. Rate and total are both
+ * editable: typing one recomputes the other via qty. Editing qty holds
+ * whichever value the user last typed and recomputes its partner.
+ */
+function recomputePurchaseItem(
+  item: PurchaseItemDraft,
+  patch: Partial<PurchaseItemDraft>,
+): PurchaseItemDraft {
+  const qty = parseAmount(item.qty);
+  const hasQty = item.qty.trim() !== "" && Number.isFinite(qty) && qty > 0;
+  const next = { ...item };
+
+  if (typeof patch.rate === "string") {
+    if (!next.rate.trim()) next.total = "";
+    else if (hasQty) {
+      const rate = parseAmount(next.rate);
+      if (Number.isFinite(rate)) next.total = formatPurchaseComputed(rate * qty);
+    }
+    return next;
+  }
+
+  if (typeof patch.total === "string") {
+    if (!next.total.trim()) next.rate = "";
+    else if (hasQty) {
+      const total = parseAmount(next.total);
+      if (Number.isFinite(total)) next.rate = formatPurchaseComputed(total / qty);
+    }
+    return next;
+  }
+
+  if (typeof patch.qty === "string") {
+    if (next.lastEdited === "rate" && next.rate.trim()) {
+      const rate = parseAmount(next.rate);
+      next.total = hasQty && Number.isFinite(rate) ? formatPurchaseComputed(rate * qty) : "";
+    } else if (next.total.trim()) {
+      const total = parseAmount(next.total);
+      next.rate = hasQty && Number.isFinite(total) ? formatPurchaseComputed(total / qty) : "";
+    }
+    return next;
+  }
+
+  return next;
 }
 
 function purchaseItemsTotal(items: readonly PurchaseItemDraft[]): number {
@@ -906,6 +995,11 @@ function purchaseVendorReceiptUrls(
 
 function draftLineCashAmount(line: ExpenseLineDraft): number {
   if (line.kind === "purchase") return 0;
+  if (line.kind === "regular") {
+    const total = parseAmount(line.amount);
+    if (line.paidAmount.trim() === "") return total;
+    return parseAmount(line.paidAmount);
+  }
   return parseAmount(line.amount);
 }
 
@@ -1081,7 +1175,7 @@ function findFirstExpenseValidationError(
     if (line.kind === "vendor") {
       if (parseAmount(line.amount) > 0 && !line.vendor.trim()) {
         return {
-          message: "Select or enter a cashbook name, or remove this row.",
+          message: "Select or enter a supplier name, or remove this row.",
           lineId: line.id,
           part: "vendor",
         };
@@ -1097,7 +1191,7 @@ function findFirstExpenseValidationError(
       const supplierId = resolveLedgerSupplierIdByBookName(line.vendor.trim());
       if (noteTrim && !supplierId) {
         return {
-          message: "Memo is only used when the name matches a cashbook.",
+          message: "Memo is only used when the name matches a supplier.",
           lineId: line.id,
           part: "ledgerNote",
         };
@@ -1135,14 +1229,14 @@ function findFirstExpenseValidationError(
         if (!touched) continue;
         if (!item.vendor.trim()) {
           return {
-            message: "Select a vendor for each item.",
+            message: "Select a supplier for each item.",
             lineId: line.id,
             part: "vendor",
           };
         }
         if (!resolveLedgerSupplierIdByBookName(item.vendor.trim())) {
           return {
-            message: "Purchases must use an existing vendor cashbook.",
+            message: "Purchases must use an existing supplier.",
             lineId: line.id,
             part: "vendor",
           };
@@ -1158,7 +1252,7 @@ function findFirstExpenseValidationError(
       const items = committedPurchaseItemsFromDraft(line.items);
       if (!items || items.length === 0) {
         return {
-          message: "Add at least one item with vendor, name, qty, and total.",
+          message: "Add at least one item with supplier, name, qty, and total.",
           lineId: line.id,
           part: "amount",
         };
@@ -1175,7 +1269,17 @@ function findFirstExpenseValidationError(
       }
       if (line.label.trim() && parseAmount(line.amount) <= 0) {
         return {
-          message: "Enter an amount for this expense.",
+          message: "Enter the expense total.",
+          lineId: line.id,
+          part: "amount",
+        };
+      }
+      const total = parseAmount(line.amount);
+      const paid =
+        line.paidAmount.trim() === "" ? total : parseAmount(line.paidAmount);
+      if (line.label.trim() && paid > total + 0.001) {
+        return {
+          message: "Paid cannot be more than total.",
           lineId: line.id,
           part: "amount",
         };
@@ -1312,6 +1416,14 @@ function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined):
       lineId: line.lineId ?? "",
       vendor: kind === "vendor" || kind === "purchase" ? (line.vendor ?? "").trim() : "",
       label: kind === "regular" ? (line.label ?? "").trim() : "",
+      expenseCategoryId:
+        kind === "regular" ? (line.expenseCategoryId ?? "").trim() : "",
+      paidAmount:
+        kind === "regular"
+          ? typeof line.paidAmount === "number"
+            ? line.paidAmount
+            : line.amount
+          : null,
       employeeId: kind === "staff" ? (line.employeeId ?? "").trim() : "",
       staffLineKind:
         kind === "staff" ? staffLineKindFromSaved(line as ExpenseLineSaved) : "",
@@ -1330,8 +1442,8 @@ function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined):
     };
   });
   rows.sort((a, b) =>
-    `${a.kind}\0${a.lineId}\0${a.vendor}\0${a.label}\0${a.employeeId}\0${a.staffLineKind}\0${a.salaryPaymentId}\0${a.amount}\0${a.ledgerKind}\0${a.ledgerEmployeeLineKind}\0${a.ledgerNote}\0${a.note}\0${a.items}`.localeCompare(
-      `${b.kind}\0${b.lineId}\0${b.vendor}\0${b.label}\0${b.employeeId}\0${b.staffLineKind}\0${b.salaryPaymentId}\0${b.amount}\0${b.ledgerKind}\0${b.ledgerEmployeeLineKind}\0${b.ledgerNote}\0${b.note}\0${b.items}`,
+    `${a.kind}\0${a.lineId}\0${a.vendor}\0${a.label}\0${a.expenseCategoryId}\0${a.paidAmount}\0${a.employeeId}\0${a.staffLineKind}\0${a.salaryPaymentId}\0${a.amount}\0${a.ledgerKind}\0${a.ledgerEmployeeLineKind}\0${a.ledgerNote}\0${a.note}\0${a.items}`.localeCompare(
+      `${b.kind}\0${b.lineId}\0${b.vendor}\0${b.label}\0${b.expenseCategoryId}\0${b.paidAmount}\0${b.employeeId}\0${b.staffLineKind}\0${b.salaryPaymentId}\0${b.amount}\0${b.ledgerKind}\0${b.ledgerEmployeeLineKind}\0${b.ledgerNote}\0${b.note}\0${b.items}`,
     ),
   );
   return JSON.stringify(rows);
@@ -1558,6 +1670,12 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
                 name: item.name,
                 qty: String(item.qty),
                 unit: item.unit || "pcs",
+                rate:
+                  item.rate > 0
+                    ? String(item.rate)
+                    : item.total > 0 && item.qty > 0
+                      ? String(Math.round((item.total / item.qty) * 100) / 100)
+                      : "",
                 total:
                   item.total > 0
                     ? String(item.total)
@@ -1616,13 +1734,23 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
         }
         continue;
       }
+      const paidSaved =
+        kind === "regular" && typeof line.paidAmount === "number"
+          ? line.paidAmount
+          : kind === "regular"
+            ? line.amount
+            : undefined;
       drafts.push({
         id: line.lineId ?? newLineId(),
         kind,
         ...emptyExpenseLineFields(),
         vendor: kind === "vendor" ? (line.vendor ?? "") : "",
         label: kind === "regular" ? (line.label ?? "") : "",
+        expenseCategoryId:
+          kind === "regular" ? (line.expenseCategoryId ?? "") : "",
         amount: line.amount === 0 ? "" : String(line.amount),
+        paidAmount:
+          paidSaved != null && paidSaved !== 0 ? String(paidSaved) : paidSaved === 0 ? "0" : "",
         receiptDataUrls: [...(line.receiptDataUrls ?? [])],
         ledgerNote: kind === "vendor" ? (line.ledgerNote ?? "") : "",
         note: kind === "regular" ? (line.note ?? "") : "",
@@ -1850,7 +1978,9 @@ type DailyEntrySearchClause = {
 
 const DAILY_ENTRY_SEARCH_FIELD_ALIASES: Record<string, keyof DailyEntrySearchSegments> = {
   date: "date",
+  supplier: "vendor",
   vendor: "vendor",
+  s: "vendor",
   v: "vendor",
   title: "title",
   regular: "title",
@@ -2024,8 +2154,27 @@ export function DailyEntryFormView({
   const [voidSaleRemarks, setVoidSaleRemarks] = useState("");
   const [voidSaleAttachmentUrls, setVoidSaleAttachmentUrls] = useState<string[]>([]);
   const [expenseLines, setExpenseLines] = useState<ExpenseLineDraft[]>(() => []);
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([]);
+  const [categoryModalLineId, setCategoryModalLineId] = useState<string | null>(null);
+  const [categoryModalName, setCategoryModalName] = useState("");
+  const [categoryModalBusy, setCategoryModalBusy] = useState(false);
+  const [categoryModalError, setCategoryModalError] = useState<string | null>(null);
   const [bankWithdrawn, setBankWithdrawn] = useState("");
   const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
+
+  useEffect(() => {
+    let alive = true;
+    void listExpenseCategories()
+      .then((rows) => {
+        if (alive) setExpenseCategories(rows.filter((c) => c.active));
+      })
+      .catch(() => {
+        if (alive) setExpenseCategories([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [attachBusyLineId, setAttachBusyLineId] = useState<string | null>(null);
   const [openExpenseNoteLineIds, setOpenExpenseNoteLineIds] = useState<Set<string>>(
     () => new Set(),
@@ -2138,19 +2287,52 @@ export function DailyEntryFormView({
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [expenseLines, ledgerBookNames]);
 
-  const cashExpenseLines = useMemo(
-    () => expenseLines.filter((l) => l.kind !== "purchase"),
-    [expenseLines],
+  /** Suppliers that already have an item-purchase bill on this day. */
+  const purchaseVendorsOnDay = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of expenseLines) {
+      if (l.kind !== "purchase") continue;
+      for (const item of l.items) {
+        const v = item.vendor.trim();
+        if (v) set.add(v);
+      }
+    }
+    return set;
+  }, [expenseLines]);
+
+  /**
+   * Expenses list: purchase cards + cash lines. Hide auto "Paid now" vendor
+   * rows when that supplier already has a purchase card (Paid now lives there).
+   */
+  const visibleExpenseLines = useMemo(
+    () =>
+      expenseLines.filter((l) => {
+        if (l.kind === "purchase") return true;
+        if (l.kind !== "vendor") return true;
+        if (l.syncedFromPurchaseVendor) return false;
+        const v = l.vendor.trim();
+        return !v || !purchaseVendorsOnDay.has(v);
+      }),
+    [expenseLines, purchaseVendorsOnDay],
   );
-  const purchaseExpenseLines = useMemo(
-    () => expenseLines.filter((l) => l.kind === "purchase"),
-    [expenseLines],
-  );
+
+  /** First vendor-payment line for each vendor name (the "paid" side of a purchase). */
+  const vendorPaymentLineByVendor = useMemo(() => {
+    const map = new Map<string, ExpenseLineDraft>();
+    for (const l of expenseLines) {
+      if (l.kind !== "vendor") continue;
+      const v = l.vendor.trim();
+      if (v && !map.has(v)) map.set(v, l);
+    }
+    return map;
+  }, [expenseLines]);
 
   const purchaseBillsTotal = useMemo(
     () =>
-      purchaseExpenseLines.reduce((s, line) => s + purchaseItemsTotal(line.items), 0),
-    [purchaseExpenseLines],
+      expenseLines
+        .filter((l) => l.kind === "purchase")
+        .reduce((s, line) => s + purchaseItemsTotal(line.items), 0),
+    [expenseLines],
   );
 
   const expenseSum = useMemo(
@@ -2567,6 +2749,8 @@ export function DailyEntryFormView({
         ExpenseLineDraft,
         | "vendor"
         | "amount"
+        | "paidAmount"
+        | "expenseCategoryId"
         | "label"
         | "note"
         | "receiptDataUrls"
@@ -2582,10 +2766,19 @@ export function DailyEntryFormView({
       >
     >,
   ) {
-    const nextPatch =
-      typeof patch.amount === "string"
-        ? { ...patch, amount: sanitizeNonNegativeDecimalInput(patch.amount) }
-        : patch;
+    let nextPatch = patch;
+    if (typeof patch.amount === "string") {
+      nextPatch = {
+        ...nextPatch,
+        amount: sanitizeNonNegativeDecimalInput(patch.amount),
+      };
+    }
+    if (typeof patch.paidAmount === "string") {
+      nextPatch = {
+        ...nextPatch,
+        paidAmount: sanitizeNonNegativeDecimalInput(patch.paidAmount),
+      };
+    }
     setFormNotice((n) => {
       if (n.kind !== "field" || n.lineId !== id) return n;
       if ("vendor" in nextPatch && n.part === "vendor") return { kind: "none" };
@@ -2650,10 +2843,15 @@ export function DailyEntryFormView({
             if (typeof patch.qty === "string") {
               next.qty = sanitizeNonNegativeDecimalInput(patch.qty);
             }
+            if (typeof patch.rate === "string") {
+              next.rate = sanitizeNonNegativeDecimalInput(patch.rate);
+              next.lastEdited = "rate";
+            }
             if (typeof patch.total === "string") {
               next.total = sanitizeNonNegativeDecimalInput(patch.total);
+              next.lastEdited = "total";
             }
-            return next;
+            return recomputePurchaseItem(next, patch);
           }),
         };
       });
@@ -2674,7 +2872,7 @@ export function DailyEntryFormView({
     if (line.kind === "purchase" && !useVendorBucket) {
       setFormNotice({
         kind: "field",
-        message: "Select a vendor before attaching a receipt.",
+        message: "Select a supplier before attaching a receipt.",
         lineId,
         part: "vendor",
       });
@@ -2824,6 +3022,28 @@ export function DailyEntryFormView({
     setExpenseLines((lines) => [...lines, newPurchaseExpenseLine()]);
   }
 
+  /**
+   * Inline "Paid now" on a purchase card: set how much was paid to `vendor`
+   * right now. Routes to the vendor's payment line (the cash-out side). Editing
+   * an auto-synced line detaches it (see patchLine) so a partial amount sticks.
+   */
+  function setPurchaseVendorPaid(vendor: string, value: string) {
+    const v = vendor.trim();
+    if (!v) return;
+    const existing = expenseLinesRef.current.find(
+      (l) => l.kind === "vendor" && l.vendor.trim() === v,
+    );
+    if (existing) {
+      patchLine(existing.id, { amount: value });
+      return;
+    }
+    dismissedPurchaseExpenseVendorsRef.current.delete(v);
+    setExpenseLines((lines) => [
+      ...lines,
+      { ...newVendorExpenseLine(), vendor: v, amount: value },
+    ]);
+  }
+
   function removeExpenseLine(id: string) {
     setFormNotice((n) =>
       n.kind === "field" && n.lineId === id ? { kind: "none" } : n,
@@ -2882,21 +3102,29 @@ export function DailyEntryFormView({
     });
   }
 
-  function renderExpenseNoteToggle(line: ExpenseLineDraft) {
+  function renderExpenseNoteToggle(
+    line: ExpenseLineDraft,
+    options?: { compact?: boolean },
+  ) {
     const noteText =
       line.kind === "vendor" || line.kind === "purchase" ? line.ledgerNote : line.note;
     const hasNote = noteText.trim().length > 0;
     const noteOpen = openExpenseNoteLineIds.has(line.id);
+    const compact = Boolean(options?.compact);
     return (
       <button
         type="button"
         onClick={() => toggleExpenseNoteLine(line.id)}
-        className={`${expenseIconBtnClass} ${hasNote || noteOpen ? expenseNoteBtnActiveClass : ""}`}
+        className={`${compact ? expenseIconBtnCompactClass : expenseIconBtnClass} ${hasNote || noteOpen ? expenseNoteBtnActiveClass : ""}`}
         aria-label={noteOpen ? "Hide note" : hasNote ? "Edit note" : "Add note"}
         aria-expanded={noteOpen}
         title={noteOpen ? "Hide note" : hasNote ? "Edit note" : "Add note"}
       >
-        <StickyNote className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+        <StickyNote
+          className={`shrink-0 ${compact ? "size-3.5" : "size-4"}`}
+          strokeWidth={2.25}
+          aria-hidden
+        />
       </button>
     );
   }
@@ -2918,12 +3146,12 @@ export function DailyEntryFormView({
           if (disabled) return;
           togglePurchaseVendorNote(line.id, vendor);
         }}
-        className={`${expenseIconBtnClass} ${noteText || noteOpen ? expenseNoteBtnActiveClass : ""} ${
+        className={`${expenseIconBtnCompactClass} ${noteText || noteOpen ? expenseNoteBtnActiveClass : ""} ${
           disabled ? "cursor-not-allowed opacity-50" : ""
         }`}
         aria-label={
           disabled
-            ? "Select a vendor before adding a note"
+            ? "Select a supplier before adding a note"
             : noteOpen
               ? "Hide note"
               : noteText
@@ -2933,7 +3161,7 @@ export function DailyEntryFormView({
         aria-expanded={noteOpen}
         title={
           disabled
-            ? "Select a vendor before adding a note"
+            ? "Select a supplier before adding a note"
             : noteOpen
               ? "Hide note"
               : noteText
@@ -2941,7 +3169,7 @@ export function DailyEntryFormView({
                 : "Add note"
         }
       >
-        <StickyNote className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+        <StickyNote className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
       </button>
     );
   }
@@ -3025,10 +3253,12 @@ export function DailyEntryFormView({
   /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
   function renderReceiptAddControl(
     line: ExpenseLineDraft,
-    options?: { purchaseVendor?: string; disabled?: boolean },
+    options?: { purchaseVendor?: string; disabled?: boolean; compact?: boolean },
   ) {
     const purchaseVendor = options?.purchaseVendor?.trim() ?? "";
     const forPurchaseVendor = line.kind === "purchase" && purchaseVendor.length > 0;
+    const compact = Boolean(options?.compact) || forPurchaseVendor;
+    const btnSizeClass = compact ? "size-7 rounded-[6px]" : "size-12 rounded-[10px]";
     const inputId = forPurchaseVendor
       ? `daily-expense-receipt-${line.id}-${purchaseVendor}`
       : `daily-expense-receipt-${line.id}`;
@@ -3042,7 +3272,7 @@ export function DailyEntryFormView({
     return (
       <div className="flex shrink-0 flex-col items-center gap-0.5">
       <div
-        className={`relative flex size-12 shrink-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+        className={`relative flex shrink-0 items-center justify-center ${btnSizeClass} ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
       >
         <input
           id={inputId}
@@ -3065,7 +3295,7 @@ export function DailyEntryFormView({
         />
         <label
           htmlFor={disabled ? undefined : inputId}
-          className={`relative inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid transition-colors ${
+          className={`relative inline-flex shrink-0 items-center justify-center border border-solid transition-colors ${btnSizeClass} ${
             disabled
               ? "cursor-not-allowed opacity-50"
               : "cursor-pointer hover:bg-[var(--pos-nav-hover)]/30"
@@ -3076,21 +3306,21 @@ export function DailyEntryFormView({
           }`}
           aria-label={
             options?.disabled
-              ? "Select a vendor before attaching"
+              ? "Select a supplier before attaching"
               : attachCount > 0
                 ? `Attach receipt image or PDF (${attachCount} attached)`
                 : "Attach receipt image or PDF"
           }
           title={
             options?.disabled
-              ? "Select a vendor before attaching"
+              ? "Select a supplier before attaching"
               : attachErr ??
                 (attachCount > 0
                   ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste (Ctrl+V / ⌘V) while this row is focused`
                   : "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused")
           }
         >
-          <Paperclip className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+          <Paperclip className={`shrink-0 ${compact ? "size-3.5" : "size-4"}`} strokeWidth={2.25} aria-hidden />
           <AttachmentCountBadge count={attachCount} />
         </label>
       </div>
@@ -3342,10 +3572,13 @@ export function DailyEntryFormView({
           dateKey,
         });
 
+      // I3: derive the salary bundle in memory but do NOT persist it on its own —
+      // it rides along in the single atomic commit below.
       const staffSync = await syncStaffExpensesToSalaryRegister({
         dateKey,
         nextLines: syncedExpenseLines,
         priorLines: prior?.expenseLines,
+        persist: false,
       });
       if (!staffSync.ok) {
         setFormNotice({ kind: "globalError", message: staffSync.message });
@@ -3360,14 +3593,42 @@ export function DailyEntryFormView({
 
       setIsSaving(true);
       try {
-        await flushLedgerWorkspacePersist();
-        const result = await saveDailyEntry(next);
+        // I3 — atomic cross-module save. The daily entry, the derived ledger
+        // workspace (mutated in-memory by syncDailyExpenseLedgerLinks), and the
+        // salary bundle commit together in ONE server transaction, so a failure
+        // in any leg rolls back all of them instead of orphaning data. Suppress
+        // the stores' own debounced PUTs so they can't race or double-write.
+        const ledgerWs = getWorkspace();
+        cancelLedgerWorkspacePersist();
+        cancelSalaryWorkspacePersist();
+
+        const result = await commitDailyEntry(
+          next,
+          {
+            suppliers: ledgerWs.suppliers,
+            moves: ledgerWs.moves,
+            ledger: ledgerWs.ledger,
+          },
+          {
+            selectedMonthKey: staffSync.bundle.selectedMonthKey,
+            months: staffSync.bundle.months,
+          },
+        );
+
         if (!result.ok) {
+          // Nothing committed server-side; realign in-memory stores to the
+          // (unchanged) server truth so no stale local state lingers.
+          await Promise.all([reloadLedgerWorkspace(), reloadSalaryWorkspace()]);
           setFormNotice({ kind: "global", message: result.message });
           return;
         }
 
-        await refreshEntries();
+        // Pull the committed truth back into the ledger/salary stores.
+        await Promise.all([
+          refreshEntries(),
+          reloadLedgerWorkspace(),
+          reloadSalaryWorkspace(),
+        ]);
         setSavedListVersion((v) => v + 1);
         setOpeningEdit(false);
         const baseMsg = prior
@@ -3376,7 +3637,7 @@ export function DailyEntryFormView({
         setFormNotice({
           kind: "global",
           message: ledgerPostFailed
-            ? `${baseMsg} Cashbook payments: one or more lines could not be saved — check amounts.`
+            ? `${baseMsg} Supplier payments: one or more lines could not be saved — check amounts.`
             : baseMsg,
         });
         setActiveView("history");
@@ -3527,13 +3788,26 @@ export function DailyEntryFormView({
 
   async function executeDeleteHistoryEntry(dateIso: string) {
     if (!entryMap[dateIso]) return;
+    // Settle any pending ledger/salary edit first so a debounced write can't
+    // re-add the day's bills/payouts after the server removes them.
+    await Promise.all([
+      flushLedgerWorkspacePersist(),
+      flushSalaryWorkspacePersist().catch(() => {}),
+    ]);
     const result = await deleteDailyEntry(dateIso);
     if (!result.ok) {
       setFormNotice({ kind: "global", message: result.message });
       return;
     }
     closeDeleteEntryModal();
-    await refreshEntries();
+    // The server safe-cascades this day's unreferenced bills/POs and its posted
+    // staff payouts; pull fresh ledger + salary truth so neither Cashbooks nor
+    // the Salary register shows (or re-saves) the removed rows.
+    await Promise.all([
+      refreshEntries(),
+      reloadLedgerWorkspace(),
+      reloadSalaryWorkspace(),
+    ]);
     setSavedListVersion((v) => v + 1);
     setFormNotice({ kind: "global", message: "Entry deleted." });
     setHistoryDetailRow((open) => (open?.date === dateIso ? null : open));
@@ -3786,7 +4060,7 @@ export function DailyEntryFormView({
                     autoComplete="off"
                     spellCheck={false}
                     className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] py-1.5 pl-8 pr-8 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]/80 focus:border-[var(--pos-text-1)] focus:outline-none"
-                    placeholder='Search — try vendor:Rent cash:1000 "apr" -legacy'
+                    placeholder='Search — try supplier:Rent cash:1000 "apr" -legacy'
                   />
                   {entryListSearchQuery ? (
                     <button
@@ -4079,316 +4353,20 @@ export function DailyEntryFormView({
           <div className={entrySectionsGridClass}>
             <div className="flex min-w-0 flex-1 flex-col gap-3">
             <div
-              className={`${columnShellClass} w-full !bg-yellow-50/70 ![border-color:rgba(202,138,4,0.35)]`}
-            >
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <p className={`${sectionTitleClass} !text-yellow-900`}>Items purchased</p>
-              {purchaseBillsTotal > 0 ? (
-                <p className="text-[11px] tabular-nums text-[var(--pos-text-2)]">
-                  Bills ৳{formatSummaryMoney(purchaseBillsTotal)}
-                  <span className="ml-1 text-[10px]">(not cash)</span>
-                </p>
-              ) : null}
-            </div>
-            <p className="text-[11px] leading-snug text-[var(--pos-text-2)]">
-              Record stock bought on credit against a vendor — posts as a bill in Cashbooks.
-            </p>
-            {purchaseExpenseLines.length === 0 ? (
-              <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
-                No purchases for this day yet.
-              </p>
-            ) : null}
-            <div className="flex flex-col gap-4">
-              {purchaseExpenseLines.map((line) => {
-                const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
-                const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
-                const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-                const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
-                const vendorGroups = groupPurchaseDraftItemsByVendor(line.items);
-                const lastItemVendor =
-                  [...line.items].reverse().find((i) => i.vendor.trim())?.vendor ?? "";
-                const itemField =
-                  "h-8 w-full rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-1.5 text-[12px] text-[var(--pos-text-1)]";
-                return (
-                  <div
-                    key={line.id}
-                    data-expense-line-id={line.id}
-                    className={expenseCardClass}
-                  >
-                    <div className="space-y-3">
-                      {vendorGroups.map((group) => {
-                        const groupTotal = purchaseItemsTotal(group.items);
-                        const hasVendor = group.vendor.length > 0;
-                        return (
-                          <div
-                            key={`${line.id}-vg-${group.vendor || "unassigned"}`}
-                            data-purchase-vendor={group.vendor}
-                            className="space-y-1.5 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]/50 p-2"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
-                                {hasVendor ? group.vendor : "Select vendor"}
-                              </p>
-                            </div>
-                            <div className="overflow-x-auto">
-                              <div
-                                className="mb-1 grid min-w-[480px] gap-1 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]"
-                                style={{
-                                  gridTemplateColumns:
-                                    "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
-                                }}
-                              >
-                                <span>Vendor</span>
-                                <span>Name</span>
-                                <span className="text-right">Qty</span>
-                                <span>Unit</span>
-                                <span className="text-right">Total</span>
-                                <span className="text-right">Rate</span>
-                                <span />
-                              </div>
-                              <div className="space-y-1.5">
-                                {group.items.map((row) => {
-                                  const idx = line.items.findIndex((i) => i.key === row.key);
-                                  const lineRate = purchaseItemLineRate(row);
-                                  return (
-                                    <div
-                                      key={row.key}
-                                      className="grid min-w-[480px] items-center gap-1"
-                                      style={{
-                                        gridTemplateColumns:
-                                          "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
-                                      }}
-                                    >
-                                      <select
-                                        value={row.vendor}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            vendor: e.target.value,
-                                          })
-                                        }
-                                        aria-label={`Item ${idx + 1} vendor`}
-                                        className={itemField}
-                                      >
-                                        <option value="">Vendor…</option>
-                                        {purchaseVendorOptions.map((name) => (
-                                          <option key={name} value={name}>
-                                            {name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="text"
-                                        value={row.name}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            name: e.target.value,
-                                          })
-                                        }
-                                        placeholder="Item name"
-                                        aria-label={`Item ${idx + 1} name`}
-                                        className={itemField}
-                                      />
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min={0}
-                                        step="any"
-                                        value={row.qty}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            qty: e.target.value,
-                                          })
-                                        }
-                                        placeholder="1"
-                                        aria-label={`Item ${idx + 1} quantity`}
-                                        className={`${itemField} text-right font-mono`}
-                                      />
-                                      <select
-                                        value={row.unit}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            unit: e.target.value,
-                                          })
-                                        }
-                                        aria-label={`Item ${idx + 1} unit`}
-                                        className={itemField}
-                                      >
-                                        {PURCHASE_ITEM_UNITS.map((u) => (
-                                          <option key={u} value={u}>
-                                            {u}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min={0}
-                                        step="any"
-                                        value={row.total}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            total: e.target.value,
-                                          })
-                                        }
-                                        placeholder="0"
-                                        aria-label={`Item ${idx + 1} total`}
-                                        className={`${itemField} text-right font-mono`}
-                                      />
-                                      <div
-                                        className="flex h-8 items-center justify-end px-1 font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]"
-                                        aria-label={`Item ${idx + 1} rate`}
-                                      >
-                                        {lineRate !== null ? formatMoney(lineRate) : "—"}
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => removePurchaseItem(line.id, row.key)}
-                                        className="inline-flex size-7 items-center justify-center rounded-full text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
-                                        aria-label={`Remove item ${idx + 1}`}
-                                      >
-                                        <Trash2
-                                          className="size-3.5"
-                                          strokeWidth={2.25}
-                                        />
-                                      </button>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                patchLine(line.id, {
-                                  items: [
-                                    ...line.items,
-                                    newPurchaseItemDraft(group.vendor || lastItemVendor),
-                                  ],
-                                })
-                              }
-                              className="inline-flex h-7 items-center gap-1 rounded-[7px] px-2 text-[11px] font-medium text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                            >
-                              <Plus className="size-3" strokeWidth={2.5} aria-hidden />
-                              Add item
-                            </button>
-                            <div className={expenseCardRowClass}>
-                              <div
-                                className="flex min-w-0 flex-1 flex-col gap-1"
-                                data-field-error-anchor={`${line.id}:amount`}
-                              >
-                                <div className="flex h-[3.125rem] items-center justify-between gap-2 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3">
-                                  <span className="text-[11px] text-[var(--pos-text-2)]">
-                                    Total
-                                  </span>
-                                  <span className="font-mono text-[13px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-                                    {groupTotal > 0 ? formatMoney(groupTotal) : "—"}
-                                  </span>
-                                </div>
-                                <ExpenseFieldErrorBubble
-                                  message={amountErr ?? vendorErr}
-                                />
-                              </div>
-                              <div className="flex shrink-0 items-center gap-1">
-                                {renderPurchaseVendorNoteToggle(line, group.vendor, {
-                                  disabled: !hasVendor,
-                                })}
-                                {renderReceiptAddControl(line, {
-                                  purchaseVendor: group.vendor,
-                                  disabled: !hasVendor,
-                                })}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    removePurchaseVendorGroup(line.id, group.vendor)
-                                  }
-                                  className={expenseRemoveBtnClass}
-                                  aria-label={
-                                    hasVendor
-                                      ? `Remove ${group.vendor} purchase`
-                                      : "Remove unassigned items"
-                                  }
-                                >
-                                  <Trash2
-                                    className="size-4 shrink-0"
-                                    strokeWidth={2.25}
-                                    aria-hidden
-                                  />
-                                </button>
-                              </div>
-                            </div>
-                            {openExpenseNoteLineIds.has(
-                              purchaseVendorNoteKey(line.id, group.vendor),
-                            ) && hasVendor ? (
-                              <div
-                                className="min-w-0"
-                                data-field-error-anchor={`${line.id}:ledgerNote`}
-                              >
-                                <input
-                                  id={`purchase-note-${line.id}-${group.vendor}`}
-                                  name="purchase-vendor-note"
-                                  type="text"
-                                  value={line.vendorNotes?.[group.vendor] ?? ""}
-                                  onChange={(e) =>
-                                    patchLine(line.id, {
-                                      vendorNotes: {
-                                        ...(line.vendorNotes ?? {}),
-                                        [group.vendor]: e.target.value,
-                                      },
-                                    })
-                                  }
-                                  placeholder="Bill note (optional)"
-                                  className={expenseQuietInputClass}
-                                  autoComplete="off"
-                                  aria-label={`${group.vendor} bill note`}
-                                />
-                                <ExpenseFieldErrorBubble message={ledgerNoteErr} />
-                              </div>
-                            ) : null}
-                            {renderReceiptThumbnails(line, {
-                              purchaseVendor: group.vendor,
-                            })}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {purchaseVendorOptions.length === 0 ? (
-                      <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                        Add a vendor cashbook in{" "}
-                        <button
-                          type="button"
-                          onClick={() => openCashbooksPanel("books")}
-                          className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
-                        >
-                          Cashbooks
-                        </button>{" "}
-                        first.
-                      </p>
-                    ) : null}
-                    {attachErr ? (
-                      <div data-field-error-anchor={`${line.id}:attach`}>
-                        <ExpenseFieldErrorBubble message={attachErr} />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex shrink-0 flex-col gap-2 pt-1">
-              <button
-                type="button"
-                onClick={addPurchaseExpenseLine}
-                className={expenseAddPurchaseBtnClass}
-              >
-                <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                Add items purchased
-              </button>
-            </div>
-          </div>
-
-            <div
               className={`${columnShellClass} min-w-0 w-full !bg-red-50/65 ![border-color:rgba(220,38,38,0.28)]`}
             >
-              <p className={`${sectionTitleClass} !text-red-800`}>Expenses</p>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className={`${sectionTitleClass} !text-red-800`}>Expenses</p>
+                {purchaseBillsTotal > 0 ? (
+                  <p className="text-[11px] tabular-nums text-[var(--pos-text-2)]">
+                    Purchase bills ৳{formatSummaryMoney(purchaseBillsTotal)}
+                    <span className="ml-1 text-[10px]">(not cash)</span>
+                  </p>
+                ) : null}
+              </div>
+              <p className="text-[11px] leading-snug text-[var(--pos-text-2)]">
+                Cash outflows and item purchases for this day. Paid now on a purchase counts as cash; the bill total does not.
+              </p>
               <div className="max-w-[11.5rem]">
                 <label className={salesFieldGroupClass} htmlFor="daily-bank-withdrawn">
                   <span className={labelClass}>Withdrawn from bank</span>
@@ -4407,13 +4385,320 @@ export function DailyEntryFormView({
                   <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
                 </label>
               </div>
-              {cashExpenseLines.length === 0 ? (
+              {visibleExpenseLines.length === 0 ? (
                 <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
-                  No cash expenses for this day yet — add one below.
+                  No expenses for this day yet — add one below.
                 </p>
               ) : null}
               <div className="flex flex-col gap-4">
-                {cashExpenseLines.map((line) => {
+                {visibleExpenseLines.map((line) => {
+                  if (line.kind === "purchase") {
+                    const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
+                    const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
+                    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+                    const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
+                    const vendorGroups = groupPurchaseDraftItemsByVendor(line.items);
+                    const lastItemVendor =
+                      [...line.items].reverse().find((i) => i.vendor.trim())?.vendor ?? "";
+                    const itemField =
+                      "h-7 w-full rounded-[6px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-1 text-[11px] text-[var(--pos-text-1)]";
+                    const purchaseGridCols =
+                      "minmax(6.5rem,0.85fr) minmax(0,1.2fr) 44px 52px 64px 64px 24px";
+                    return (
+                      <div
+                        key={line.id}
+                        data-expense-line-id={line.id}
+                        className={`${expenseCardClass} rounded-[10px] border border-solid border-yellow-600/25 !bg-yellow-50/40 p-2`}
+                      >
+                        <div className="space-y-2">
+                          {vendorGroups.map((group) => {
+                            const groupTotal = purchaseItemsTotal(group.items);
+                            const hasVendor = group.vendor.length > 0;
+                            const paidLine = hasVendor
+                              ? vendorPaymentLineByVendor.get(group.vendor.trim())
+                              : undefined;
+                            const paidNow = parseAmount(paidLine?.amount ?? "");
+                            const dueNow = groupTotal - paidNow;
+                            return (
+                              <div
+                                key={`${line.id}-vg-${group.vendor || "unassigned"}`}
+                                data-purchase-vendor={group.vendor}
+                                className="space-y-1 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]/40 p-1.5"
+                              >
+                                <div className="overflow-x-auto">
+                                  <div
+                                    className="mb-0.5 grid min-w-[440px] gap-1 px-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]"
+                                    style={{ gridTemplateColumns: purchaseGridCols }}
+                                  >
+                                    <span>Supplier</span>
+                                    <span>Name</span>
+                                    <span className="text-right">Qty</span>
+                                    <span>Unit</span>
+                                    <span className="text-right">Rate</span>
+                                    <span className="text-right">Total</span>
+                                    <span />
+                                  </div>
+                                  <div className="space-y-1">
+                                    {group.items.map((row) => {
+                                      const idx = line.items.findIndex((i) => i.key === row.key);
+                                      return (
+                                        <div
+                                          key={row.key}
+                                          className="grid min-w-[440px] items-center gap-1"
+                                          style={{ gridTemplateColumns: purchaseGridCols }}
+                                        >
+                                          <select
+                                            value={row.vendor}
+                                            onChange={(e) =>
+                                              patchPurchaseItem(line.id, row.key, {
+                                                vendor: e.target.value,
+                                              })
+                                            }
+                                            aria-label={`Item ${idx + 1} supplier`}
+                                            className={itemField}
+                                          >
+                                            <option value="">Supplier…</option>
+                                            {purchaseVendorOptions.map((name) => (
+                                              <option key={name} value={name}>
+                                                {name}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          <input
+                                            type="text"
+                                            value={row.name}
+                                            onChange={(e) =>
+                                              patchPurchaseItem(line.id, row.key, {
+                                                name: e.target.value,
+                                              })
+                                            }
+                                            placeholder="Item name"
+                                            aria-label={`Item ${idx + 1} name`}
+                                            className={itemField}
+                                          />
+                                          <input
+                                            type="number"
+                                            inputMode="decimal"
+                                            min={0}
+                                            step="any"
+                                            value={row.qty}
+                                            onChange={(e) =>
+                                              patchPurchaseItem(line.id, row.key, {
+                                                qty: e.target.value,
+                                              })
+                                            }
+                                            placeholder="1"
+                                            aria-label={`Item ${idx + 1} quantity`}
+                                            className={`${itemField} text-right font-mono`}
+                                          />
+                                          <select
+                                            value={row.unit}
+                                            onChange={(e) =>
+                                              patchPurchaseItem(line.id, row.key, {
+                                                unit: e.target.value,
+                                              })
+                                            }
+                                            aria-label={`Item ${idx + 1} unit`}
+                                            className={itemField}
+                                          >
+                                            {PURCHASE_ITEM_UNITS.map((u) => (
+                                              <option key={u} value={u}>
+                                                {u}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          <input
+                                            type="number"
+                                            inputMode="decimal"
+                                            min={0}
+                                            step="any"
+                                            value={row.rate}
+                                            onChange={(e) =>
+                                              patchPurchaseItem(line.id, row.key, {
+                                                rate: e.target.value,
+                                              })
+                                            }
+                                            placeholder="0"
+                                            aria-label={`Item ${idx + 1} rate`}
+                                            className={`${itemField} text-right font-mono`}
+                                          />
+                                          <input
+                                            type="number"
+                                            inputMode="decimal"
+                                            min={0}
+                                            step="any"
+                                            value={row.total}
+                                            onChange={(e) =>
+                                              patchPurchaseItem(line.id, row.key, {
+                                                total: e.target.value,
+                                              })
+                                            }
+                                            placeholder="0"
+                                            aria-label={`Item ${idx + 1} total`}
+                                            className={`${itemField} text-right font-mono`}
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => removePurchaseItem(line.id, row.key)}
+                                            className="inline-flex size-6 items-center justify-center rounded-full text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                                            aria-label={`Remove item ${idx + 1}`}
+                                          >
+                                            <Trash2 className="size-3" strokeWidth={2.25} />
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                <div
+                                  className="flex min-w-0 flex-wrap items-center gap-1.5"
+                                  data-field-error-anchor={`${line.id}:amount`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      patchLine(line.id, {
+                                        items: [
+                                          ...line.items,
+                                          newPurchaseItemDraft(group.vendor || lastItemVendor),
+                                        ],
+                                      })
+                                    }
+                                    className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-[6px] px-1.5 text-[10px] font-medium text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
+                                  >
+                                    <Plus className="size-3" strokeWidth={2.5} aria-hidden />
+                                    Item
+                                  </button>
+                                  <div className="flex h-7 min-w-[5.5rem] items-center justify-between gap-1.5 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2">
+                                    <span className="text-[10px] text-[var(--pos-text-2)]">
+                                      Total
+                                    </span>
+                                    <span className="font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]">
+                                      {groupTotal > 0 ? formatMoney(groupTotal) : "—"}
+                                    </span>
+                                  </div>
+                                  {hasVendor ? (
+                                    <>
+                                      <label className="flex h-7 min-w-[6.5rem] flex-1 items-center justify-between gap-1.5 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2">
+                                        <span className="text-[10px] text-[var(--pos-text-2)]">
+                                          Paid
+                                        </span>
+                                        <input
+                                          type="number"
+                                          inputMode="decimal"
+                                          min={0}
+                                          step="any"
+                                          value={paidLine?.amount ?? ""}
+                                          onChange={(e) =>
+                                            setPurchaseVendorPaid(group.vendor, e.target.value)
+                                          }
+                                          placeholder="0"
+                                          aria-label={`Amount paid to ${group.vendor}`}
+                                          className="w-16 bg-transparent text-right font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)] outline-none"
+                                        />
+                                      </label>
+                                      <div className="flex h-7 min-w-[5.5rem] items-center justify-between gap-1.5 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2">
+                                        <span className="text-[10px] text-[var(--pos-text-2)]">
+                                          Due
+                                        </span>
+                                        <span
+                                          className={`font-mono text-[11px] font-semibold tabular-nums ${
+                                            dueNow > 0.005
+                                              ? "text-red-600 dark:text-red-400"
+                                              : "text-emerald-700 dark:text-emerald-400"
+                                          }`}
+                                        >
+                                          {formatMoney(Math.max(0, dueNow))}
+                                        </span>
+                                      </div>
+                                    </>
+                                  ) : null}
+                                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                                    {renderPurchaseVendorNoteToggle(line, group.vendor, {
+                                      disabled: !hasVendor,
+                                    })}
+                                    {renderReceiptAddControl(line, {
+                                      purchaseVendor: group.vendor,
+                                      disabled: !hasVendor,
+                                      compact: true,
+                                    })}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        removePurchaseVendorGroup(line.id, group.vendor)
+                                      }
+                                      className={expenseRemoveBtnCompactClass}
+                                      aria-label={
+                                        hasVendor
+                                          ? `Remove ${group.vendor} purchase`
+                                          : "Remove unassigned items"
+                                      }
+                                    >
+                                      <Trash2
+                                        className="size-3.5 shrink-0"
+                                        strokeWidth={2.25}
+                                        aria-hidden
+                                      />
+                                    </button>
+                                  </div>
+                                </div>
+                                <ExpenseFieldErrorBubble message={amountErr ?? vendorErr} />
+                                {openExpenseNoteLineIds.has(
+                                  purchaseVendorNoteKey(line.id, group.vendor),
+                                ) && hasVendor ? (
+                                  <div
+                                    className="min-w-0"
+                                    data-field-error-anchor={`${line.id}:ledgerNote`}
+                                  >
+                                    <input
+                                      id={`purchase-note-${line.id}-${group.vendor}`}
+                                      name="purchase-vendor-note"
+                                      type="text"
+                                      value={line.vendorNotes?.[group.vendor] ?? ""}
+                                      onChange={(e) =>
+                                        patchLine(line.id, {
+                                          vendorNotes: {
+                                            ...(line.vendorNotes ?? {}),
+                                            [group.vendor]: e.target.value,
+                                          },
+                                        })
+                                      }
+                                      placeholder="Bill note (optional)"
+                                      className={expenseQuietInputClass}
+                                      autoComplete="off"
+                                      aria-label={`${group.vendor} bill note`}
+                                    />
+                                    <ExpenseFieldErrorBubble message={ledgerNoteErr} />
+                                  </div>
+                                ) : null}
+                                {renderReceiptThumbnails(line, {
+                                  purchaseVendor: group.vendor,
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {purchaseVendorOptions.length === 0 ? (
+                          <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
+                            Add a supplier in{" "}
+                            <button
+                              type="button"
+                              onClick={() => openItemPurchaseSuppliers()}
+                              className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
+                            >
+                              Item Purchases
+                            </button>{" "}
+                            first.
+                          </p>
+                        ) : null}
+                        {attachErr ? (
+                          <div data-field-error-anchor={`${line.id}:attach`}>
+                            <ExpenseFieldErrorBubble message={attachErr} />
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  }
                   if (line.kind === "staff") {
                     const employeeErr = fieldErrorMessage(formNotice, line.id, "employeeId");
                     const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
@@ -4529,15 +4814,53 @@ export function DailyEntryFormView({
                     const labelErr = fieldErrorMessage(formNotice, line.id, "label");
                     const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
                     const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+                    const totalAmt = parseAmount(line.amount);
+                    const paidAmt =
+                      line.paidAmount.trim() === ""
+                        ? totalAmt
+                        : parseAmount(line.paidAmount);
+                    const dueAmt = Math.max(0, totalAmt - paidAmt);
+                    const compactField =
+                      "h-7 w-full rounded-[6px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-1.5 text-[11px] text-[var(--pos-text-1)]";
                     return (
                       <div
                         key={line.id}
                         data-expense-line-id={line.id}
-                        className={expenseCardClass}
+                        className={`${expenseCardClass} rounded-[10px] border border-solid border-red-500/20 bg-red-50/30 p-2`}
                       >
+                        <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--pos-text-2)]">
+                          <span className="font-semibold uppercase tracking-wide">Other expense</span>
+                          <span aria-hidden>·</span>
+                          <span className="tabular-nums">{formatDateKeyAsDisplay(dateKey)}</span>
+                        </div>
                         <div className={expenseCardRowClass}>
+                          <div className="flex w-[8.5rem] shrink-0 flex-col gap-1">
+                            <select
+                              className={`${compactField} cursor-pointer`}
+                              value={line.expenseCategoryId}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === NEW_EXPENSE_CATEGORY_VALUE) {
+                                  setCategoryModalLineId(line.id);
+                                  setCategoryModalName("");
+                                  setCategoryModalError(null);
+                                  return;
+                                }
+                                patchLine(line.id, { expenseCategoryId: val });
+                              }}
+                              aria-label="Expense category"
+                            >
+                              <option value="">Category…</option>
+                              {expenseCategories.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                              <option value={NEW_EXPENSE_CATEGORY_VALUE}>+ New category…</option>
+                            </select>
+                          </div>
                           <div
-                            className="flex min-w-0 flex-1 basis-44 flex-col gap-1"
+                            className="flex min-w-0 flex-1 flex-col gap-1"
                             data-field-error-anchor={`${line.id}:label`}
                           >
                             <input
@@ -4545,7 +4868,7 @@ export function DailyEntryFormView({
                               value={line.label}
                               onChange={(e) => patchLine(line.id, { label: e.target.value })}
                               placeholder="Expense title"
-                              className={`${expenseTitleInputClass} ${labelErr ? FIELD_ERR_INPUT : ""}`}
+                              className={`${compactField} text-[13px] font-semibold ${labelErr ? FIELD_ERR_INPUT : ""}`}
                               autoComplete="off"
                               aria-label="Expense title"
                               aria-invalid={labelErr ? true : undefined}
@@ -4553,34 +4876,72 @@ export function DailyEntryFormView({
                             />
                             <ExpenseFieldErrorBubble message={labelErr} />
                           </div>
-                          <div
-                            className="flex w-[8.5rem] shrink-0 flex-col gap-1"
-                            data-field-error-anchor={`${line.id}:amount`}
-                          >
-                            <input
-                              {...amountFieldProps("next")}
-                              value={line.amount}
-                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                              placeholder="0"
-                              className={`${amountInputClass} ${amountErr ? FIELD_ERR_INPUT : ""}`}
-                              aria-label="Expense amount"
-                              aria-invalid={amountErr ? true : undefined}
-                            />
-                            <ExpenseFieldErrorBubble message={amountErr} />
-                          </div>
-                          <div className="flex shrink-0 items-start gap-1">
-                            {renderExpenseNoteToggle(line)}
-                            {renderReceiptAddControl(line)}
+                          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                            {renderExpenseNoteToggle(line, { compact: true })}
+                            {renderReceiptAddControl(line, { compact: true })}
                             <button
                               type="button"
                               onClick={() => removeExpenseLine(line.id)}
-                              className={expenseRemoveBtnClass}
+                              className={expenseRemoveBtnCompactClass}
                               aria-label="Remove expense line"
                             >
-                              <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+                              <Trash2 className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
                             </button>
                           </div>
                         </div>
+                        <div
+                          className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5"
+                          data-field-error-anchor={`${line.id}:amount`}
+                        >
+                          <label className="flex h-7 min-w-[6rem] flex-1 items-center justify-between gap-1.5 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2">
+                            <span className="text-[10px] text-[var(--pos-text-2)]">Total</span>
+                            <input
+                              {...amountFieldProps("next")}
+                              value={line.amount}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                const prevTotal = line.amount;
+                                const prevPaid = line.paidAmount;
+                                const keepPaidSynced =
+                                  prevPaid.trim() === "" || prevPaid === prevTotal;
+                                patchLine(line.id, {
+                                  amount: next,
+                                  ...(keepPaidSynced ? { paidAmount: next } : {}),
+                                });
+                              }}
+                              placeholder="0"
+                              aria-label="Expense total"
+                              aria-invalid={amountErr ? true : undefined}
+                              className={`w-20 bg-transparent text-right font-mono text-[11px] font-semibold tabular-nums outline-none ${amountErr ? "text-red-700" : "text-[var(--pos-text-1)]"}`}
+                            />
+                          </label>
+                          <label className="flex h-7 min-w-[6rem] flex-1 items-center justify-between gap-1.5 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2">
+                            <span className="text-[10px] text-[var(--pos-text-2)]">Paid</span>
+                            <input
+                              {...amountFieldProps("next")}
+                              value={line.paidAmount}
+                              onChange={(e) =>
+                                patchLine(line.id, { paidAmount: e.target.value })
+                              }
+                              placeholder={line.amount || "0"}
+                              aria-label="Amount paid now"
+                              className="w-20 bg-transparent text-right font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)] outline-none"
+                            />
+                          </label>
+                          <div className="flex h-7 min-w-[5.5rem] items-center justify-between gap-1.5 rounded-[6px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2">
+                            <span className="text-[10px] text-[var(--pos-text-2)]">Due</span>
+                            <span
+                              className={`font-mono text-[11px] font-semibold tabular-nums ${
+                                dueAmt > 0.005
+                                  ? "text-red-600 dark:text-red-400"
+                                  : "text-emerald-700 dark:text-emerald-400"
+                              }`}
+                            >
+                              {formatMoney(dueAmt)}
+                            </span>
+                          </div>
+                        </div>
+                        <ExpenseFieldErrorBubble message={amountErr} />
                         {openExpenseNoteLineIds.has(line.id) ? (
                           <input
                             id={`expense-note-${line.id}`}
@@ -4588,7 +4949,7 @@ export function DailyEntryFormView({
                             value={line.note}
                             onChange={(e) => patchLine(line.id, { note: e.target.value })}
                             placeholder="Add a note (optional)"
-                            className={expenseQuietInputClass}
+                            className={`${expenseQuietInputClass} mt-1`}
                             autoComplete="off"
                             aria-label="Note"
                             data-field-error-anchor={`${line.id}:note`}
@@ -4652,10 +5013,10 @@ export function DailyEntryFormView({
                                   });
                                 }
                               }}
-                              aria-label="Cashbook"
+                              aria-label="Supplier"
                               aria-invalid={vendorErr ? true : undefined}
                             >
-                              <option value="">Cashbook…</option>
+                              <option value="">Supplier…</option>
                               {vendorOptions.map((name) => (
                                 <option key={name} value={name}>
                                   {name}
@@ -4671,7 +5032,7 @@ export function DailyEntryFormView({
                                 placeholder="Name"
                                 className={`${expensePrimaryInputClass} min-w-[4.5rem] shrink-0 flex-1`}
                                 autoComplete="off"
-                                aria-label="Custom cashbook name"
+                                aria-label="Custom supplier name"
                               />
                             ) : null}
                             </div>
@@ -4726,13 +5087,13 @@ export function DailyEntryFormView({
                         ) : null}
                         {!ledgerSupplierForLine && trimmed ? (
                           <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                            Name doesn’t match a cashbook — expense only. Add bills from{" "}
+                            Name doesn’t match a supplier — expense only. Add suppliers from{" "}
                             <button
                               type="button"
-                              onClick={() => openCashbooksPanel("books")}
+                              onClick={() => openItemPurchaseSuppliers()}
                               className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
                             >
-                              Cashbooks
+                              Item Purchases
                             </button>
                             .
                           </p>
@@ -4766,11 +5127,19 @@ export function DailyEntryFormView({
                   </button>
                   <button
                     type="button"
+                    onClick={addPurchaseExpenseLine}
+                    className={expenseAddPurchaseBtnClass}
+                  >
+                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                    Item purchase
+                  </button>
+                  <button
+                    type="button"
                     onClick={addVendorExpenseLine}
                     className={expenseAddVendorBtnClass}
                   >
                     <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                    Vendor Payment
+                    Supplier Payment
                   </button>
                 </div>
 
@@ -5068,7 +5437,7 @@ export function DailyEntryFormView({
                             kind === "staff"
                               ? staffExpenseLineTitle(line)
                               : kind === "vendor"
-                                ? (line.vendor ?? "").trim() || "Cashbook"
+                                ? (line.vendor ?? "").trim() || "Supplier"
                                 : kind === "purchase"
                                   ? (line.vendor ?? "").trim() || "Purchase"
                                   : (line.label ?? "").trim() || "Regular expense";
@@ -5097,7 +5466,7 @@ export function DailyEntryFormView({
                                 {kind === "staff"
                                   ? "Payout"
                                   : kind === "vendor"
-                                    ? "Cashbook"
+                                    ? "Supplier"
                                     : kind === "purchase"
                                       ? "Purchase"
                                       : "Regular"}
@@ -5383,7 +5752,7 @@ export function DailyEntryFormView({
                   kind === "staff"
                     ? staffExpenseLineTitle(line)
                     : kind === "vendor"
-                      ? (line.vendor ?? "").trim() || "Cashbook"
+                      ? (line.vendor ?? "").trim() || "Supplier"
                       : kind === "purchase"
                         ? (line.vendor ?? "").trim() || "Purchase"
                         : (line.label ?? "").trim() || "Regular expense";
@@ -5502,6 +5871,118 @@ export function DailyEntryFormView({
                 onClick={confirmDiscardLeave}
               >
                 Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {categoryModalLineId ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="new-expense-category-title"
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => {
+            if (!categoryModalBusy) {
+              setCategoryModalLineId(null);
+              setCategoryModalName("");
+              setCategoryModalError(null);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="new-expense-category-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              New expense category
+            </h2>
+            <p className="mt-1.5 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Used for Other Expenses and Daily Entry. You can reuse it anytime.
+            </p>
+            <label className="mt-3 flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-[var(--pos-text-2)]">Name</span>
+              <input
+                type="text"
+                autoFocus
+                value={categoryModalName}
+                onChange={(e) => {
+                  setCategoryModalName(e.target.value);
+                  if (categoryModalError) setCategoryModalError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const btn = document.getElementById("new-expense-category-save");
+                    btn?.click();
+                  }
+                }}
+                placeholder="e.g. Utilities"
+                className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] outline-none focus:border-[var(--pos-sb-base)]"
+                aria-label="Category name"
+              />
+            </label>
+            {categoryModalError ? (
+              <p role="alert" className="mt-2 text-[12px] text-red-700">
+                {categoryModalError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                disabled={categoryModalBusy}
+                onClick={() => {
+                  setCategoryModalLineId(null);
+                  setCategoryModalName("");
+                  setCategoryModalError(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                id="new-expense-category-save"
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                style={{ backgroundColor: "var(--pos-sb-base)" }}
+                disabled={categoryModalBusy || !categoryModalName.trim()}
+                onClick={() => {
+                  const name = categoryModalName.trim();
+                  const lineId = categoryModalLineId;
+                  if (!name || !lineId) return;
+                  void (async () => {
+                    setCategoryModalBusy(true);
+                    setCategoryModalError(null);
+                    try {
+                      const existing = expenseCategories.find(
+                        (c) => c.name.toLowerCase() === name.toLowerCase(),
+                      );
+                      if (existing) {
+                        patchLine(lineId, { expenseCategoryId: existing.id });
+                        setCategoryModalLineId(null);
+                        setCategoryModalName("");
+                        return;
+                      }
+                      const created = await createExpenseCategory(name);
+                      setExpenseCategories((prev) =>
+                        [...prev, created].sort((a, b) => a.name.localeCompare(b.name)),
+                      );
+                      patchLine(lineId, { expenseCategoryId: created.id });
+                      setCategoryModalLineId(null);
+                      setCategoryModalName("");
+                    } catch {
+                      setCategoryModalError("Could not create category. Try again.");
+                    } finally {
+                      setCategoryModalBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {categoryModalBusy ? "Saving…" : "Save category"}
               </button>
             </div>
           </div>

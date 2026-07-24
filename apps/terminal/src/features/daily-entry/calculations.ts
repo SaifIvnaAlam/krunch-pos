@@ -75,6 +75,14 @@ export function expenseTotalFromExpenseLines(
     // Fines live on the salary sheet; purchase bills are payables, not cash out.
     if (line.kind === "staff" && line.staffLineKind === "fine") return sum;
     if (line.kind === "purchase") return sum;
+    // Regular: only cash paid now hits the daily register (due stays on the payable).
+    if (line.kind === "regular") {
+      const paid =
+        typeof line.paidAmount === "number" && Number.isFinite(line.paidAmount)
+          ? line.paidAmount
+          : line.amount;
+      return sum + paid;
+    }
     return sum + line.amount;
   }, 0);
 }

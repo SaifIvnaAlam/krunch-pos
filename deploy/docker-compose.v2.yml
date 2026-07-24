@@ -1,0 +1,87 @@
+# Shadow relational stack — ISOLATED from production (docker-compose.prod.yml).
+# Project name: krunch-pos-v2
+# Remote dir: /opt/krunch-pos-v2
+# API loopback: 3002 (prod uses 3001)
+# Postgres host port: 127.0.0.1:5435 (prod uses 5432)
+#
+# Never point this at /opt/krunch-pos.
+
+name: krunch-pos-v2
+
+x-dns: &default_dns
+  dns:
+    - 212.227.123.16
+    - 8.8.8.8
+
+services:
+  postgres:
+    <<: *default_dns
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data_v2:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5435:5432"
+    networks: [krunch_v2]
+
+  api:
+    <<: *default_dns
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: always
+    ports:
+      - "127.0.0.1:3002:3000"
+    env_file: .env
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      NODE_ENV: production
+      REDIS_DISABLED: "true"
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-${S3_ENDPOINT}}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      S3_PRESIGN_EXPIRY_SECONDS: ${S3_PRESIGN_EXPIRY_SECONDS:-900}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://s3.storage.inventivelab.bd/media}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [krunch_v2]
+
+  bucket-init:
+    <<: *default_dns
+    image: minio/mc:latest
+    restart: "no"
+    environment:
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set shared $$S3_ENDPOINT $$S3_ACCESS_KEY $$S3_SECRET_KEY;
+      mc mb --ignore-existing shared/$$S3_BUCKET;
+      mc anonymous set none shared/$$S3_BUCKET;
+      echo Bucket $$S3_BUCKET ready on $$S3_ENDPOINT;
+      "
+    networks: [krunch_v2]
+
+volumes:
+  pg_data_v2:
+
+networks:
+  krunch_v2:
+    driver: bridge

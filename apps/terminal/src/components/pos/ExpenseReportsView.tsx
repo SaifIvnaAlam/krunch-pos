@@ -44,7 +44,7 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
         kind === "staff"
           ? staffExpenseLineTitle(line)
           : kind === "vendor"
-            ? (line.vendor ?? "").trim() || "Cashbook"
+            ? (line.vendor ?? "").trim() || "Supplier"
             : kind === "purchase"
               ? (line.vendor ?? "").trim() || "Purchase"
               : (line.label ?? "").trim() || "Regular expense";
@@ -61,7 +61,7 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
         kind === "staff"
           ? "Payout"
           : kind === "vendor"
-            ? "Cashbook"
+            ? "Supplier"
             : kind === "purchase"
               ? "Items purchased"
               : "Regular expense";
@@ -331,21 +331,21 @@ export function ExpenseReportsView() {
         <div>
           <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Expense reports</h1>
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            Purchase bills show a Paid column for same-day cashbook payments — those payments are
+            Purchase bills show a Paid column for same-day supplier payments — those payments are
             not listed again as separate rows.
           </p>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
-        <div className={statCell} title="Cash out: cashbook payments, regular, and payouts">
+        <div className={statCell} title="Cash out: supplier payments, regular, and payouts">
           <div className="text-[11px] text-[var(--pos-text-2)]">Cash total</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoney(stats.total)}
           </div>
         </div>
         <div className={statCell} title="Includes paid amounts on purchase bills">
-          <div className="text-[11px] text-[var(--pos-text-2)]">Cashbook</div>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Supplier</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {formatMoney(stats.cashbook)}
           </div>
@@ -364,7 +364,7 @@ export function ExpenseReportsView() {
         </div>
         <div
           className={statCell}
-          title="Purchase bill amounts (payables) — cash paid is in Cashbook / Paid"
+          title="Purchase bill amounts (payables) — cash paid is in Supplier / Paid"
         >
           <div className="text-[11px] text-[var(--pos-text-2)]">Purchase bills</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
@@ -468,7 +468,7 @@ export function ExpenseReportsView() {
                 </th>
                 <th
                   className={thBase}
-                  title="Cash paid: same-day payment on purchase bills; full amount for payouts, regular, and cashbook"
+                  title="Cash paid: same-day payment on purchase bills; full amount for payouts, regular, and supplier"
                 >
                   Paid
                 </th>

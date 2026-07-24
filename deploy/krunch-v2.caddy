@@ -1,0 +1,16 @@
+# SHADOW app only — v2 relational instance.
+# Installed to /etc/caddy/conf.d/krunch-v2.caddy. Does NOT replace krunch.caddy (prod).
+
+v2-steakandmarrow.inventivelab.bd {
+	encode gzip zstd
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:3002
+	}
+
+	root * /opt/krunch-pos-v2/deploy/pos-static
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

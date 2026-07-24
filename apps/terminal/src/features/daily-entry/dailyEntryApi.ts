@@ -45,6 +45,59 @@ export async function upsertDailyEntryOnApi(
   });
 }
 
+export type LedgerCommitPayload = {
+  suppliers: unknown[];
+  moves: unknown[];
+  ledger: unknown[];
+};
+export type SalaryCommitPayload = {
+  selectedMonthKey: string;
+  months: Record<string, unknown>;
+};
+
+/**
+ * I3 — atomic cross-module save. Sends the daily entry together with the derived
+ * ledger workspace and salary bundle so the server commits all three in one
+ * transaction (all-or-nothing). Replaces the legacy three separate PUTs.
+ */
+export async function commitDailyEntryOnApi(
+  row: DailyEntryRow,
+  ledger?: LedgerCommitPayload,
+  salary?: SalaryCommitPayload,
+): Promise<DailyEntryRow> {
+  const token = requireToken();
+  return apiFetch<DailyEntryRow>(
+    `/daily-entries/${encodeURIComponent(row.date)}/commit`,
+    {
+      method: "PUT",
+      token,
+      body: JSON.stringify({
+        entry: {
+          date: row.date,
+          openingBalance: row.openingBalance,
+          cashSale: row.cashSale,
+          bankSale: row.bankSale,
+          bkashSale: row.bkashSale,
+          nagadSale: row.nagadSale,
+          pathaoSale: row.pathaoSale,
+          foodiSale: row.foodiSale,
+          foodpandaSale: row.foodpandaSale,
+          voidSale: row.voidSale,
+          voidSaleRemarks: row.voidSaleRemarks,
+          voidSaleAttachmentDataUrls: row.voidSaleAttachmentDataUrls,
+          expenses: row.expenses,
+          bankWithdrawn: row.bankWithdrawn,
+          expenseLines: row.expenseLines,
+          remainingBalance: row.remainingBalance,
+          enteredBy: row.enteredBy,
+        },
+        ...(ledger ? { ledger } : {}),
+        ...(salary ? { salary } : {}),
+      }),
+    },
+  );
+}
+
 export async function deleteDailyEntryOnApi(date: string): Promise<void> {
   const token = requireToken();
   await apiFetch<void>(`/daily-entries/${encodeURIComponent(date)}`, {

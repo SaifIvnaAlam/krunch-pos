@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RelationalSyncService } from '../relational-sync/relational-sync.service';
 import { UpsertEmployeeDirectoryDto } from './dto/upsert-employee-directory.dto';
 import { normalizeEmployeeDirectory } from './employee-directory.util';
 
@@ -14,22 +14,39 @@ const EMPTY: EmployeeDirectoryDto = {
   updatedAt: new Date(0).toISOString(),
 };
 
-function asJsonArray(value: Prisma.JsonValue | null | undefined): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
 @Injectable()
 export class EmployeesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly relationalSync: RelationalSyncService,
+  ) {}
 
   async getForBranch(branchId: string): Promise<EmployeeDirectoryDto> {
-    const row = await this.prisma.branchEmployeeDirectory.findUnique({
+    const rows = await this.prisma.employee.findMany({
       where: { branchId },
+      orderBy: [{ createdAt: 'asc' }, { name: 'asc' }],
     });
-    if (!row) return { ...EMPTY };
+    if (rows.length === 0) return { ...EMPTY };
+
+    const updatedAt = rows.reduce(
+      (max, r) => (r.updatedAt > max ? r.updatedAt : max),
+      new Date(0),
+    );
     return {
-      employees: normalizeEmployeeDirectory(asJsonArray(row.employees)),
-      updatedAt: row.updatedAt.toISOString(),
+      employees: normalizeEmployeeDirectory(
+        rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          role: r.role,
+          phone: r.phone,
+          email: r.email,
+          defaultBasicSalary: r.defaultBasicSalaryMinor / 100,
+          serviceChargePct: r.serviceChargePct == null ? null : Number(r.serviceChargePct),
+          active: r.active,
+          notes: r.notes,
+        })),
+      ),
+      updatedAt: updatedAt.toISOString(),
     };
   }
 
@@ -38,19 +55,9 @@ export class EmployeesService {
     dto: UpsertEmployeeDirectoryDto,
   ): Promise<EmployeeDirectoryDto> {
     const employees = normalizeEmployeeDirectory(dto.employees);
-    const row = await this.prisma.branchEmployeeDirectory.upsert({
-      where: { branchId },
-      update: {
-        employees: employees as Prisma.InputJsonValue,
-      },
-      create: {
-        branchId,
-        employees: employees as Prisma.InputJsonValue,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await this.relationalSync.syncEmployeeDirectory(branchId, employees, tx);
     });
-    return {
-      employees: normalizeEmployeeDirectory(asJsonArray(row.employees)),
-      updatedAt: row.updatedAt.toISOString(),
-    };
+    return this.getForBranch(branchId);
   }
 }

@@ -8,37 +8,60 @@ datasource db {
 }
 
 model Branch {
-  id          String   @id @default(uuid())
-  name        String
-  address     String?
-  timezone    String   @default("UTC")
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  timezone  String   @default("UTC")
+  /// ISO 4217 currency code. Money columns store integer minor units of this.
+  currency  String   @default("BDT")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  staff               Staff[]
-  dailyEntries        DailyEntry[]
-  ledgerWorkspace     BranchLedgerWorkspace?
-  salaryWorkspace     BranchSalaryWorkspace?
-  employeeDirectory   BranchEmployeeDirectory?
-  mediaAssets         MediaAsset[]
+  staff             Staff[]
+  dailyEntries      DailyEntry[]
+  mediaAssets       MediaAsset[]
+
+  // Relational domains (replacing the JSON workspace blobs).
+  suppliers              Supplier[]
+  ledgerEntries          LedgerEntry[]
+  ledgerEntryItems       LedgerEntryItem[]
+  ledgerEntryAttachments LedgerEntryAttachment[]
+  purchaseOrders         PurchaseOrder[]
+  purchaseOrderItems     PurchaseOrderItem[]
+  purchaseReturns        PurchaseReturn[]
+  returnLines            ReturnLine[]
+  employees          Employee[]
+  salaryMonths       SalaryMonth[]
+  salaryLines        SalaryLine[]
+  salaryPayments     SalaryPayment[]
+  expenseLines       DailyEntryExpenseLine[]
+  expenseItems       DailyEntryExpenseItem[]
+
+  // Expense payables model (P1 — additive, see docs/expense-payables-plan.md).
+  expenses           Expense[]
+  expenseLineItems   ExpenseItem[]
+  payments           Payment[]
+  expenseReturns     ExpenseReturn[]
+  expenseAttachments ExpenseAttachment[]
+  expenseCategories  ExpenseCategory[]
 }
 
 model Staff {
   /// Portal user account (email/password sign-in). One row per person.
-  id              String     @id @default(uuid())
+  id              String   @id @default(uuid())
   name            String
-  email           String?    @unique
+  email           String?  @unique
   /// Bcrypt hash for email/password portal login — never store plaintext passwords.
   passwordHash    String?
   pinHash         String
   pbkdf2Hash      String
   pbkdf2Salt      String
-  nfcCardUid      String?    @unique
-  isActive        Boolean    @default(true)
+  nfcCardUid      String?  @unique
+  isActive        Boolean  @default(true)
   primaryBranchId String?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   primaryBranch       Branch?          @relation(fields: [primaryBranchId], references: [id])
   staffRoles          StaffRole[]
@@ -50,31 +73,31 @@ model Staff {
 }
 
 model Role {
-  id          String      @id @default(uuid())
+  id          String   @id @default(uuid())
   name        String
   description String?
-  isSystem    Boolean     @default(false)
-  isCustom    Boolean     @default(false)
+  isSystem    Boolean  @default(false)
+  isCustom    Boolean  @default(false)
   branchId    String?
   permissions String[]
   createdBy   String
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  staffRoles  StaffRole[]
+  staffRoles StaffRole[]
 }
 
 model StaffRole {
-  id          String    @id @default(uuid())
-  staffId     String
-  roleId      String
-  branchId    String?
-  validFrom   DateTime  @default(now())
-  validUntil  DateTime?
-  assignedBy  String
+  id         String    @id @default(uuid())
+  staffId    String
+  roleId     String
+  branchId   String?
+  validFrom  DateTime  @default(now())
+  validUntil DateTime?
+  assignedBy String
 
-  staff       Staff     @relation(fields: [staffId], references: [id])
-  role        Role      @relation(fields: [roleId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
+  role  Role  @relation(fields: [roleId], references: [id])
 }
 
 model TempPermission {
@@ -87,7 +110,7 @@ model TempPermission {
   grantedBy   String
   createdAt   DateTime @default(now())
 
-  staff       Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 }
 
 model Shift {
@@ -98,7 +121,7 @@ model Shift {
   endTime   DateTime
   isActive  Boolean  @default(true)
 
-  staff     Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 }
 
 model AuditLog {
@@ -114,44 +137,45 @@ model AuditLog {
   metadata    Json?
   createdAt   DateTime @default(now())
 
-  staff       Staff    @relation(fields: [staffId], references: [id])
+  staff Staff @relation(fields: [staffId], references: [id])
 }
 
 /// Branch-scoped end-of-day sales & expense record (terminal Daily Entry Form).
 model DailyEntry {
-  id                         String   @id @default(uuid())
+  id                         String    @id @default(uuid())
   branchId                   String
   /// Calendar day `YYYY-MM-DD` in branch context.
   date                       String
-  openingBalance             Decimal  @db.Decimal(14, 2)
-  cashSale                   Decimal  @db.Decimal(14, 2)
+  openingBalance             Decimal   @db.Decimal(14, 2)
+  cashSale                   Decimal   @db.Decimal(14, 2)
   /// Gross bank-channel sales; net uses 1.75% service charge on the client.
-  bankSale                   Decimal  @db.Decimal(14, 2)
-  bkashSale                  Decimal  @db.Decimal(14, 2)
-  nagadSale                  Decimal  @default(0) @db.Decimal(14, 2)
-  pathaoSale                 Decimal  @db.Decimal(14, 2)
-  foodiSale                  Decimal  @db.Decimal(14, 2)
-  foodpandaSale              Decimal  @db.Decimal(14, 2)
-  voidSale                   Decimal? @db.Decimal(14, 2)
+  bankSale                   Decimal   @db.Decimal(14, 2)
+  bkashSale                  Decimal   @db.Decimal(14, 2)
+  nagadSale                  Decimal   @default(0) @db.Decimal(14, 2)
+  pathaoSale                 Decimal   @db.Decimal(14, 2)
+  foodiSale                  Decimal   @db.Decimal(14, 2)
+  foodpandaSale              Decimal   @db.Decimal(14, 2)
+  voidSale                   Decimal?  @db.Decimal(14, 2)
   voidSaleRemarks            String?
   voidSaleAttachmentDataUrls Json?
-  expenses                   Decimal  @db.Decimal(14, 2)
+  expenses                   Decimal   @db.Decimal(14, 2)
   /// Portion of expenses paid by withdrawing from the bank account (subset of `expenses`).
-  bankWithdrawn              Decimal  @default(0) @db.Decimal(14, 2)
-  expenseLines               Json?
-  remainingBalance           Decimal  @db.Decimal(14, 2)
+  bankWithdrawn              Decimal   @default(0) @db.Decimal(14, 2)
+  remainingBalance           Decimal   @db.Decimal(14, 2)
   enteredByStaffId           String?
   enteredByName              String?
-  isLocked                   Boolean  @default(false)
+  isLocked                   Boolean   @default(false)
   lockedAt                   DateTime?
   lockedByStaffId            String?
   lockedByName               String?
-  createdAt                  DateTime @default(now())
-  updatedAt                  DateTime @updatedAt
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
 
   branch    Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
   enteredBy Staff? @relation("DailyEntryEnteredBy", fields: [enteredByStaffId], references: [id])
   lockedBy  Staff? @relation("DailyEntryLockedBy", fields: [lockedByStaffId], references: [id])
+
+  expenseLineRows DailyEntryExpenseLine[]
 
   @@unique([branchId, date])
   @@index([branchId, date])
@@ -171,35 +195,582 @@ model MediaAsset {
   @@index([branchId])
 }
 
-/// Branch-scoped cashbooks, bills/payments, and purchase moves (terminal Ledger module).
-/// JSON shapes (terminal-owned):
-/// - suppliers: LedgerSupplier[]
-/// - moves: StockMove[] (PurchaseOrder may include items: LedgerItemLine[])
-/// - ledger: LedgerEntry[] (optional items: { id, name, qty, unit, rateCents, totalCents }[])
-model BranchLedgerWorkspace {
-  branchId  String   @id
-  suppliers Json     @default("[]")
-  moves     Json     @default("[]")
-  ledger    Json     @default("[]")
-  updatedAt DateTime @updatedAt
+// ---------------------------------------------------------------------------
+// Relational domains (authoritative store for this app).
+//
+// Money is CURRENCY-AGNOSTIC: every `*Minor` column is an integer in the
+// branch's currency minor unit (Branch.currency, ISO 4217). No floats, no
+// per-currency assumptions. Existing string IDs are reused as primary keys so
+// all cross-links keep resolving after import. Every table carries branchId
+// (tenant scoping / future row-level security) and created/updated timestamps.
+// ---------------------------------------------------------------------------
 
-  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+enum LedgerEntryType {
+  invoice
+  payment
+  return_credit
+  adjustment
 }
 
-/// Branch-scoped monthly salary registers (terminal Employee Salaries).
-model BranchSalaryWorkspace {
-  branchId  String   @id
-  bundle    Json     @default("{}")
-  updatedAt DateTime @updatedAt
-
-  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+enum PurchaseStatus {
+  draft
+  sent
+  partial
+  received
+  cancelled
 }
 
-/// Branch-scoped staff roster (terminal Employee Management).
-model BranchEmployeeDirectory {
-  branchId  String   @id
-  employees Json     @default("[]")
+enum ExpenseLineKind {
+  purchase
+  vendor
+  staff
+  regular
+}
+
+enum PurchaseReturnStatus {
+  draft
+  credited
+  cancelled
+}
+
+/// Expense payables model (P1). Salary is NOT an Expense — it stays as
+/// SalaryLine and is settled by Payment.salaryLineId. Expense covers the
+/// non-salary payables only.
+enum ExpenseKind {
+  item_purchase
+  other_expense
+}
+
+enum PaymentMethod {
+  cash
+  card
+  bank_transfer
+  mobile_money
+  cheque
+  other
+}
+
+/// Cashbook counterparties (was BranchLedgerWorkspace.suppliers[]).
+model Supplier {
+  id            String   @id
+  branchId      String
+  name          String
+  bookPurpose   String
+  contactPerson String   @default("")
+  phone         String   @default("")
+  email         String   @default("")
+  address       String   @default("")
+  notes         String   @default("")
+  /// Position within the JSON suppliers[] array (preserves display order).
+  sortIndex     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch          Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  ledgerEntries   LedgerEntry[]
+  purchaseOrders  PurchaseOrder[]
+  purchaseReturns PurchaseReturn[]
+  expenses        Expense[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+}
+
+/// Cashbook bills & payments (was BranchLedgerWorkspace.ledger[]).
+model LedgerEntry {
+  id          String          @id
+  branchId    String
+  supplierId  String
+  date        String
+  type        LedgerEntryType
+  ref         String          @default("")
+  memo        String          @default("")
+  /// Integer minor units of Branch.currency (can be negative for payments).
+  amountMinor Int
+  isLocked    Boolean         @default(false)
+  lockedAt    DateTime?
+  /// Position within the JSON ledger[] array (preserves display order).
+  sortIndex   Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  branch       Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supplier     Supplier                @relation(fields: [supplierId], references: [id])
+  items        LedgerEntryItem[]
+  attachments  LedgerEntryAttachment[]
+  expenseLines DailyEntryExpenseLine[]
+
+  @@index([branchId, date])
+  @@index([supplierId])
+}
+
+/// Receipts / files attached to a ledger bill or payment (was ledger[].attachments).
+model LedgerEntryAttachment {
+  id            String   @id @default(uuid())
+  branchId      String
+  ledgerEntryId String
+  fileName      String   @default("")
+  mimeType      String   @default("")
+  /// Persisted storage ref or data URL, mirroring the JSON attachment payload.
+  dataUrl       String
+  sortIndex     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  ledgerEntry LedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([ledgerEntryId])
+}
+
+/// Optional line items on a ledger bill (was ledger[].items).
+model LedgerEntryItem {
+  id            String   @id @default(uuid())
+  branchId      String
+  ledgerEntryId String
+  sourceId      String   @default("")
+  name          String
+  qty           Decimal  @default(0) @db.Decimal(14, 3)
+  unit          String   @default("")
+  rateMinor     Int      @default(0)
+  totalMinor    Int      @default(0)
+  sortIndex     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  ledgerEntry LedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([ledgerEntryId])
+}
+
+/// Purchase moves (was BranchLedgerWorkspace.moves[] where kind = purchase).
+model PurchaseOrder {
+  id          String         @id
+  branchId    String
+  supplierId  String
+  ref         String         @default("")
+  date        String
+  status      PurchaseStatus @default(draft)
+  note        String         @default("")
+  amountMinor Int
+  /// Position within the JSON moves[] array (preserves display order).
+  sortIndex   Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  branch       Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supplier     Supplier                @relation(fields: [supplierId], references: [id])
+  items        PurchaseOrderItem[]
+  returns      PurchaseReturn[]
+  expenseLines DailyEntryExpenseLine[]
+
+  @@index([branchId])
+  @@index([supplierId])
+}
+
+/// Line items on a purchase order (was moves[].items).
+model PurchaseOrderItem {
+  id              String   @id @default(uuid())
+  branchId        String
+  purchaseOrderId String
+  sourceId        String   @default("")
+  name            String
+  qty             Decimal  @default(0) @db.Decimal(14, 3)
+  unit            String   @default("")
+  rateMinor       Int      @default(0)
+  totalMinor      Int      @default(0)
+  sortIndex       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  branch        Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([purchaseOrderId])
+}
+
+/// Purchase returns (was BranchLedgerWorkspace.moves[] where kind = return).
+model PurchaseReturn {
+  id               String               @id
+  branchId         String
+  supplierId       String
+  ref              String               @default("")
+  /// Optional link to the PurchaseOrder being returned against.
+  linkedPurchaseId String?
+  date             String
+  reason           String               @default("")
+  status           PurchaseReturnStatus @default(draft)
+  /// Position within the JSON moves[] array (shared ordering with purchases).
+  sortIndex        Int                  @default(0)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  branch         Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supplier       Supplier       @relation(fields: [supplierId], references: [id])
+  linkedPurchase PurchaseOrder? @relation(fields: [linkedPurchaseId], references: [id], onDelete: SetNull)
+  lines          ReturnLine[]
+
+  @@index([branchId])
+  @@index([supplierId])
+  @@index([linkedPurchaseId])
+}
+
+/// Line items on a purchase return (was moves[].lines where kind = return).
+model ReturnLine {
+  id               String   @id @default(uuid())
+  branchId         String
+  purchaseReturnId String
+  sourceId         String   @default("")
+  description      String   @default("")
+  qty              Decimal  @default(0) @db.Decimal(14, 3)
+  unit             String   @default("")
+  creditMinor      Int      @default(0)
+  sortIndex        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  branch         Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  purchaseReturn PurchaseReturn @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([purchaseReturnId])
+}
+
+/// Staff roster (was BranchEmployeeDirectory.employees[]).
+model Employee {
+  id                      String   @id
+  branchId                String
+  name                    String
+  role                    String   @default("")
+  phone                   String   @default("")
+  email                   String   @default("")
+  /// Integer minor units of Branch.currency.
+  defaultBasicSalaryMinor Int      @default(0)
+  serviceChargePct        Decimal? @db.Decimal(6, 3)
+  active                  Boolean  @default(true)
+  notes                   String   @default("")
+  /// Position within the JSON employees[] array (preserves display order).
+  sortIndex               Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  branch       Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  salaryLines  SalaryLine[]
+  expenseLines DailyEntryExpenseLine[]
+
+  @@index([branchId])
+}
+
+/// One monthly salary register (was BranchSalaryWorkspace.bundle.months{key}).
+model SalaryMonth {
+  id                     String    @id @default(uuid())
+  branchId               String
+  /// `YYYY-MM` key from the bundle.
+  monthKey               String
+  periodLabel            String    @default("")
+  serviceChargePoolMinor Int?
+  isLocked               Boolean   @default(false)
+  lockedAt               DateTime?
+  lockedBy               String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  branch Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  lines  SalaryLine[]
+
+  @@unique([branchId, monthKey])
+  @@index([branchId])
+}
+
+/// One employee's salary row within a month (was months[].rows[]).
+model SalaryLine {
+  id                 String   @id
+  branchId           String
+  salaryMonthId      String
+  /// Nullable: a salary row may be unlinked, or its employee later removed.
+  employeeId         String?
+  name               String
+  /// All amounts are integer minor units of Branch.currency.
+  basicMinor         Int      @default(0)
+  pct                Decimal? @db.Decimal(6, 3)
+  serviceChargeMinor Int      @default(0)
+  overtimeMinor      Int      @default(0)
+  eidBonusMinor      Int      @default(0)
+  finesMinor         Int      @default(0)
+  /// Position within the month's rows[] array (preserves display order).
+  sortIndex          Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  branch          Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  salaryMonth     SalaryMonth     @relation(fields: [salaryMonthId], references: [id], onDelete: Cascade)
+  employee        Employee?       @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  payments        SalaryPayment[]
+  unifiedPayments Payment[]
+
+  @@index([branchId])
+  @@index([salaryMonthId])
+  @@index([employeeId])
+}
+
+/// A payment against a salary row (was rows[].payments[]).
+model SalaryPayment {
+  id                     String   @id
+  branchId               String
+  salaryLineId           String
+  amountMinor            Int
+  date                   String
+  note                   String   @default("")
+  /// Soft cross-link to a DailyEntryExpenseLine.lineId (not always resolvable).
+  dailyEntryLineId       String?
+  dailyEntryDate         String?
+  postedEmployeeLineKind String?
+  /// Position within the row's payments[] array (preserves display order).
+  sortIndex              Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  salaryLine SalaryLine @relation(fields: [salaryLineId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([salaryLineId])
+}
+
+/// Daily-entry expense rows (was DailyEntry.expenseLines JSON).
+model DailyEntryExpenseLine {
+  id           String           @id @default(uuid())
+  branchId     String
+  dailyEntryId String
+  /// Original client `lineId` (referenced by SalaryPayment.dailyEntryLineId).
+  lineId       String
+  kind         ExpenseLineKind
+  /// Integer minor units of Branch.currency. For regular lines = payable total.
+  amountMinor  Int
+  /// Cash paid now (regular lines). Null = legacy fully-paid (paid == amount).
+  paidAmountMinor Int?
+  label        String           @default("")
+  vendor       String           @default("")
+  /// The line's own memo (distinct from ledgerNote).
+  note         String           @default("")
+  ledgerNote   String           @default("")
+  ledgerKind   LedgerEntryType?
+  /// Staff line type used when posting to cashbooks (StaffLineKind).
+  ledgerEmployeeLineKind String?
+  /// Receipt file refs / data URLs attached to this expense line.
+  receiptDataUrls        Json?
+
+  // Resolvable cross-links become real (nullable) foreign keys.
+  ledgerEntryId     String?
+  purchaseOrderId   String?
+  employeeId        String?
+  employeeName      String?
+  staffLineKind     String?
+  /// Soft link only — ~60% do not match a SalaryPayment, so kept as raw string.
+  salaryPaymentId   String?
+  /// Other-expense category (regular lines → Expense.expenseCategoryId).
+  expenseCategoryId String?
+
+  /// Position within the DailyEntry.expenseLines[] array (preserves display order).
+  sortIndex Int @default(0)
+
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch          Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  dailyEntry      DailyEntry              @relation(fields: [dailyEntryId], references: [id], onDelete: Cascade)
+  ledgerEntry     LedgerEntry?            @relation(fields: [ledgerEntryId], references: [id])
+  purchaseOrder   PurchaseOrder?          @relation(fields: [purchaseOrderId], references: [id])
+  employee        Employee?               @relation(fields: [employeeId], references: [id])
+  expenseCategory ExpenseCategory?        @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  items           DailyEntryExpenseItem[]
+
+  @@index([branchId])
+  @@index([dailyEntryId])
+  @@index([lineId])
+  @@index([ledgerEntryId])
+  @@index([purchaseOrderId])
+  @@index([employeeId])
+  @@index([expenseCategoryId])
+}
+
+/// Line items on a daily-entry purchase expense (was expenseLines[].items).
+model DailyEntryExpenseItem {
+  id            String   @id @default(uuid())
+  branchId      String
+  expenseLineId String
+  sourceId      String   @default("")
+  name          String
+  qty           Decimal  @default(0) @db.Decimal(14, 3)
+  unit          String   @default("")
+  /// Integer minor units of Branch.currency.
+  rateMinor     Int      @default(0)
+  totalMinor    Int      @default(0)
+  sortIndex     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch      Branch                @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  expenseLine DailyEntryExpenseLine @relation(fields: [expenseLineId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([expenseLineId])
+}
+
+// =============================================================================
+// Expense payables model (P1 — additive). See docs/expense-payables-plan.md.
+// Paid/Due/Status are DERIVED from Payment (and ExpenseReturn), never stored.
+// =============================================================================
+
+/// Optional per-branch custom label under a system ExpenseKind (e.g. "Staff
+/// Transport", "Snacks"). Resurrects the paused expense-categories feature.
+model ExpenseCategory {
+  id        String   @id @default(uuid())
+  branchId  String
+  name      String
+  active    Boolean  @default(true)
+  sortIndex Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch                Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  expenses              Expense[]
+  dailyEntryExpenseLines DailyEntryExpenseLine[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+}
+
+/// A non-salary payable: an item purchase or an other-expense. Incurred at a
+/// total; settled over time by Payment rows; reduced by ExpenseReturn credits.
+model Expense {
+  id                String      @id @default(uuid())
+  branchId          String
+  kind              ExpenseKind
+  /// Optional custom label (per branch). The system category is `kind`.
+  expenseCategoryId String?
+  date              String
+  description       String      @default("")
+  /// Set for item purchases.
+  supplierId        String?
+  /// Integer minor units of Branch.currency.
+  totalMinor        Int
+  note              String      @default("")
+  /// Who owns this row: `manual` (Payables module) or an auto-derived source
+  /// maintained by RelationalSyncService (`purchase`, `daily`, `ledger`). The
+  /// sync only reconciles rows it owns and never touches `manual` rows.
+  source            String      @default("manual")
+  sortIndex         Int         @default(0)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  supplier    Supplier?           @relation(fields: [supplierId], references: [id])
+  category    ExpenseCategory?    @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  items       ExpenseItem[]
+  payments    Payment[]
+  returns     ExpenseReturn[]
+  attachments ExpenseAttachment[]
+
+  @@index([branchId, date])
+  @@index([supplierId])
+  @@index([expenseCategoryId])
+  @@index([kind])
+  @@index([branchId, source])
+}
+
+/// Line items on an item-purchase expense (was PurchaseOrderItem / ledger items).
+model ExpenseItem {
+  id         String   @id @default(uuid())
+  branchId   String
+  expenseId  String
+  name       String   @default("")
+  qty        Decimal  @default(0) @db.Decimal(14, 3)
+  unit       String   @default("")
+  rateMinor  Int      @default(0)
+  totalMinor Int      @default(0)
+  sortIndex  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([expenseId])
+}
+
+/// One disbursement against exactly one payable — either an Expense OR a
+/// SalaryLine (enforced by a CHECK constraint in the migration). Carries the
+/// method and transaction reference. Cash payments feed the daily cash register.
+model Payment {
+  id            String        @id @default(uuid())
+  branchId      String
+  /// Exactly one of expenseId / salaryLineId is set.
+  expenseId     String?
+  salaryLineId  String?
+  date          String
+  amountMinor   Int
+  method        PaymentMethod @default(cash)
+  transactionId String        @default("")
+  note          String        @default("")
+  /// Who owns this row: `manual` (Payables module) or an auto-derived source
+  /// maintained by RelationalSyncService (`daily`, `ledger`). The sync only
+  /// reconciles rows it owns and never touches `manual` rows.
+  source        String        @default("manual")
+  sortIndex     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  branch     Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  expense    Expense?    @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  salaryLine SalaryLine? @relation(fields: [salaryLineId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, date])
+  @@index([expenseId])
+  @@index([salaryLineId])
+  @@index([branchId, method, date])
+  @@index([branchId, source])
+}
+
+/// A credit against an expense (returned goods, adjustment). Reduces paid/due.
+model ExpenseReturn {
+  id          String   @id @default(uuid())
+  branchId    String
+  expenseId   String
+  date        String
+  reason      String   @default("")
+  creditMinor Int      @default(0)
+  sortIndex   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([expenseId])
+}
+
+/// Receipts / files attached to an expense (was LedgerEntryAttachment).
+model ExpenseAttachment {
+  id        String   @id @default(uuid())
+  branchId  String
+  expenseId String
+  fileName  String   @default("")
+  mimeType  String   @default("")
+  dataUrl   String
+  sortIndex Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@index([expenseId])
 }

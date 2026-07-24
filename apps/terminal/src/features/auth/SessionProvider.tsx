@@ -33,6 +33,11 @@ export type SessionContextValue = {
   mode: "api";
   isSignedIn: boolean;
   userName: string;
+  /** Current portal staff id when known (from login /me). */
+  staffId: string | null;
+  /** Effective permissions from roles (server is still the hard edge). */
+  permissions: string[];
+  roleNames: string[];
   activeBranch: ActiveBranch;
   accessToken: string | null;
   /** @deprecated No-op — use signInWithCredentials. */
@@ -59,6 +64,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const t = initialAccessToken();
     return t ? readApiProfileName() : "";
   });
+  const [staffId, setStaffId] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
+  const [roleNames, setRoleNames] = useState<string[]>([]);
   const [activeBranch, setActiveBranch] = useState<ActiveBranch>(() => {
     const t = initialAccessToken();
     return t ? (readActiveBranch() ?? FALLBACK_BRANCH) : FALLBACK_BRANCH;
@@ -68,6 +76,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const onExpired = () => {
       setApiAccessToken(null);
       setApiUserName("");
+      setStaffId(null);
+      setPermissions([]);
+      setRoleNames([]);
       setActiveBranch(FALLBACK_BRANCH);
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
@@ -83,6 +94,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         writeApiProfileName(me.name);
         setApiUserName(me.name);
+        setStaffId(me.id);
+        const nextPerms = [...new Set(me.roles.flatMap((r) => r.permissions))];
+        setPermissions(nextPerms);
+        setRoleNames(me.roles.map((r) => r.roleName));
         if (me.activeBranch) {
           writeActiveBranch(me.activeBranch);
           setActiveBranch(me.activeBranch);
@@ -113,6 +128,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       writeActiveBranch(result.activeBranch);
       setApiAccessToken(result.accessToken);
       setApiUserName(result.staffProfile.name);
+      setStaffId(result.staffProfile.id);
+      setPermissions(result.permissions ?? []);
+      setRoleNames(result.roles ?? []);
       setActiveBranch(result.activeBranch);
     },
     [],
@@ -131,6 +149,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     clearActiveBranch();
     setApiAccessToken(null);
     setApiUserName("");
+    setStaffId(null);
+    setPermissions([]);
+    setRoleNames([]);
     setActiveBranch(FALLBACK_BRANCH);
   }, []);
 
@@ -139,13 +160,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       mode: "api",
       isSignedIn: Boolean(apiAccessToken),
       userName: apiUserName,
+      staffId,
+      permissions,
+      roleNames,
       activeBranch,
       accessToken: apiAccessToken,
       signIn,
       signInWithCredentials,
       signOut,
     }),
-    [apiAccessToken, apiUserName, activeBranch, signIn, signInWithCredentials, signOut],
+    [
+      apiAccessToken,
+      apiUserName,
+      staffId,
+      permissions,
+      roleNames,
+      activeBranch,
+      signIn,
+      signInWithCredentials,
+      signOut,
+    ],
   );
 
   return (
