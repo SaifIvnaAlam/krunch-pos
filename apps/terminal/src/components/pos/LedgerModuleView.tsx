@@ -39,6 +39,11 @@ import {
   type ExpenseStatus,
 } from "@/features/payables";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import {
+  expenseStatLabel,
+  expenseStatTile,
+  expenseStatValue,
+} from "./payablesUi";
 import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
 import {
@@ -829,11 +834,11 @@ function LedgerEntryDetailContent({
   );
 }
 
-function ModuleTitle({ title, subtitle }: { title: string; subtitle: string }) {
+function ModuleTitle({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="min-w-0">
       <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">{title}</h1>
-      <p className="text-[12px] text-[var(--pos-text-2)]">{subtitle}</p>
+      {subtitle ? <p className="text-[12px] text-[var(--pos-text-2)]">{subtitle}</p> : null}
     </div>
   );
 }
@@ -1299,7 +1304,13 @@ function DangerGhostButton({
 }
 
 
-function SupplierListView({ stayInPlace = false }: { stayInPlace?: boolean }) {
+function SupplierListView({
+  stayInPlace = false,
+  headerAccessory,
+}: {
+  stayInPlace?: boolean;
+  headerAccessory?: React.ReactNode;
+}) {
   const ws = useWorkspace();
   const [q, setQ] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1524,16 +1535,22 @@ function SupplierListView({ stayInPlace = false }: { stayInPlace?: boolean }) {
     <>
     <div className={purchaseShell}>
       <div className={purchaseHead}>
-        <ModuleTitle
-          title="Suppliers"
-          subtitle="Suppliers you buy from. Balances update from item purchases and payments."
-        />
-        <PrimaryButton type="button" onClick={startCreate}>
-          Add supplier
-        </PrimaryButton>
+        <ModuleTitle title="Suppliers" />
+        {headerAccessory ? <div className="shrink-0">{headerAccessory}</div> : null}
       </div>
 
-      <div className={`${purchaseFilters} flex-col items-stretch gap-3`}>
+      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
+        <div className={expenseStatTile}>
+          <div className={expenseStatLabel}>Suppliers on file</div>
+          <div className={expenseStatValue}>{ws.suppliers.length}</div>
+        </div>
+        <div className={expenseStatTile}>
+          <div className={expenseStatLabel}>With open payable</div>
+          <div className={expenseStatValue}>{openPayableCount}</div>
+        </div>
+      </div>
+
+      <div className={purchaseFilters}>
         <div className="flex w-full flex-wrap items-center gap-2">
           <label className="relative min-w-[220px] flex-1">
             <Search
@@ -1550,24 +1567,10 @@ function SupplierListView({ stayInPlace = false }: { stayInPlace?: boolean }) {
               aria-label="Filter suppliers"
             />
           </label>
-          <p className="text-[11px] text-[var(--pos-text-2)] sm:ml-auto">
-            Showing{" "}
-            <span className="font-semibold text-[var(--pos-text-1)]">{rows.length}</span> suppliers
-          </p>
-        </div>
-      </div>
-
-      <div className={`${purchaseStats} sm:grid-cols-2`}>
-        <div className={purchaseStatCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Suppliers on file</div>
-          <div className="mt-0.5 text-[20px] font-semibold leading-tight text-[var(--pos-text-1)]">
-            {ws.suppliers.length}
-          </div>
-        </div>
-        <div className={purchaseStatCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">With open payable</div>
-          <div className="mt-0.5 text-[20px] font-semibold leading-tight text-[var(--pos-text-1)]">
-            {openPayableCount}
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <PrimaryButton type="button" onClick={startCreate}>
+              Add supplier
+            </PrimaryButton>
           </div>
         </div>
       </div>
@@ -1579,6 +1582,7 @@ function SupplierListView({ stayInPlace = false }: { stayInPlace?: boolean }) {
               <th className={purchaseTh}>Name</th>
               <th className={purchaseTh}>Contact</th>
               <th className={`${purchaseTh} text-right`}>Payable</th>
+              <th className={purchaseTh}>Status</th>
               <th className={`${purchaseTh} text-right`}>Actions</th>
             </tr>
           </thead>
@@ -1586,7 +1590,7 @@ function SupplierListView({ stayInPlace = false }: { stayInPlace?: boolean }) {
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
                   No suppliers match. Add one or clear the search.
@@ -1627,9 +1631,11 @@ function SupplierListView({ stayInPlace = false }: { stayInPlace?: boolean }) {
                       <div className="truncate">{s.email}</div>
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums text-[var(--pos-text-1)]">
-                      <div>{formatMoney(bal)}</div>
+                      {formatMoney(bal)}
+                    </td>
+                    <td className="px-4 py-2">
                       <span
-                        className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${supplierBalancePill(bal)}`}
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${supplierBalancePill(bal)}`}
                       >
                         {supplierBalanceLabel(bal)}
                       </span>
@@ -4215,7 +4221,13 @@ function CashbooksPanelTabs({
   );
 }
 
-export function LedgerModuleView({ leafId }: { leafId: string }) {
+export function LedgerModuleView({
+  leafId,
+  headerAccessory,
+}: {
+  leafId: string;
+  headerAccessory?: React.ReactNode;
+}) {
   const panel = useSyncExternalStore(
     subscribeCashbooksPanel,
     getCashbooksPanel,
@@ -4261,7 +4273,7 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
         {showItems ? (
           <PurchasedItemsView />
         ) : suppliersOnly || panel === "books" ? (
-          <SupplierListView stayInPlace={suppliersOnly} />
+          <SupplierListView stayInPlace={suppliersOnly} headerAccessory={headerAccessory} />
         ) : (
           <SupplierLedgerView />
         )}

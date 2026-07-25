@@ -170,3 +170,12 @@ input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+/* Expenses hero: editorial display figure (scoped — beats .pos-app * inherit). */
+.pos-app .exp-display,
+.exp-display {
+  font-family: "Newsreader", "Times New Roman", serif;
+  font-optical-sizing: auto;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  letter-spacing: -0.03em;
+}

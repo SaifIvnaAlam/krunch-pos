@@ -8,13 +8,29 @@ export const payShell =
 /** Page shell: fills main; list bodies scroll inside (not the shell itself). */
 export const pageWrap = "flex min-h-0 flex-1 flex-col gap-4 overflow-hidden pb-2";
 export const floatingCard =
-  "rounded-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)]";
+  "rounded-[16px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] shadow-[0_1px_2px_rgba(0,0,0,0.03)]";
 export const pageH1 =
-  "text-[20px] font-semibold leading-tight tracking-[-0.01em] text-[var(--pos-text-1)]";
+  "text-[22px] font-semibold leading-tight tracking-[-0.02em] text-[var(--pos-text-1)]";
 
-/** Maroon brand button for the primary page action (matches the sidebar base). */
+/** Oxblood brand button for the primary page action (matches the sidebar base). */
 export const brandBtn =
-  "inline-flex h-9 items-center justify-center gap-1.5 rounded-[9px] bg-[var(--pos-sb-base)] px-3.5 text-[13px] font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-9 items-center justify-center gap-1.5 rounded-[10px] bg-[var(--pos-sb-base)] px-3.5 text-[13px] font-semibold text-white shadow-[0_1px_1px_rgba(0,0,0,0.04),0_6px_16px_color-mix(in_srgb,var(--pos-sb-base)_22%,transparent)] transition-[opacity,transform] hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100";
+
+/** Hero card wash used by settlement summary bands. */
+export const heroCard =
+  `${floatingCard} relative overflow-hidden before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(ellipse_at_top_left,color-mix(in_srgb,var(--pos-sb-base)_9%,transparent),transparent_58%)]`;
+
+/** Same chrome as Expense Reports `statCell` — fixed tile size across pages. */
+export const expenseStatTile =
+  "w-[180px] max-w-full shrink-0 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2";
+
+/** Horizontal strip that hosts expenseStatTile cells (matches Expense Reports). */
+export const expenseStatStrip =
+  "flex flex-wrap gap-2 rounded-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5";
+
+export const expenseStatLabel = "text-[11px] text-[var(--pos-text-2)]";
+export const expenseStatValue =
+  "mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]";
 
 export const payHead =
   "flex flex-wrap items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3";
@@ -50,10 +66,9 @@ export const statLabel =
 export const statValue =
   "mt-1 font-mono text-[24px] font-semibold leading-none text-[var(--pos-text-1)]";
 
-/** Whole-currency money with the branch symbol (frontend is BDT today). */
+/** Whole-currency money with the branch symbol (frontend is BDT today). Ceils fractions. */
 export function formatMoney(n: number): string {
   const sign = n < 0 ? "-" : "";
-  return `${sign}৳${Math.abs(n).toLocaleString("en-BD", {
-    maximumFractionDigits: 2,
-  })}`;
+  const whole = Math.ceil(Math.abs(n));
+  return `${sign}৳${whole.toLocaleString("en-BD", { maximumFractionDigits: 0 })}`;
 }
