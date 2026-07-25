@@ -20,6 +20,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { SearchableSelect } from "../components/pos/SearchableSelect";
 
 const borderRest =
   "border-[0.5px] border-solid [border-color:var(--pos-border-hairline)]";
@@ -293,19 +294,18 @@ export function SignInPage() {
                   >
                     Restaurant
                   </label>
-                  <select
+                  <SearchableSelect
                     id="restaurant-select"
                     value={selectedBranchId}
-                    onChange={(e) => setSelectedBranchId(e.target.value)}
+                    onChange={setSelectedBranchId}
+                    placeholder="Select a restaurant"
                     className={`h-9 w-full rounded-[9px] border border-solid px-3 text-[13px] [border-color:var(--pos-input-border)] bg-[var(--pos-sidebar)] text-[var(--pos-text-1)] ${borderFocus}`}
-                  >
-                    <option value="">Select a restaurant</option>
-                    {restaurants.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: "", label: "Select a restaurant" },
+                      ...restaurants.map((r) => ({ value: r.id, label: r.name })),
+                    ]}
+                    aria-label="Restaurant"
+                  />
                 </div>
               ) : null}
 

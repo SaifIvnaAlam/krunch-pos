@@ -26,6 +26,7 @@ import {
 } from "@/features/payables";
 import { formatDateKeyAsDisplay, todayDateKey } from "../../lib/dateDisplay";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import { SearchableSelect } from "./SearchableSelect";
 import {
   brandBtn,
   dangerBtn,
@@ -154,20 +155,14 @@ function PeriodSelect({ value, onChange }: { value: Period; onChange: (v: Period
     <div className="relative">
       <Calendar
         size={14}
-        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--pos-text-2)]"
+        className="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-[var(--pos-text-2)]"
       />
-      <select
+      <SearchableSelect
         value={value}
-        onChange={(e) => onChange(e.target.value as Period)}
-        className="h-9 appearance-none rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] pl-8 pr-8 text-[13px] font-medium text-[var(--pos-text-1)] outline-none transition-[border-color,box-shadow] focus:border-[color-mix(in_srgb,var(--pos-sb-base)_45%,var(--pos-divider))] focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--pos-sb-base)_14%,transparent)]"
-      >
-        {PERIOD_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-      <ChevronDown
-        size={14}
-        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--pos-text-2)]"
+        onChange={(v) => onChange(v as Period)}
+        options={PERIOD_OPTIONS}
+        aria-label="Period"
+        className="h-9 min-w-[10.5rem] rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] pl-8 pr-2 text-[13px] font-medium text-[var(--pos-text-1)] outline-none transition-[border-color,box-shadow] focus:border-[color-mix(in_srgb,var(--pos-sb-base)_45%,var(--pos-divider))] focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--pos-sb-base)_14%,transparent)]"
       />
     </div>
   );
@@ -1399,15 +1394,17 @@ function CreateExpenseDrawer({
         {lockedKind ? null : (
           <div>
             <label className={fieldLabel}>Kind</label>
-            <select
+            <SearchableSelect
               className={selectInput}
               value={kind}
-              onChange={(e) => setKind(e.target.value as ExpenseKind | "salary")}
-            >
-              <option value="item_purchase">Item Purchase</option>
-              <option value="other_expense">Other Expense</option>
-              <option value="salary">Employee Salary</option>
-            </select>
+              onChange={(v) => setKind(v as ExpenseKind | "salary")}
+              options={[
+                { value: "item_purchase", label: "Item Purchase" },
+                { value: "other_expense", label: "Other Expense" },
+                { value: "salary", label: "Employee Salary" },
+              ]}
+              aria-label="Kind"
+            />
           </div>
         )}
         {kind === "salary" ? (
@@ -1490,16 +1487,17 @@ function CreateExpenseDrawer({
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
-              <select
+              <SearchableSelect
                 className={selectInput + " flex-1"}
                 value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-              >
-                <option value="">— none —</option>
-                {cats.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+                onChange={setCategoryId}
+                placeholder="— none —"
+                options={[
+                  { value: "", label: "— none —" },
+                  ...cats.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+                aria-label="Category"
+              />
               <button
                 type="button"
                 className={secondaryBtn + " h-9 shrink-0 px-2.5 text-[13px]"}
@@ -1517,12 +1515,17 @@ function CreateExpenseDrawer({
         {kind === "item_purchase" ? (
           <div>
             <label className={fieldLabel}>Supplier</label>
-            <select className={selectInput} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-              <option value="">— none —</option>
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              className={selectInput}
+              value={supplierId}
+              onChange={setSupplierId}
+              placeholder="— none —"
+              options={[
+                { value: "", label: "— none —" },
+                ...suppliers.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+              aria-label="Supplier"
+            />
           </div>
         ) : null}
 
@@ -1615,15 +1618,13 @@ function CreateExpenseDrawer({
             <div className="mt-2 grid grid-cols-2 gap-2">
               <div>
                 <label className={fieldLabel}>Method</label>
-                <select
+                <SearchableSelect
                   className={selectInput}
                   value={method}
-                  onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-                >
-                  {PAYMENT_METHOD_OPTIONS.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
+                  onChange={(v) => setMethod(v as PaymentMethod)}
+                  options={PAYMENT_METHOD_OPTIONS}
+                  aria-label="Method"
+                />
               </div>
               <div>
                 <label className={fieldLabel}>Txn ID (optional)</label>
@@ -1837,11 +1838,13 @@ function ExpenseDetailDrawer({ id, onClose, onChanged }: { id: string; onClose: 
                   value={payAmount}
                   onChange={(e) => setPayAmount(e.target.value)}
                 />
-                <select className={selectInput + " mt-0"} value={payMethod} onChange={(e) => setPayMethod(e.target.value as PaymentMethod)}>
-                  {PAYMENT_METHOD_OPTIONS.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
+                <SearchableSelect
+                  className={selectInput + " mt-0"}
+                  value={payMethod}
+                  onChange={(v) => setPayMethod(v as PaymentMethod)}
+                  options={PAYMENT_METHOD_OPTIONS}
+                  aria-label="Payment method"
+                />
                 <input className={textInput + " mt-0"} placeholder="Txn ID (optional)" value={payTxn} onChange={(e) => setPayTxn(e.target.value)} />
               </div>
               <button type="button" className={primaryBtn + " mt-2"} disabled={busy || !(Number.parseFloat(payAmount) > 0)} onClick={() => void addPayment()}>

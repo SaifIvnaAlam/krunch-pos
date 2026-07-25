@@ -38,6 +38,7 @@ import {
   expenseStatusPill,
   type ExpenseStatus,
 } from "@/features/payables";
+import { SearchableSelect } from "./SearchableSelect";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
 import {
   expenseStatLabel,
@@ -2642,18 +2643,17 @@ function LedgerEntryDrawerForm({
         {bookField === "select" ? (
           <label className="col-span-2 block min-w-0">
             <span className={purchaseLabel}>Book</span>
-            <select
+            <SearchableSelect
               value={ledgerDraft.supplierId}
-              onChange={(e) => onBookChange(e.target.value)}
+              onChange={onBookChange}
               className={purchaseField}
-            >
-              <option value="">Select…</option>
-              {ws.suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+              placeholder="Select…"
+              options={[
+                { value: "", label: "Select…" },
+                ...ws.suppliers.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+              aria-label="Book"
+            />
           </label>
         ) : (
           <div className="col-span-2 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
@@ -2683,10 +2683,10 @@ function LedgerEntryDrawerForm({
             ) : (
               <label className="min-w-0">
                 <span className={purchaseLabel}>Type</span>
-                <select
+                <SearchableSelect
                   value={ledgerDraft.kind}
-                  onChange={(e) => {
-                    const kind = e.target.value as LedgerEntryDrawerKind;
+                  onChange={(v) => {
+                    const kind = v as LedgerEntryDrawerKind;
                     patchLedgerDraft({
                       kind,
                       items:
@@ -2698,13 +2698,9 @@ function LedgerEntryDrawerForm({
                     });
                   }}
                   className={purchaseField}
-                >
-                  {LEDGER_DRAWER_KINDS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+                  options={LEDGER_DRAWER_KINDS}
+                  aria-label="Type"
+                />
               </label>
             )}
             {dateControl}
@@ -2729,21 +2725,20 @@ function LedgerEntryDrawerForm({
                 </div>
                 <label className="min-w-0">
                   <span className={purchaseLabel}>Via</span>
-                  <select
+                  <SearchableSelect
                     value={ledgerDraft.method}
-                    onChange={(e) =>
+                    onChange={(v) =>
                       patchLedgerDraft({
-                        method: e.target.value as LedgerEntryDraft["method"],
+                        method: v as LedgerEntryDraft["method"],
                       })
                     }
                     className={purchaseField}
-                  >
-                    {LEDGER_PAYMENT_METHODS.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
+                    options={LEDGER_PAYMENT_METHODS.map((m) => ({
+                      value: m,
+                      label: m,
+                    }))}
+                    aria-label="Via"
+                  />
                 </label>
               </>
             ) : (
@@ -2799,18 +2794,16 @@ function LedgerEntryDrawerForm({
                             aria-label={`Item ${idx + 1} quantity`}
                             className={`${itemField} text-right font-mono`}
                           />
-                          <select
+                          <SearchableSelect
                             value={row.unit}
-                            onChange={(e) => patchItem(row.key, { unit: e.target.value })}
+                            onChange={(unit) => patchItem(row.key, { unit })}
                             aria-label={`Item ${idx + 1} unit`}
                             className={itemField}
-                          >
-                            {LEDGER_ITEM_UNITS.map((u) => (
-                              <option key={u} value={u}>
-                                {u}
-                              </option>
-                            ))}
-                          </select>
+                            options={LEDGER_ITEM_UNITS.map((u) => ({
+                              value: u,
+                              label: u,
+                            }))}
+                          />
                           <input
                             type="number"
                             inputMode="decimal"
@@ -3337,36 +3330,38 @@ function SupplierLedgerView({
         </label>
         <label className="block min-w-[160px] max-w-[240px] flex-1">
           <span className={purchaseLabel}>Book</span>
-          <select
+          <SearchableSelect
             value={filter}
-            onChange={(e) =>
-              setWorkspace((w) => ({ ...w, ledgerSupplierFilter: e.target.value }))
+            onChange={(v) =>
+              setWorkspace((w) => ({ ...w, ledgerSupplierFilter: v }))
             }
             className={purchaseField}
             aria-label="Filter by cashbook"
-          >
-            <option value="">All books</option>
-            {ws.suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} · {formatMoneyWholeTaka(runningBySupplier.get(s.id) ?? 0)}
-              </option>
-            ))}
-          </select>
+            placeholder="All books"
+            options={[
+              { value: "", label: "All books" },
+              ...ws.suppliers.map((s) => ({
+                value: s.id,
+                label: `${s.name} · ${formatMoneyWholeTaka(runningBySupplier.get(s.id) ?? 0)}`,
+              })),
+            ]}
+          />
         </label>
         <label className="block min-w-[120px] max-w-[160px]">
           <span className={purchaseLabel}>Type</span>
-          <select
+          <SearchableSelect
             value={ledgerTypeFilter}
-            onChange={(e) =>
-              setLedgerTypeFilter(e.target.value as "all" | "invoice" | "payment")
+            onChange={(v) =>
+              setLedgerTypeFilter(v as "all" | "invoice" | "payment")
             }
             className={purchaseField}
             aria-label="Filter by entry type"
-          >
-            <option value="all">All</option>
-            <option value="invoice">Bill</option>
-            <option value="payment">Payment</option>
-          </select>
+            options={[
+              { value: "all", label: "All" },
+              { value: "invoice", label: "Bill" },
+              { value: "payment", label: "Payment" },
+            ]}
+          />
         </label>
         <label className="block min-w-[120px] max-w-[140px]">
           <span className={purchaseLabel}>From</span>
@@ -3974,19 +3969,17 @@ function PurchasedItemsView() {
         </label>
         <label className="block min-w-[160px] max-w-[240px] flex-1">
           <span className={purchaseLabel}>Supplier</span>
-          <select
+          <SearchableSelect
             value={vendorFilter}
-            onChange={(e) => setVendorFilter(e.target.value)}
+            onChange={setVendorFilter}
             className={purchaseField}
             aria-label="Filter by supplier"
-          >
-            <option value="">All suppliers</option>
-            {vendorBooks.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            placeholder="All suppliers"
+            options={[
+              { value: "", label: "All suppliers" },
+              ...vendorBooks.map((s) => ({ value: s.id, label: s.name })),
+            ]}
+          />
         </label>
         <label className="block min-w-[120px] max-w-[140px]">
           <span className={purchaseLabel}>From</span>

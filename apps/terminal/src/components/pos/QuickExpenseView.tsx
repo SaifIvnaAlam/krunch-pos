@@ -21,6 +21,7 @@ import {
   selectInput,
   textInput,
 } from "./payablesUi";
+import { SearchableSelect } from "./SearchableSelect";
 
 export function QuickExpenseView() {
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
@@ -137,12 +138,18 @@ export function QuickExpenseView() {
           <div className="sm:col-span-2">
             <label className={fieldLabel} htmlFor="qe-cat">Category</label>
             <div className="flex gap-2">
-              <select id="qe-cat" className={selectInput} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                <option value="">— none —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+              <SearchableSelect
+                id="qe-cat"
+                className={selectInput}
+                value={categoryId}
+                onChange={setCategoryId}
+                placeholder="— none —"
+                options={[
+                  { value: "", label: "— none —" },
+                  ...categories.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+                aria-label="Category"
+              />
               <button type="button" className={selectInput + " w-auto px-3"} onClick={() => void addCategoryInline()}>
                 + New
               </button>
@@ -177,11 +184,14 @@ export function QuickExpenseView() {
           ) : null}
           <div>
             <label className={fieldLabel} htmlFor="qe-method">Payment method</label>
-            <select id="qe-method" className={selectInput} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-              {PAYMENT_METHOD_OPTIONS.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              id="qe-method"
+              className={selectInput}
+              value={method}
+              onChange={(v) => setMethod(v as PaymentMethod)}
+              options={PAYMENT_METHOD_OPTIONS}
+              aria-label="Payment method"
+            />
           </div>
           <div>
             <label className={fieldLabel} htmlFor="qe-txn">Transaction ID (optional)</label>

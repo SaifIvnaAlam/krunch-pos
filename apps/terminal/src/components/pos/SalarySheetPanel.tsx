@@ -26,6 +26,7 @@ import {
   stillOwedTone,
 } from "./salaryUiShared";
 import { StaffPayoutModal } from "./StaffPayoutModal";
+import { SearchableSelect } from "./SearchableSelect";
 
 type RowFilter = "all" | "still-owed" | "fully-paid";
 type RowSort = "still-owed-desc" | "name" | "payable";
@@ -266,26 +267,28 @@ export function SalarySheetPanel({
             placeholder="Search"
             className={`${sheetPlainInput} min-w-[120px]`}
           />
-          <select
+          <SearchableSelect
             value={rowFilter}
-            onChange={(e) => setRowFilter(e.target.value as RowFilter)}
+            onChange={(v) => setRowFilter(v as RowFilter)}
             className={sheetPlainSelect}
             aria-label="Filter rows"
-          >
-            <option value="all">All</option>
-            <option value="still-owed">Due</option>
-            <option value="fully-paid">Paid</option>
-          </select>
-          <select
+            options={[
+              { value: "all", label: "All" },
+              { value: "still-owed", label: "Due" },
+              { value: "fully-paid", label: "Paid" },
+            ]}
+          />
+          <SearchableSelect
             value={rowSort}
-            onChange={(e) => setRowSort(e.target.value as RowSort)}
+            onChange={(v) => setRowSort(v as RowSort)}
             className={sheetPlainSelect}
             aria-label="Sort rows"
-          >
-            <option value="still-owed-desc">Due (high first)</option>
-            <option value="name">Name</option>
-            <option value="payable">Payable</option>
-          </select>
+            options={[
+              { value: "still-owed-desc", label: "Due (high first)" },
+              { value: "name", label: "Name" },
+              { value: "payable", label: "Payable" },
+            ]}
+          />
           <span className="text-[var(--pos-text-2)]">
             {saveState.saving ? (
               "Saving…"
