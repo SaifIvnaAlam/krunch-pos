@@ -22,6 +22,11 @@ import {
 } from "./tokenStorage";
 import { fetchStaffMe } from "@/features/staff/staffApi";
 import { getDefaultBranchId, getDefaultTerminalId } from "@/shared/config/env";
+import {
+  getLedgerWorkspaceLoadState,
+  reloadLedgerWorkspace,
+  resetLedgerWorkspace,
+} from "@/features/ledger";
 
 const FALLBACK_BRANCH: ActiveBranch = {
   id: getDefaultBranchId(),
@@ -74,6 +79,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onExpired = () => {
+      resetLedgerWorkspace();
       setApiAccessToken(null);
       setApiUserName("");
       setStaffId(null);
@@ -101,6 +107,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (me.activeBranch) {
           writeActiveBranch(me.activeBranch);
           setActiveBranch(me.activeBranch);
+        }
+        const ledgerState = getLedgerWorkspaceLoadState();
+        if (ledgerState.error || !ledgerState.loaded) {
+          void reloadLedgerWorkspace().catch(() => {});
         }
       })
       .catch(() => {
@@ -132,6 +142,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setPermissions(result.permissions ?? []);
       setRoleNames(result.roles ?? []);
       setActiveBranch(result.activeBranch);
+      void reloadLedgerWorkspace().catch(() => {});
     },
     [],
   );
@@ -147,6 +158,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     clearApiTokens();
     clearActiveBranch();
+    resetLedgerWorkspace();
     setApiAccessToken(null);
     setApiUserName("");
     setStaffId(null);

@@ -19,6 +19,7 @@ export {
   isLedgerEntryLocked,
   loadLedgerWorkspace,
   reloadLedgerWorkspace,
+  resetLedgerWorkspace,
   setWorkspace,
   subscribeWorkspace,
 } from "./ledgerWorkspaceStore";

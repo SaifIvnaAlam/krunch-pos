@@ -301,25 +301,43 @@ export function loadLedgerWorkspace(): Promise<void> {
     loadedFromApi = true;
     return Promise.resolve();
   }
-  if (loadPromise) return loadPromise;
+  // Retry after a failed attempt — otherwise a 403 at boot sticks forever.
+  if (loadPromise && !loadError) return loadPromise;
 
   loading = true;
   loadError = null;
   emit();
 
-  loadPromise = (async () => {
+  const attempt = (async () => {
     try {
       await applyFetchedWorkspace();
     } catch (e) {
       loadError =
         e instanceof Error ? e.message : "Could not load ledger workspace.";
+      if (loadPromise === attempt) loadPromise = null;
     } finally {
       loading = false;
       emit();
     }
   })();
+  loadPromise = attempt;
 
-  return loadPromise;
+  return attempt;
+}
+
+/** Clear in-memory cashbooks (e.g. on sign-out) so the next session reloads. */
+export function resetLedgerWorkspace(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  loadPromise = null;
+  loadedFromApi = false;
+  loadError = null;
+  loading = false;
+  workspaceSnapshot = structuredClone(initialWorkspace);
+  refreshLoadStateSnapshot();
+  emit();
 }
 
 /** Fetch the workspace from the API and replace the local snapshot with it. */

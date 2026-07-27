@@ -47,6 +47,7 @@ export function PosTerminalPage() {
   const [activeLeafId, setActiveLeafId] = useState(resolveInitialLeafId);
   const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
   const [dailyEntryOpenDateKey, setDailyEntryOpenDateKey] = useState<string | null>(null);
+  const [dailyEntryHistoryNavNonce, setDailyEntryHistoryNavNonce] = useState(0);
   const [dailyEntryStaffPayoutEmployeeId, setDailyEntryStaffPayoutEmployeeId] = useState<
     string | null
   >(null);
@@ -58,7 +59,11 @@ export function PosTerminalPage() {
   }, []);
 
   const handleSelectLeaf = useCallback((leafId: string) => {
-    if (leafId === activeLeafId) return;
+    if (leafId === activeLeafId) {
+      // Re-selecting Daily Entry while on the form returns to the history list.
+      if (leafId === "exp-daily") setDailyEntryHistoryNavNonce((n) => n + 1);
+      return;
+    }
     const proceed = () => setActiveLeafId(leafId);
     if (!attemptPosLeave(proceed)) return;
     proceed();
@@ -189,6 +194,7 @@ export function PosTerminalPage() {
       return (
         <DailyEntryFormView
           openDateKey={dailyEntryOpenDateKey}
+          historyNavNonce={dailyEntryHistoryNavNonce}
           openStaffPayoutEmployeeId={dailyEntryStaffPayoutEmployeeId}
           onOpenDateKeyConsumed={() => setDailyEntryOpenDateKey(null)}
           onOpenStaffPayoutEmployeeIdConsumed={() => setDailyEntryStaffPayoutEmployeeId(null)}
@@ -207,6 +213,7 @@ export function PosTerminalPage() {
     return (
       <DailyEntryFormView
         openDateKey={dailyEntryOpenDateKey}
+        historyNavNonce={dailyEntryHistoryNavNonce}
         openStaffPayoutEmployeeId={dailyEntryStaffPayoutEmployeeId}
         onOpenDateKeyConsumed={() => setDailyEntryOpenDateKey(null)}
         onOpenStaffPayoutEmployeeIdConsumed={() => setDailyEntryStaffPayoutEmployeeId(null)}
