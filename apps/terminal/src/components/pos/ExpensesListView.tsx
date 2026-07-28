@@ -605,6 +605,19 @@ export function ExpensesListView({
     else setFlatFilters(emptyFlatFilters());
   };
 
+  // Staff payout rows have no Expense detail — deep-link to Employee Salaries.
+  const selectRow = useCallback(
+    (id: string) => {
+      const row = rows.find((r) => r.id === id);
+      if (row?.kind === "salary") {
+        dispatchPosSelectLeaf("hr-payroll");
+        return;
+      }
+      setSelectedId(id);
+    },
+    [rows],
+  );
+
   const fieldClass =
     "mt-1 h-9 w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)] focus:outline-none";
   const labelClass = "text-[11px] text-[var(--pos-text-2)]";
@@ -707,7 +720,7 @@ export function ExpensesListView({
         <PurchasesTable
           rows={visibleRows}
           totals={totals}
-          onSelect={setSelectedId}
+          onSelect={selectRow}
           filters={purchaseFilters}
           options={purchaseFilterOpts}
           onFiltersChange={setPurchaseFilters}
@@ -717,7 +730,7 @@ export function ExpensesListView({
         <FlatExpensesTable
           rows={visibleRows}
           totals={totals}
-          onSelect={setSelectedId}
+          onSelect={selectRow}
           showCategory={!isPurchases}
           filters={flatFilters}
           options={flatFilterOpts}

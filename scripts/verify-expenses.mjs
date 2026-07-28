@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 /**
- * P2 verification — proves the Expense payables projection is faithful and, most
- * importantly, that it preserves every historical daily balance.
+ * Expense payables projection checks (relational DB only).
  *
  * Gates:
- *   1. item_purchase expense totals  == Σ PurchaseOrder.amountMinor
- *   2. Σ Payment                     == Σ (vendor+staff+regular) expense lines
- *   3. salary Payment total/count    == Σ staff lines
- *   4. DAILY PARITY (money gate): for every daily entry, Σ Payment dated that day
- *      == DailyEntry.expenses  (so remaining-balance is unchanged)
- *   5. no orphan payment targets
+ *   1. source=purchase expenses == PurchaseOrders (count + total)
+ *   2. unified salary Payments   == salary register (SalaryPayment) per line
+ *   3. per-supplier purchase due == max(0, Σ LedgerEntry)  (v1 account due)
+ *   4. no orphan payment targets
+ *
+ * Note: Payment totals are NOT expected to equal DailyEntry.expenses anymore —
+ * bill settlement uses cashbook ledger payments (FIFO), while the daily register
+ * stays on DailyEntry.expenses. Cross-DB check: scripts/verify-v1-v2-parity.mjs
  */
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
-const M = (n) => Math.round(Number(n) * 100);
 let failures = 0;
 
 function check(label, a, b) {
@@ -29,9 +29,9 @@ async function main() {
     const b = branch.id;
     console.log(`\n=== ${branch.name} ===`);
 
-    // 1. item-purchase totals
+    // 1. all purchase-sourced expenses == POs (kind may be item_purchase or other)
     const expAgg = await prisma.expense.aggregate({
-      where: { branchId: b, kind: 'item_purchase' },
+      where: { branchId: b, source: 'purchase' },
       _sum: { totalMinor: true },
       _count: true,
     });
@@ -40,56 +40,73 @@ async function main() {
       _sum: { amountMinor: true },
       _count: true,
     });
-    check('itemPurchase.count', expAgg._count, poAgg._count);
-    check('itemPurchase.total', expAgg._sum.totalMinor ?? 0, poAgg._sum.amountMinor ?? 0);
+    check('purchaseBills.count', expAgg._count, poAgg._count);
+    check('purchaseBills.total', expAgg._sum.totalMinor ?? 0, poAgg._sum.amountMinor ?? 0);
 
-    // 2. total payments == vendor+staff+regular lines
-    const payAgg = await prisma.payment.aggregate({
+    const payments = await prisma.payment.findMany({ where: { branchId: b } });
+
+    // 2. unified salary payments mirror the salary register per line
+    const unifiedSal = await prisma.payment.groupBy({
+      by: ['salaryLineId'],
+      where: { branchId: b, salaryLineId: { not: null }, source: { not: 'manual' } },
+      _sum: { amountMinor: true },
+    });
+    const legacySal = await prisma.salaryPayment.groupBy({
+      by: ['salaryLineId'],
       where: { branchId: b },
       _sum: { amountMinor: true },
-      _count: true,
     });
-    const lines = await prisma.dailyEntryExpenseLine.findMany({
-      where: { branchId: b },
-      include: { dailyEntry: { select: { date: true } } },
-    });
-    const cashLines = lines.filter((l) => ['vendor', 'staff', 'regular'].includes(l.kind));
-    const cashLinesSum = cashLines.reduce((s, l) => s + l.amountMinor, 0);
-    check('payments.count', payAgg._count, cashLines.length);
-    check('payments.total', payAgg._sum.amountMinor ?? 0, cashLinesSum);
-
-    // 3. salary payments
-    const salPayAgg = await prisma.payment.aggregate({
-      where: { branchId: b, salaryLineId: { not: null } },
-      _sum: { amountMinor: true },
-      _count: true,
-    });
-    const staffLines = lines.filter((l) => l.kind === 'staff');
+    const legacyByLine = new Map(legacySal.map((r) => [r.salaryLineId, r._sum.amountMinor ?? 0]));
+    let salLineMismatches = 0;
+    for (const r of unifiedSal) {
+      if ((legacyByLine.get(r.salaryLineId) ?? 0) !== (r._sum.amountMinor ?? 0)) salLineMismatches++;
+    }
+    check('salaryPayments.perLineMismatches', salLineMismatches, 0);
     check(
       'salaryPayments.total',
-      salPayAgg._sum.amountMinor ?? 0,
-      staffLines.reduce((s, l) => s + l.amountMinor, 0),
+      unifiedSal.reduce((s, r) => s + (r._sum.amountMinor ?? 0), 0),
+      legacySal.reduce((s, r) => s + (r._sum.amountMinor ?? 0), 0),
     );
 
-    // 4. DAILY PARITY — the money gate
-    const entries = await prisma.dailyEntry.findMany({ where: { branchId: b } });
-    const payments = await prisma.payment.findMany({ where: { branchId: b } });
-    const payByDate = new Map();
-    for (const p of payments) payByDate.set(p.date, (payByDate.get(p.date) ?? 0) + p.amountMinor);
-    let dayMismatch = 0;
-    for (const e of entries) {
-      const paid = payByDate.get(e.date) ?? 0;
-      if (paid !== M(e.expenses)) {
-        dayMismatch++;
-        if (dayMismatch <= 8)
-          console.log(`     day ${e.date}: Σpayments=${paid / 100} vs entry.expenses=${Number(e.expenses)}`);
+    // 3. per-supplier due == max(0, ledger balance)  (v1 account due)
+    const suppliers = await prisma.supplier.findMany({ where: { branchId: b } });
+    const ledger = await prisma.ledgerEntry.findMany({ where: { branchId: b } });
+    const bills = await prisma.expense.findMany({
+      where: { branchId: b, source: 'purchase' },
+      include: { payments: true },
+    });
+    let dueMismatches = 0;
+    for (const s of suppliers) {
+      const bal = ledger
+        .filter((le) => le.supplierId === s.id)
+        .reduce((sum, le) => sum + le.amountMinor, 0);
+      const v1Due = Math.max(0, bal);
+      const v2Due = bills
+        .filter((e) => e.supplierId === s.id)
+        .reduce((sum, e) => {
+          const paid = e.payments.reduce((p, x) => p + x.amountMinor, 0);
+          return sum + Math.max(0, e.totalMinor - paid);
+        }, 0);
+      if (Math.abs(v1Due - v2Due) > 1) {
+        dueMismatches++;
+        if (dueMismatches <= 8) {
+          console.log(`     ${s.name}: v1Due=${v1Due / 100} v2Due=${v2Due / 100}`);
+        }
       }
     }
-    check('dailyParity.mismatchedDays', dayMismatch, 0);
+    check('supplierDue.mismatches', dueMismatches, 0);
 
-    // 5. no orphan targets
-    const expIds = new Set((await prisma.expense.findMany({ where: { branchId: b }, select: { id: true } })).map((x) => x.id));
-    const slIds = new Set((await prisma.salaryLine.findMany({ where: { branchId: b }, select: { id: true } })).map((x) => x.id));
+    // 4. no orphan targets
+    const expIds = new Set(
+      (await prisma.expense.findMany({ where: { branchId: b }, select: { id: true } })).map(
+        (x) => x.id,
+      ),
+    );
+    const slIds = new Set(
+      (await prisma.salaryLine.findMany({ where: { branchId: b }, select: { id: true } })).map(
+        (x) => x.id,
+      ),
+    );
     let orphans = 0;
     for (const p of payments) {
       if (p.expenseId && !expIds.has(p.expenseId)) orphans++;
@@ -97,16 +114,20 @@ async function main() {
     }
     check('payments.orphanTargets', orphans, 0);
 
-    // informational: method distribution + paid/due headline
-    const byMethod = {};
-    for (const p of payments) byMethod[p.method] = (byMethod[p.method] ?? 0) + p.amountMinor;
-    const totalExpenses = (await prisma.expense.aggregate({ where: { branchId: b }, _sum: { totalMinor: true } }))._sum.totalMinor ?? 0;
-    const salaryPayable = (await prisma.salaryLine.findMany({ where: { branchId: b } })).reduce(
-      (s, l) => s + l.basicMinor + l.serviceChargeMinor + l.overtimeMinor + l.eidBonusMinor + l.finesMinor,
-      0,
+    const payAgg = await prisma.payment.aggregate({
+      where: { branchId: b },
+      _sum: { amountMinor: true },
+    });
+    const totalExpenses =
+      (
+        await prisma.expense.aggregate({
+          where: { branchId: b },
+          _sum: { totalMinor: true },
+        })
+      )._sum.totalMinor ?? 0;
+    console.log(
+      `     Expense total: ${totalExpenses / 100} · Paid (all Payment): ${(payAgg._sum.amountMinor ?? 0) / 100}`,
     );
-    console.log('     method split (whole units):', Object.fromEntries(Object.entries(byMethod).map(([k, v]) => [k, v / 100])));
-    console.log(`     Expense total (non-salary): ${totalExpenses / 100} · Salary payable: ${salaryPayable / 100} · Paid: ${(payAgg._sum.amountMinor ?? 0) / 100}`);
   }
 
   console.log(failures === 0 ? '\nALL EXPENSE PARITY CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);

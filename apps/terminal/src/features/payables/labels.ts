@@ -18,9 +18,10 @@ export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
   other: "Other",
 };
 
-export const EXPENSE_KIND_LABEL: Record<ExpenseKind, string> = {
+export const EXPENSE_KIND_LABEL: Record<ExpenseKind | "salary", string> = {
   item_purchase: "Item Purchase",
   other_expense: "Other Expense",
+  salary: "Salary",
 };
 
 export const EXPENSE_STATUS_LABEL: Record<ExpenseStatus, string> = {

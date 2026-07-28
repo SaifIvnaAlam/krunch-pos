@@ -37,10 +37,10 @@ export type ExpensePaymentLine = {
   note: string;
 };
 
-/** Row shape from GET /expenses (list). */
+/** Row shape from GET /expenses (list). "salary" rows are staff payouts. */
 export type ExpenseSummary = {
   id: string;
-  kind: ExpenseKind;
+  kind: ExpenseKind | "salary";
   date: string;
   description: string;
   expenseCategoryId: string | null;

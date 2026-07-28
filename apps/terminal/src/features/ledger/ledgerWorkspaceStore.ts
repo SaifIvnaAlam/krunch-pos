@@ -2,8 +2,8 @@ import { apiFetch } from "@/features/api-client";
 import { readValidAccessToken } from "@/features/auth/authSession";
 import { isDemoDataMode } from "@/shared/config/env";
 
-/** Kept for persisted workspace shape; all cashbooks are vendor books. */
-export type LedgerBookPurpose = "vendor";
+/** Cashbook class: kitchen vendors vs ops/other payables. */
+export type LedgerBookPurpose = "vendor" | "item_purchase" | "other_expense";
 
 export type LedgerAttachment = {
   fileName: string;
@@ -191,9 +191,13 @@ function stripEmployeeCashbooks(data: LedgerWorkspaceData): {
     .map((s) => {
       const prior = (s as { bookPurpose?: string }).bookPurpose;
       if (prior === "owners") convertedOwners = true;
+      const bookPurpose: LedgerBookPurpose =
+        prior === "item_purchase" || prior === "other_expense"
+          ? prior
+          : "vendor";
       return {
         ...s,
-        bookPurpose: "vendor" as LedgerBookPurpose,
+        bookPurpose,
       };
     });
   const moves = data.moves.filter((m) => !employeeIds.has(m.supplierId));
@@ -308,7 +312,8 @@ export function loadLedgerWorkspace(): Promise<void> {
   loadError = null;
   emit();
 
-  const attempt = (async () => {
+  let attempt!: Promise<void>;
+  attempt = (async () => {
     try {
       await applyFetchedWorkspace();
     } catch (e) {

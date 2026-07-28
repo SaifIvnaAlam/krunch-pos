@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  allocateLedgerPaymentsFifo,
+  expenseKindForSupplier,
+} from '../expenses/expense.util';
 
 /**
  * Project API workspace / daily-entry payloads into the relational tables.
@@ -539,22 +543,29 @@ export class RelationalSyncService {
       await tx.payment.deleteMany({ where: { branchId, ...derived } });
       await tx.expense.deleteMany({ where: { branchId, ...derived } });
 
-      // 1. item-purchase Expenses from PurchaseOrders (source=purchase).
+      // 1. Expenses from PurchaseOrders (kind from supplier class / name map).
+      const suppliers = await tx.supplier.findMany({
+        where: { branchId },
+        select: { id: true, name: true, bookPurpose: true },
+      });
+      const supplierById = new Map(suppliers.map((s) => [s.id, s]));
       const pos = await tx.purchaseOrder.findMany({
         where: { branchId },
         include: { items: { orderBy: { sortIndex: 'asc' } } },
         orderBy: { sortIndex: 'asc' },
       });
-      const poToExpense = new Map<string, string>();
-      const poById = new Map<string, (typeof pos)[number]>();
       for (const po of pos) {
-        poById.set(po.id, po);
         const expenseId = `exp_po_${po.id}`;
+        const supplier = po.supplierId ? supplierById.get(po.supplierId) : null;
+        const kind = expenseKindForSupplier({
+          name: supplier?.name,
+          bookPurpose: supplier?.bookPurpose,
+        });
         await tx.expense.create({
           data: {
             id: expenseId,
             branchId,
-            kind: 'item_purchase' as any,
+            kind: kind as any,
             date: po.date,
             description: this.purchaseDescription(po),
             supplierId: po.supplierId,
@@ -564,7 +575,6 @@ export class RelationalSyncService {
             sortIndex: po.sortIndex,
           },
         });
-        poToExpense.set(po.id, expenseId);
         if (po.items.length) {
           await tx.expenseItem.createMany({
             data: po.items.map((it, j) => ({
@@ -580,31 +590,12 @@ export class RelationalSyncService {
           });
         }
       }
-      // 2. daily expense lines + linked ledger / salary context.
+      // 2. daily expense lines + salary context.
       const lines = await tx.dailyEntryExpenseLine.findMany({
         where: { branchId },
         include: { dailyEntry: { select: { date: true } } },
         orderBy: [{ dailyEntryId: 'asc' }, { sortIndex: 'asc' }],
       });
-      const ledgerIds = [...new Set(lines.map((l) => l.ledgerEntryId).filter(Boolean))] as string[];
-      const ledgers = ledgerIds.length
-        ? await tx.ledgerEntry.findMany({ where: { id: { in: ledgerIds } } })
-        : [];
-      const ledgerById = new Map(ledgers.map((e) => [e.id, e]));
-
-      const sps = await tx.salaryPayment.findMany({ where: { branchId } });
-      const salaryLineByPaymentId = new Map(sps.map((s) => [s.id, s.salaryLineId]));
-      const salaryLines = await tx.salaryLine.findMany({
-        where: { branchId },
-        include: { salaryMonth: { select: { monthKey: true } } },
-      });
-      const salaryLinesByEmployee = new Map<string, { id: string; month: string }[]>();
-      for (const sl of salaryLines) {
-        if (!sl.employeeId) continue;
-        const a = salaryLinesByEmployee.get(sl.employeeId) ?? [];
-        a.push({ id: sl.id, month: (sl.salaryMonth?.monthKey ?? '').slice(0, 7) });
-        salaryLinesByEmployee.set(sl.employeeId, a);
-      }
 
       const byEntry = new Map<string, typeof lines>();
       for (const l of lines) {
@@ -612,167 +603,104 @@ export class RelationalSyncService {
         a.push(l);
         byEntry.set(l.dailyEntryId, a);
       }
-      const supplierOf = (line: (typeof lines)[number]): string | null => {
-        const le = line.ledgerEntryId ? ledgerById.get(line.ledgerEntryId) : null;
-        return le ? le.supplierId : null;
-      };
 
-      // 3. Payments (+ standalone other_expense Expenses) from daily cash-outs.
+      // 3. Daily regular lines. Vendor cash-outs settle via ledger FIFO below;
+      // staff payouts come from the salary register (step 3b) — daily-line
+      // dates mis-attribute which salary month a payout settles.
       for (const [, entryLines] of byEntry) {
-        const purchaseCandidates = entryLines
-          .filter((l) => l.kind === 'purchase' && l.purchaseOrderId)
-          .map((l) => ({
-            poId: l.purchaseOrderId as string,
-            supplierId: supplierOf(l) ?? poById.get(l.purchaseOrderId as string)?.supplierId ?? null,
-            amount: l.amountMinor,
-            used: false,
-          }));
-
         for (const line of entryLines) {
           const date = line.dailyEntry.date;
-          if (line.kind === 'purchase') continue; // the bill; PO is canonical
+          if (line.kind !== 'regular') continue;
 
-          if (line.kind === 'regular') {
-            const expenseId = `exp_del_${line.id}`;
-            const paidMinor =
-              line.paidAmountMinor != null ? line.paidAmountMinor : line.amountMinor;
-            await tx.expense.create({
-              data: {
-                id: expenseId,
-                branchId,
-                kind: 'other_expense' as any,
-                expenseCategoryId: line.expenseCategoryId ?? null,
-                date,
-                description: line.label || line.vendor || 'Expense',
-                totalMinor: line.amountMinor,
-                note: line.note ?? '',
-                source: 'daily',
-                sortIndex: line.sortIndex,
-              },
-            });
-            if (paidMinor > 0) {
-              await tx.payment.create({
-                data: {
-                  id: `pay_del_${line.id}`,
-                  branchId,
-                  expenseId,
-                  date,
-                  amountMinor: paidMinor,
-                  method: this.dailyCashMethod(date, line.ledgerNote || line.note) as any,
-                  note: line.note ?? '',
-                  source: 'daily',
-                  sortIndex: line.sortIndex,
-                },
-              });
-            }
-            continue;
-          }
-
-          if (line.kind === 'staff') {
-            let salaryLineId = line.salaryPaymentId
-              ? salaryLineByPaymentId.get(line.salaryPaymentId)
-              : null;
-            if (!salaryLineId && line.employeeId) {
-              const cands = salaryLinesByEmployee.get(line.employeeId) ?? [];
-              const em = date.slice(0, 7);
-              const hit = cands.find((c) => c.month === em) ?? cands[cands.length - 1];
-              if (hit) salaryLineId = hit.id;
-            }
-            if (!salaryLineId) {
-              const expenseId = `exp_del_${line.id}`;
-              await tx.expense.create({
-                data: {
-                  id: expenseId,
-                  branchId,
-                  kind: 'other_expense' as any,
-                  date,
-                  description: line.employeeName || 'Staff payment',
-                  totalMinor: line.amountMinor,
-                  note: line.note ?? '',
-                  source: 'daily',
-                  sortIndex: line.sortIndex,
-                },
-              });
-              await tx.payment.create({
-                data: {
-                  id: `pay_del_${line.id}`,
-                  branchId,
-                  expenseId,
-                  date,
-                  amountMinor: line.amountMinor,
-                  method: 'cash' as any,
-                  note: line.note ?? '',
-                  source: 'daily',
-                  sortIndex: line.sortIndex,
-                },
-              });
-              continue;
-            }
-            await tx.payment.create({
-              data: {
-                id: `pay_del_${line.id}`,
-                branchId,
-                salaryLineId,
-                date,
-                amountMinor: line.amountMinor,
-                method: 'cash' as any,
-                note: line.note ?? '',
-                source: 'daily',
-                sortIndex: line.sortIndex,
-              },
-            });
-            continue;
-          }
-
-          if (line.kind === 'vendor') {
-            const supplierId = supplierOf(line);
-            const ledger = line.ledgerEntryId ? ledgerById.get(line.ledgerEntryId) : null;
-            // Attach a supplier payment ONLY to a purchase billed the SAME DAY to the
-            // SAME supplier: prefer an exact-amount match (a full "Paid now"), else the
-            // first unused same-day purchase (a partial payment). Never fall back to
-            // another day's bill — otherwise an unrelated payment inflates that bill's
-            // paid/due (e.g. a ৳10 payment landing on a ৳120 bill → ৳130). Anything
-            // unmatched becomes a standalone supplier expense, preserving daily cash
-            // parity while keeping each bill's paid/due truthful.
-            let cand =
-              purchaseCandidates.find(
-                (c) => !c.used && c.supplierId === supplierId && c.amount === line.amountMinor,
-              ) ?? purchaseCandidates.find((c) => !c.used && c.supplierId === supplierId);
-            if (cand) cand.used = true;
-            let expenseId = cand ? poToExpense.get(cand.poId) : null;
-            if (!expenseId) {
-              expenseId = `exp_del_${line.id}`;
-              await tx.expense.create({
-                data: {
-                  id: expenseId,
-                  branchId,
-                  kind: 'other_expense' as any,
-                  date,
-                  description: line.vendor || 'Supplier payment',
-                  totalMinor: line.amountMinor,
-                  note: line.note ?? '',
-                  source: 'daily',
-                  sortIndex: line.sortIndex,
-                },
-              });
-            }
+          const expenseId = `exp_del_${line.id}`;
+          const paidMinor =
+            line.paidAmountMinor != null ? line.paidAmountMinor : line.amountMinor;
+          await tx.expense.create({
+            data: {
+              id: expenseId,
+              branchId,
+              kind: 'other_expense' as any,
+              expenseCategoryId: line.expenseCategoryId ?? null,
+              date,
+              description: line.label || line.vendor || 'Expense',
+              totalMinor: line.amountMinor,
+              note: line.note ?? '',
+              source: 'daily',
+              sortIndex: line.sortIndex,
+            },
+          });
+          if (paidMinor > 0) {
             await tx.payment.create({
               data: {
                 id: `pay_del_${line.id}`,
                 branchId,
                 expenseId,
                 date,
-                amountMinor: line.amountMinor,
-                method: this.dailyCashMethod(date, ledger?.memo || line.ledgerNote) as any,
-                transactionId: ledger?.ref ?? '',
-                note: line.ledgerNote ?? '',
+                amountMinor: paidMinor,
+                method: this.dailyCashMethod(date, line.ledgerNote || line.note) as any,
+                note: line.note ?? '',
                 source: 'daily',
                 sortIndex: line.sortIndex,
               },
             });
-            continue;
           }
         }
+      }
+
+      // 3b. Salary payouts from the salary register — SalaryPayment carries the
+      // salary month each payout settles (v1 truth), so mirror it 1:1.
+      const sps = await tx.salaryPayment.findMany({ where: { branchId } });
+      for (const sp of sps) {
+        await tx.payment.create({
+          data: {
+            id: `pay_sp_${sp.id}`,
+            branchId,
+            salaryLineId: sp.salaryLineId,
+            date: sp.date,
+            amountMinor: sp.amountMinor,
+            method: 'cash' as any,
+            note: sp.note ?? '',
+            source: 'daily',
+            sortIndex: sp.sortIndex,
+          },
+        });
+      }
+
+      // 4. Settle purchase bills from cashbook ledger payments (FIFO by date/id).
+      // Matches v1 supplier account due (Σ invoices − Σ |payments|).
+      const billExpenses = await tx.expense.findMany({
+        where: { branchId, source: 'purchase' },
+        select: { id: true, supplierId: true, date: true, totalMinor: true },
+      });
+      const ledgerPays = await tx.ledgerEntry.findMany({
+        where: { branchId, type: 'payment' },
+        select: {
+          id: true,
+          supplierId: true,
+          date: true,
+          amountMinor: true,
+          memo: true,
+          ref: true,
+        },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      });
+      const allocs = allocateLedgerPaymentsFifo(billExpenses, ledgerPays);
+      let sort = 0;
+      for (const a of allocs) {
+        await tx.payment.create({
+          data: {
+            id: `pay_lg_${a.ledgerEntryId}_${a.expenseId}`,
+            branchId,
+            expenseId: a.expenseId,
+            date: a.date,
+            amountMinor: a.amountMinor,
+            method: this.paymentMethodFromText(a.memo) as any,
+            transactionId: a.transactionId,
+            note: a.memo || '',
+            source: 'ledger',
+            sortIndex: sort++,
+          },
+        });
       }
     });
   }

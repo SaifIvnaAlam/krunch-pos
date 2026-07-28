@@ -1,21 +1,24 @@
 #!/usr/bin/env node
 /**
- * P2 backfill — project the existing relational data into the Expense payables
- * model (Expense / ExpenseItem / Payment). Idempotent: clears the target tables
- * per branch and re-derives them. LOCAL SANDBOX ONLY until verified.
+ * P2 backfill — project relational data into Expense / Payment payables.
+ * Idempotent: clears target tables per branch and re-derives them.
  *
- * Mapping (derived from the real data — see docs/expense-payables-plan.md):
- *   - PurchaseOrder            -> Expense(item_purchase) [+ ExpenseItem]  (the bill)
- *   - expense line `regular`   -> Expense(other_expense) + Payment        (paid now)
- *   - expense line `vendor`    -> Payment against the matching purchase Expense
- *   - expense line `staff`     -> Payment against the SalaryLine
- *   - expense line `purchase`  -> IGNORED (it is the bill; the PO is canonical)
+ * Mapping:
+ *   - PurchaseOrder            -> Expense (kind from supplier map)
+ *   - expense line `regular`   -> Expense(other_expense) + Payment (daily)
+ *   - expense line `staff`     -> ignored (SalaryPayment register is truth)
+ *   - SalaryPayment            -> Payment against SalaryLine (right month)
+ *   - expense line `purchase`  -> ignored (PO is the bill)
+ *   - expense line `vendor`    -> ignored for Payment (cashbook ledger is truth)
+ *   - LedgerEntry payment      -> Payment on bills via FIFO (matches v1 due)
  *
- * Cash parity holds by construction: Payments are exactly the vendor+staff+regular
- * lines (which equal DailyEntry.expenses), each dated on its daily-entry date.
- * Payment method + transactionId come from the linked ledger payment entry.
+ * Why not daily vendor lines for paid/due? V1 settles at cashbook account level.
+ * Daily often has 1 vendor line while the cashbook has N duplicate bills/payments
+ * (e.g. 2026-07-19 ×15). FIFO from LedgerEntry payments restores v1 dues.
  */
 import { PrismaClient } from '@prisma/client';
+import { expenseKindForSupplierName } from './supplier-expense-kind-map.mjs';
+import { allocateLedgerPaymentsFifo } from './allocate-ledger-payments.mjs';
 
 const prisma = new PrismaClient();
 
@@ -45,11 +48,7 @@ async function backfillBranch(branchId) {
     branchId,
     itemPurchaseExpenses: 0,
     otherExpenses: 0,
-    payments: { vendor: 0, staff: 0, regular: 0 },
-    vendorMatched: 0,
-    vendorFallbackSupplier: 0,
-    vendorFallbackStandalone: 0,
-    staffUnresolved: 0,
+    payments: { ledger: 0, staff: 0, regular: 0 },
   };
 
   // ---- clear (idempotent) --------------------------------------------------
@@ -59,21 +58,26 @@ async function backfillBranch(branchId) {
   await prisma.expenseAttachment.deleteMany({ where: { branchId } });
   await prisma.expense.deleteMany({ where: { branchId } });
 
-  // ---- 1. item-purchase Expenses from PurchaseOrders -----------------------
+  // ---- 1. Expenses from PurchaseOrders (kind from supplier name map) -------
+  const suppliers = await prisma.supplier.findMany({
+    where: { branchId },
+    select: { id: true, name: true },
+  });
+  const supplierNameById = new Map(suppliers.map((s) => [s.id, s.name]));
   const pos = await prisma.purchaseOrder.findMany({
     where: { branchId },
     include: { items: { orderBy: { sortIndex: 'asc' } } },
     orderBy: { sortIndex: 'asc' },
   });
-  const poToExpense = new Map(); // poId -> expenseId
-  const poById = new Map(); // poId -> po
   for (const po of pos) {
-    poById.set(po.id, po);
+    const kind = expenseKindForSupplierName(
+      po.supplierId ? supplierNameById.get(po.supplierId) : null,
+    );
     const exp = await prisma.expense.create({
       data: {
         id: `exp_po_${po.id}`,
         branchId,
-        kind: 'item_purchase',
+        kind,
         date: po.date,
         description: purchaseDescription(po),
         supplierId: po.supplierId,
@@ -83,8 +87,8 @@ async function backfillBranch(branchId) {
         sortIndex: po.sortIndex,
       },
     });
-    poToExpense.set(po.id, exp.id);
-    report.itemPurchaseExpenses++;
+    if (kind === 'item_purchase') report.itemPurchaseExpenses++;
+    else report.otherExpenses++;
     if (po.items.length) {
       await prisma.expenseItem.createMany({
         data: po.items.map((it, j) => ({
@@ -101,44 +105,13 @@ async function backfillBranch(branchId) {
     }
   }
 
-  // Supplier -> its item_purchase expense ids (for fallback matching).
-  const supplierExpenses = new Map(); // supplierId -> [expenseId]
-  for (const po of pos) {
-    if (!po.supplierId) continue;
-    const arr = supplierExpenses.get(po.supplierId) ?? [];
-    arr.push(poToExpense.get(po.id));
-    supplierExpenses.set(po.supplierId, arr);
-  }
-
-  // ---- 2. load expense lines (+ entry date) and linked ledger suppliers ----
+  // ---- 2. daily expense lines (regular) --------------------------------------
   const lines = await prisma.dailyEntryExpenseLine.findMany({
     where: { branchId },
     include: { dailyEntry: { select: { date: true } } },
     orderBy: [{ dailyEntryId: 'asc' }, { sortIndex: 'asc' }],
   });
-  const ledgerIds = [...new Set(lines.map((l) => l.ledgerEntryId).filter(Boolean))];
-  const ledgers = await prisma.ledgerEntry.findMany({ where: { id: { in: ledgerIds } } });
-  const ledgerById = new Map(ledgers.map((e) => [e.id, e]));
 
-  const sps = await prisma.salaryPayment.findMany({ where: { branchId } });
-  const salaryLineByPaymentId = new Map(sps.map((s) => [s.id, s.salaryLineId]));
-
-  // Fallback resolution for staff payments: the daily line's `salaryPaymentId`
-  // is a soft link that matches only ~40% of the time, so also index salary
-  // lines by employee + month.
-  const salaryLines = await prisma.salaryLine.findMany({
-    where: { branchId },
-    include: { salaryMonth: { select: { monthKey: true } } },
-  });
-  const salaryLinesByEmployee = new Map(); // employeeId -> [{id, month}]
-  for (const sl of salaryLines) {
-    if (!sl.employeeId) continue;
-    const arr = salaryLinesByEmployee.get(sl.employeeId) ?? [];
-    arr.push({ id: sl.id, month: (sl.salaryMonth?.monthKey ?? '').slice(0, 7) });
-    salaryLinesByEmployee.set(sl.employeeId, arr);
-  }
-
-  // group lines by daily entry for vendor<->purchase pairing
   const byEntry = new Map();
   for (const l of lines) {
     const arr = byEntry.get(l.dailyEntryId) ?? [];
@@ -146,173 +119,99 @@ async function backfillBranch(branchId) {
     byEntry.set(l.dailyEntryId, arr);
   }
 
-  const supplierOf = (line) => {
-    const le = line.ledgerEntryId ? ledgerById.get(line.ledgerEntryId) : null;
-    return le ? le.supplierId : null;
-  };
-
-  // ---- 3. create Payments (+ standalone other_expense Expenses) ------------
+  // ---- 3. daily regular payments (vendor uses ledger FIFO, staff step 3b) --
   for (const [, entryLines] of byEntry) {
-    // purchase candidates for this entry: {poId, supplierId, amount, used}
-    const purchaseCandidates = entryLines
-      .filter((l) => l.kind === 'purchase' && l.purchaseOrderId)
-      .map((l) => ({
-        poId: l.purchaseOrderId,
-        supplierId: supplierOf(l) ?? poById.get(l.purchaseOrderId)?.supplierId ?? null,
-        amount: l.amountMinor,
-        used: false,
-      }));
-
     for (const line of entryLines) {
       const date = line.dailyEntry.date;
-      if (line.kind === 'purchase') continue; // the bill; PO is canonical
+      if (line.kind !== 'regular') continue;
 
-      if (line.kind === 'regular') {
-        const exp = await prisma.expense.create({
-          data: {
-            id: `exp_del_${line.id}`,
-            branchId,
-            kind: 'other_expense',
-            date,
-            description: line.label || line.vendor || 'Expense',
-            totalMinor: line.amountMinor,
-            note: line.note ?? '',
-            source: 'daily',
-            sortIndex: line.sortIndex,
-          },
-        });
-        report.otherExpenses++;
-        await prisma.payment.create({
-          data: {
-            id: `pay_del_${line.id}`,
-            branchId,
-            expenseId: exp.id,
-            date,
-            amountMinor: line.amountMinor,
-            method: methodFromText(line.ledgerNote || line.note),
-            note: line.note ?? '',
-            source: 'daily',
-            sortIndex: line.sortIndex,
-          },
-        });
-        report.payments.regular++;
-        continue;
-      }
-
-      if (line.kind === 'staff') {
-        let salaryLineId = line.salaryPaymentId
-          ? salaryLineByPaymentId.get(line.salaryPaymentId)
-          : null;
-        if (!salaryLineId && line.employeeId) {
-          const cands = salaryLinesByEmployee.get(line.employeeId) ?? [];
-          const em = date.slice(0, 7);
-          const hit = cands.find((c) => c.month === em) ?? cands[cands.length - 1];
-          if (hit) salaryLineId = hit.id;
-        }
-        if (!salaryLineId) {
-          // Last resort: keep cash parity by landing it as an other_expense.
-          const exp = await prisma.expense.create({
-            data: {
-              id: `exp_del_${line.id}`,
-              branchId,
-              kind: 'other_expense',
-              date,
-              description: line.employeeName || 'Staff payment',
-              totalMinor: line.amountMinor,
-              note: line.note ?? '',
-              source: 'daily',
-              sortIndex: line.sortIndex,
-            },
-          });
-          report.otherExpenses++;
-          report.staffUnresolved++;
-          await prisma.payment.create({
-            data: {
-              id: `pay_del_${line.id}`,
-              branchId,
-              expenseId: exp.id,
-              date,
-              amountMinor: line.amountMinor,
-              method: 'cash',
-              note: line.note ?? '',
-              source: 'daily',
-              sortIndex: line.sortIndex,
-            },
-          });
-          report.payments.staff++;
-          continue;
-        }
-        await prisma.payment.create({
-          data: {
-            id: `pay_del_${line.id}`,
-            branchId,
-            salaryLineId,
-            date,
-            amountMinor: line.amountMinor,
-            method: 'cash',
-            note: line.note ?? '',
-            source: 'daily',
-            sortIndex: line.sortIndex,
-          },
-        });
-        report.payments.staff++;
-        continue;
-      }
-
-      if (line.kind === 'vendor') {
-        const supplierId = supplierOf(line);
-        const ledger = line.ledgerEntryId ? ledgerById.get(line.ledgerEntryId) : null;
-        // primary match: same supplier + same amount within this entry
-        let cand = purchaseCandidates.find(
-          (c) => !c.used && c.supplierId === supplierId && c.amount === line.amountMinor,
-        );
-        if (cand) {
-          cand.used = true;
-          report.vendorMatched++;
-        }
-        let expenseId = cand ? poToExpense.get(cand.poId) : null;
-        // fallback 1: any item_purchase expense for the same supplier
-        if (!expenseId && supplierId && supplierExpenses.get(supplierId)?.length) {
-          expenseId = supplierExpenses.get(supplierId)[0];
-          report.vendorFallbackSupplier++;
-        }
-        // fallback 2: standalone other_expense so the payment still lands
-        if (!expenseId) {
-          const exp = await prisma.expense.create({
-            data: {
-              id: `exp_del_${line.id}`,
-              branchId,
-              kind: 'other_expense',
-              date,
-              description: line.vendor || 'Supplier payment',
-              totalMinor: line.amountMinor,
-              note: line.note ?? '',
-              source: 'daily',
-              sortIndex: line.sortIndex,
-            },
-          });
-          expenseId = exp.id;
-          report.otherExpenses++;
-          report.vendorFallbackStandalone++;
-        }
-        await prisma.payment.create({
-          data: {
-            id: `pay_del_${line.id}`,
-            branchId,
-            expenseId,
-            date,
-            amountMinor: line.amountMinor,
-            method: methodFromText(ledger?.memo || line.ledgerNote),
-            transactionId: ledger?.ref ?? '',
-            note: line.ledgerNote ?? '',
-            source: 'daily',
-            sortIndex: line.sortIndex,
-          },
-        });
-        report.payments.vendor++;
-        continue;
-      }
+      const exp = await prisma.expense.create({
+        data: {
+          id: `exp_del_${line.id}`,
+          branchId,
+          kind: 'other_expense',
+          date,
+          description: line.label || line.vendor || 'Expense',
+          totalMinor: line.amountMinor,
+          note: line.note ?? '',
+          source: 'daily',
+          sortIndex: line.sortIndex,
+        },
+      });
+      report.otherExpenses++;
+      await prisma.payment.create({
+        data: {
+          id: `pay_del_${line.id}`,
+          branchId,
+          expenseId: exp.id,
+          date,
+          amountMinor: line.amountMinor,
+          method: methodFromText(line.ledgerNote || line.note),
+          note: line.note ?? '',
+          source: 'daily',
+          sortIndex: line.sortIndex,
+        },
+      });
+      report.payments.regular++;
     }
+  }
+
+  // ---- 3b. salary payouts from the salary register ---------------------------
+  // SalaryPayment carries the salary month each payout settles (v1 truth);
+  // daily-line dates mis-attribute months (July cash paying June salary).
+  const sps = await prisma.salaryPayment.findMany({ where: { branchId } });
+  for (const sp of sps) {
+    await prisma.payment.create({
+      data: {
+        id: `pay_sp_${sp.id}`,
+        branchId,
+        salaryLineId: sp.salaryLineId,
+        date: sp.date,
+        amountMinor: sp.amountMinor,
+        method: 'cash',
+        note: sp.note ?? '',
+        source: 'daily',
+        sortIndex: sp.sortIndex,
+      },
+    });
+    report.payments.staff++;
+  }
+
+  // ---- 4. settle purchase bills from cashbook ledger payments (FIFO) --------
+  const billExpenses = await prisma.expense.findMany({
+    where: { branchId, source: 'purchase' },
+    select: { id: true, supplierId: true, date: true, totalMinor: true },
+  });
+  const ledgerPays = await prisma.ledgerEntry.findMany({
+    where: { branchId, type: 'payment' },
+    select: {
+      id: true,
+      supplierId: true,
+      date: true,
+      amountMinor: true,
+      memo: true,
+      ref: true,
+    },
+    orderBy: [{ date: 'asc' }, { id: 'asc' }],
+  });
+  const allocs = allocateLedgerPaymentsFifo(billExpenses, ledgerPays);
+  let sort = 0;
+  for (const a of allocs) {
+    await prisma.payment.create({
+      data: {
+        id: `pay_lg_${a.ledgerEntryId}_${a.expenseId}`,
+        branchId,
+        expenseId: a.expenseId,
+        date: a.date,
+        amountMinor: a.amountMinor,
+        method: methodFromText(a.memo),
+        transactionId: a.transactionId,
+        note: a.memo || '',
+        source: 'ledger',
+        sortIndex: sort++,
+      },
+    });
+    report.payments.ledger++;
   }
 
   return report;

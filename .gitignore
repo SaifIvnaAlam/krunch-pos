@@ -66,4 +66,5 @@ npm-debug.log*
 
 # Local smoke-test output
 .smoke-relational-results.json
+.v1-v2-parity.json
 deploy/.env.v2

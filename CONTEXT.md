@@ -228,12 +228,28 @@ Backfill: `scripts/backfill-relational.mjs` (idempotent; clears + re-copies).
       `:3002`, Postgres `:5435` / DB `krunch_v2`, Caddy `krunch-v2.caddy`.
       Deploy via `./scripts/deploy-v2-to-vps.sh` + `deploy/.env.v2` (never
       touches `/opt/krunch-pos`). Relational-only schema (no JSON blobs).
-- [x] **Import mapped prod data** into `krunch_v2` for validation (2026-07-23).
-      Local: restore prod dump → `backfill-relational.mjs` + `backfill-expenses.mjs`
-      → dump relational rows → load into remote `krunch_v2` only. Counts:
-      21 suppliers, 367 ledger, 183 POs, 185 expenses, 143 payments, 21 daily
-      entries, 16 employees. Login uses prod password (`Welcome123!`). Prod v1
-      still JSON-only (no `Supplier` table; `BranchLedgerWorkspace` intact).
+- [x] **Import mapped prod data** into `krunch_v2` for validation (re-synced
+      2026-07-27). Local: restore prod dump → `backfill-relational.mjs` +
+      `backfill-expenses.mjs` → dump relational rows → load into remote
+      `krunch_v2` only. Counts: 22 suppliers, 405 ledger, 201 POs, ~203 expenses,
+      24 daily entries, 17 employees. Login uses prod password (`Welcome123!`).
+      Prod v1 still JSON-only (no `Supplier` table; `BranchLedgerWorkspace`
+      intact).
+- [x] **V1↔V2 payable parity (2026-07-27):** bill paid/due now comes from
+      cashbook `LedgerEntry` payments allocated FIFO onto purchase bills (not
+      daily vendor lines). Root cause of false dues: 2026-07-19 had ×15
+      duplicate POs while daily only logged 1 vendor cash-out. After fix,
+      per-supplier due matches v1 account due; real open due ≈ ৳3,600.92.
+      Re-check anytime: `scripts/verify-v1-v2-parity.mjs` (needs
+      `V1_DATABASE_URL` + `V2_DATABASE_URL`). Kind remap:
+      `scripts/remap-supplier-expense-kinds.mjs`.
+- [x] **Salary payment parity (2026-07-28):** unified `Payment` rows for
+      salaries now mirror `SalaryPayment` (the salary register) 1:1 instead of
+      being re-derived from daily staff lines — daily-line dates mis-attributed
+      which salary month a payout settled (July cash paying June salary), so
+      Reports/All Expenses disagreed with the Employee Salaries page. V2 data
+      re-synced from a fresh prod dump the same day (dropped a stale `mahdi`
+      row prod had since deleted).
 - [ ] **Cutover (later):** when mapping looks good, migrate a recent window (e.g.
       last N days), switch traffic to this domain/DB, retire prod v1.
 

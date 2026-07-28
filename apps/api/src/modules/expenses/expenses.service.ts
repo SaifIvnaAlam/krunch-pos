@@ -114,6 +114,53 @@ export class ExpensesService {
       return summary;
     });
 
+    // Staff payouts ride along in the unfiltered (All Expenses) list. They are
+    // Payments against SalaryLines — not Expense rows — but the business counts
+    // them as money out, so surface them as read-only, always-paid rows.
+    if (!q.kind && !q.expenseCategoryId && !q.supplierId) {
+      const payoutWhere: Prisma.PaymentWhereInput = {
+        branchId,
+        salaryLineId: { not: null },
+      };
+      if (q.from || q.to) {
+        payoutWhere.date = {};
+        if (q.from) (payoutWhere.date as Prisma.StringFilter).gte = q.from;
+        if (q.to) (payoutWhere.date as Prisma.StringFilter).lte = q.to;
+      }
+      const payouts = await this.prisma.payment.findMany({
+        where: payoutWhere,
+        include: {
+          salaryLine: { include: { employee: { select: { name: true } } } },
+        },
+      });
+      for (const p of payouts) {
+        const who = p.salaryLine?.employee?.name ?? 'Staff';
+        mapped.push({
+          id: p.id,
+          kind: 'salary',
+          date: p.date,
+          description: `Staff payout — ${who}`,
+          expenseCategoryId: null,
+          categoryName: 'Salary',
+          supplierId: null,
+          supplierName: null,
+          total: toWhole(p.amountMinor),
+          paid: toWhole(p.amountMinor),
+          due: 0,
+          status: 'paid',
+          note: p.note,
+          source: 'salary',
+          editable: false,
+          itemCount: 0,
+          paymentCount: 1,
+          items: [],
+          createdAt: p.createdAt.toISOString(),
+          updatedAt: p.updatedAt.toISOString(),
+        });
+      }
+      mapped.sort((a, b) => b.date.localeCompare(a.date));
+    }
+
     return q.status ? mapped.filter((m) => m.status === q.status) : mapped;
   }
 

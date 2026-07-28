@@ -110,7 +110,9 @@ echo "==> Building POS for https://${POS_DOMAIN}/api/v1"
 export VITE_API_URL="https://${POS_DOMAIN}/api/v1"
 export VITE_DEFAULT_BRANCH_ID="${VITE_DEFAULT_BRANCH_ID:-a0000000-0000-4000-8000-000000000001}"
 export VITE_DEFAULT_TERMINAL_ID="${VITE_DEFAULT_TERMINAL_ID:-terminal-v2-001}"
-export VITE_MEDIA_PUBLIC_BASE_URL="${VITE_MEDIA_PUBLIC_BASE_URL:-https://s3.storage.inventivelab.bd/media}"
+# Preview URLs must hit this stack's /api/v1/media (MediaAsset lives in v2 DB).
+# s3.storage…/media is proxied to prod API only — wrong DB → broken images.
+export VITE_MEDIA_PUBLIC_BASE_URL="${VITE_MEDIA_PUBLIC_BASE_URL:-https://${POS_DOMAIN}/api/v1/media}"
 npm run build -w terminal
 
 rm -rf "${ROOT}/deploy/pos-static"

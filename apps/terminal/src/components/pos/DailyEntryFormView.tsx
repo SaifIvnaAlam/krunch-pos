@@ -690,7 +690,6 @@ const statValueHighlightClass =
   "text-[28px] font-extrabold tabular-nums leading-none text-[var(--pos-text-1)]";
 const statCardHintClass = `${statCardClass} cursor-help`;
 const expenseCardClass = "flex min-w-0 flex-col gap-1.5";
-const expenseCardRowClass = "flex min-w-0 flex-wrap items-start gap-2";
 /** Shared type scale inside Expenses: 12px fields, 11px meta/labels. */
 const expenseFieldClass =
   "h-8 w-full min-w-0 rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-[12px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
