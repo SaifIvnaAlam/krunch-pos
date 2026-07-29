@@ -16,6 +16,7 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { ExpenseReportsModule } from './modules/expense-reports/expense-reports.module';
 import { StorageModule } from './modules/storage/storage.module';
+import { CaptureSessionsModule } from './modules/capture-sessions/capture-sessions.module';
 import { HealthModule } from './modules/health/health.module';
 
 @Module({
@@ -38,6 +39,7 @@ import { HealthModule } from './modules/health/health.module';
     PaymentsModule,
     ExpenseReportsModule,
     StorageModule,
+    CaptureSessionsModule,
   ],
 })
 export class AppModule {}

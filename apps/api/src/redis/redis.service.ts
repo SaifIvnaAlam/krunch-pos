@@ -146,6 +146,23 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.client!.expire(key, ttlSeconds);
   }
 
+  /** Glob match (`*` only). Memory fallback filters in process. */
+  async keys(pattern: string): Promise<string[]> {
+    if (this.memoryDisabled) {
+      const prefix = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
+      const out: string[] = [];
+      for (const key of this.memory.keys()) {
+        this.purgeExpired(key);
+        if (!this.memory.has(key)) continue;
+        if (prefix != null ? key.startsWith(prefix) : key === pattern) {
+          out.push(key);
+        }
+      }
+      return out;
+    }
+    return this.client!.keys(pattern);
+  }
+
   /** @deprecated Prefer typed helpers above; exposed for advanced use. */
   getClient(): Redis {
     if (this.memoryDisabled || !this.client) {

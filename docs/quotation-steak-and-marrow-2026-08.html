@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quotation — Steak &amp; Marrow — QT-SM-2026-08-001</title>
+  <style>
+    :root {
+      --ink: #1a1a1a;
+      --muted: #5c5c5c;
+      --line: #d8d8d8;
+      --bg: #fff;
+      --soft: #f6f6f6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 14px/1.45 "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+
+    .page {
+      max-width: 740px;
+      margin: 0 auto;
+      padding: 40px 36px 56px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: flex-start;
+      margin-bottom: 28px;
+    }
+
+    .brand {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      margin: 6px 0 0;
+      color: var(--muted);
+    }
+
+    .meta {
+      text-align: right;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .meta strong {
+      display: block;
+      color: var(--ink);
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .parties {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .box {
+      border: 1px solid var(--line);
+      padding: 14px 16px;
+      background: var(--soft);
+    }
+
+    .box h2 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .box p {
+      margin: 0;
+    }
+
+    .box .name {
+      font-weight: 650;
+      margin-bottom: 4px;
+    }
+
+    .box .dim {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .highlight {
+      border: 1px solid var(--line);
+      padding: 16px 18px;
+      margin-bottom: 28px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+
+    .highlight .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .highlight .value {
+      font-size: 20px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .intro {
+      color: var(--muted);
+      margin: 0 0 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 28px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .terms {
+      margin: 0 0 28px;
+      padding: 0 0 0 18px;
+    }
+
+    .terms li {
+      margin-bottom: 8px;
+      color: var(--ink);
+    }
+
+    .commercial {
+      border: 1px solid var(--line);
+      padding: 16px 18px;
+      margin-bottom: 32px;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 6px 0;
+    }
+
+    .row.total {
+      border-top: 1px solid var(--line);
+      margin-top: 8px;
+      padding-top: 12px;
+      font-weight: 650;
+    }
+
+    .signs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      margin-top: 40px;
+    }
+
+    .signs .label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 28px;
+    }
+
+    .signs .line {
+      border-top: 1px solid var(--ink);
+      padding-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .actions {
+      position: sticky;
+      top: 0;
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 16px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .actions button {
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: #fff;
+      padding: 8px 14px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .actions button.secondary {
+      background: #fff;
+      color: var(--ink);
+    }
+
+    @media print {
+      .actions {
+        display: none;
+      }
+
+      .page {
+        padding: 0;
+        max-width: none;
+      }
+
+      body {
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="actions">
+    <button class="secondary" type="button" onclick="window.print()">
+      Print / Save as PDF
+    </button>
+  </div>
+  <div class="page">
+    <header>
+      <div>
+        <div class="brand">Inventive Lab</div>
+        <h1>Quotation</h1>
+        <p class="subtitle">
+          Restaurant back-office system for Steak &amp; Marrow
+        </p>
+      </div>
+      <div class="meta">
+        <strong>QT-SM-2026-08-001</strong>
+        Date: 29 July 2026<br />
+        Valid for: 30 days<br />
+        Currency: BDT
+      </div>
+    </header>
+
+    <div class="parties">
+      <div class="box">
+        <h2>From</h2>
+        <p class="name">Inventive Lab</p>
+        <p class="dim">inventivelab.bd</p>
+        <p class="dim">Hosted product delivery &amp; support</p>
+      </div>
+      <div class="box">
+        <h2>To (Client)</h2>
+        <p class="name">Steak &amp; Marrow</p>
+        <p class="dim">Single-branch restaurant back office</p>
+        <p class="dim">steakandmarrow.inventivelab.bd</p>
+      </div>
+    </div>
+
+    <div class="highlight">
+      <div>
+        <div class="label">Monthly fee</div>
+        <div class="value">৳2,000</div>
+      </div>
+      <div>
+        <div class="label">Billing starts</div>
+        <div class="value">Aug 2026</div>
+      </div>
+      <div>
+        <div class="label">Annual equivalent</div>
+        <div class="value">৳24,000</div>
+      </div>
+    </div>
+
+    <h3>Scope of service</h3>
+    <p class="intro">
+      Access to the live website modules below, including hosting, data
+      storage, and ongoing maintenance for the subscribed period.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Module</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Daily Entry Form</td>
+          <td>End-of-day sales and expense sheet</td>
+        </tr>
+        <tr>
+          <td>All Expenses</td>
+          <td>Unified expense list and payables view</td>
+        </tr>
+        <tr>
+          <td>Item Purchases</td>
+          <td>Purchase orders, bills, supplier balances</td>
+        </tr>
+        <tr>
+          <td>Other Expenses</td>
+          <td>Non-purchase expense entry and tracking</td>
+        </tr>
+        <tr>
+          <td>Expense reports</td>
+          <td>Category and period rollups</td>
+        </tr>
+        <tr>
+          <td>Sales report</td>
+          <td>Sales reporting from daily entries</td>
+        </tr>
+        <tr>
+          <td>Analytics</td>
+          <td>Read-only operational analytics</td>
+        </tr>
+        <tr>
+          <td>Employee Management</td>
+          <td>Staff roster</td>
+        </tr>
+        <tr>
+          <td>Employee Salaries</td>
+          <td>Monthly salary register and payouts</td>
+        </tr>
+        <tr>
+          <td>Users &amp; Access</td>
+          <td>Login, roles, and permissions (RBAC)</td>
+        </tr>
+        <tr>
+          <td>Hosting &amp; storage</td>
+          <td>App hosting, database, and media storage (total limit 1&nbsp;GB)</td>
+        </tr>
+      </tbody>
+    </table>
+    <br><br><br>
+    <h3>Commercial terms</h3>
+    <div class="commercial">
+      <div class="row">
+        <span>Subscription fee (per calendar month)</span>
+        <span>৳2,000</span>
+      </div>
+      <div class="row">
+        <span>First billing month</span>
+        <span>August 2026</span>
+      </div>
+      <div class="row">
+        <span>Billing cycle</span>
+        <span>Monthly, in advance</span>
+      </div>
+      <div class="row">
+        <span>Total storage limit</span>
+        <span>1 GB</span>
+      </div>
+      <div class="row total">
+        <span>Amount due each month</span>
+        <span>৳2,000 BDT</span>
+      </div>
+    </div>
+
+    <h3>Terms</h3>
+    <ol class="terms">
+      <li>
+        This quotation covers hosted use of the Steak &amp; Marrow back-office
+        website as delivered, for one branch.
+      </li>
+      <li>
+        Monthly fee of ৳2,000 BDT begins August 2026 and continues until
+        cancelled by either party with 30 days’ written notice.
+      </li>
+      <li>
+        Fee includes application hosting, database, media storage up to a
+        total of 1&nbsp;GB, bug fixes, and routine upkeep for the modules
+        listed above. Usage above 1&nbsp;GB may be quoted separately.
+      </li>
+      <li>
+        Major new features beyond the current website scope may be quoted
+        separately.
+      </li>
+      <li>
+        Classic table-ordering POS, multi-branch, and third-party accounting
+        integrations are not included unless agreed in writing.
+      </li>
+      <li>This quotation is valid for 30 days from the date above.</li>
+    </ol>
+
+    <div class="signs">
+      <div>
+        <div class="label">For Inventive Lab</div>
+        <div class="line">Name / Signature / Date</div>
+      </div>
+      <div>
+        <div class="label">For Steak &amp; Marrow</div>
+        <div class="line">Name / Signature / Date</div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

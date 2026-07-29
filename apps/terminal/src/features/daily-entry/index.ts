@@ -14,9 +14,11 @@ export {
   roundTaka,
   expenseTotalFromExpenseLines,
   listDailyEntriesDescendingFromMap,
+  listDailyEntryHistorySlots,
   savedLineKind,
   suggestedNewEntryDateKey,
   type CarriedOpeningBalance,
+  type DailyEntryHistorySlot,
 } from "./calculations";
 export {
   DAILY_ENTRY_STORAGE_KEY,

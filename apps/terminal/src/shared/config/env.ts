@@ -42,3 +42,29 @@ export function getMediaPublicBaseUrl(): string {
 export function getMediaPublicUrl(mediaId: string): string {
   return `${getMediaPublicBaseUrl()}/${mediaId}`;
 }
+
+/**
+ * Public origin for phone QR capture links (no trailing slash).
+ * Prefer `VITE_PUBLIC_APP_URL` so local PC browsers still encode the VPS URL
+ * phones can reach. Falls back to absolute `VITE_API_URL` host, then `location.origin`.
+ */
+export function getPublicAppOrigin(): string {
+  const explicit = raw.VITE_PUBLIC_APP_URL;
+  if (typeof explicit === "string" && explicit.trim().length > 0) {
+    return explicit.trim().replace(/\/+$/, "");
+  }
+  const api = getApiBaseUrl();
+  if (/^https?:\/\//i.test(api)) {
+    return api.replace(/\/api\/v1\/?$/i, "").replace(/\/+$/, "");
+  }
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, "");
+  }
+  return "";
+}
+
+export function getPhoneCaptureUrl(sessionToken: string): string {
+  const origin = getPublicAppOrigin();
+  const token = sessionToken.trim();
+  return `${origin}/capture/${encodeURIComponent(token)}`;
+}

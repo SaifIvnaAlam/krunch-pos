@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Theme toggle uses html.dark — without this, dark: only follows OS prefers-color-scheme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-brand: #0369A1;
   --color-brand-dark: #075985;
@@ -91,8 +94,8 @@ html.dark {
   --pos-primary-bg: #f0efe9;
   --pos-primary-fg: #141413;
   --pos-primary-hover: #dddcd4;
-  --pos-input-bg: #242422;
-  --pos-input-border: rgba(255, 255, 255, 0.18);
+  --pos-input-bg: #2e2e2b;
+  --pos-input-border: rgba(255, 255, 255, 0.28);
   --pos-kbd-bg: #1e1e1c;
   --pos-nav-expanded-active: rgba(255, 255, 255, 0.1);
   --pos-icon-tile-bg: #2a2a28;

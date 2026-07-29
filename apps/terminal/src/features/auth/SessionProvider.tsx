@@ -15,8 +15,10 @@ import {
   clearApiTokens,
   readAccessToken,
   readActiveBranch,
+  readApiProfileEmail,
   readApiProfileName,
   writeActiveBranch,
+  writeApiProfileEmail,
   writeApiProfileName,
   writeTokens,
 } from "./tokenStorage";
@@ -38,6 +40,8 @@ export type SessionContextValue = {
   mode: "api";
   isSignedIn: boolean;
   userName: string;
+  /** Signed-in staff email when known. */
+  userEmail: string;
   /** Current portal staff id when known (from login /me). */
   staffId: string | null;
   /** Effective permissions from roles (server is still the hard edge). */
@@ -69,6 +73,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const t = initialAccessToken();
     return t ? readApiProfileName() : "";
   });
+  const [apiUserEmail, setApiUserEmail] = useState(() => {
+    const t = initialAccessToken();
+    return t ? readApiProfileEmail() : "";
+  });
   const [staffId, setStaffId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [roleNames, setRoleNames] = useState<string[]>([]);
@@ -82,6 +90,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       resetLedgerWorkspace();
       setApiAccessToken(null);
       setApiUserName("");
+      setApiUserEmail("");
       setStaffId(null);
       setPermissions([]);
       setRoleNames([]);
@@ -100,6 +109,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         writeApiProfileName(me.name);
         setApiUserName(me.name);
+        const email = (me.email ?? "").trim().toLowerCase();
+        writeApiProfileEmail(email);
+        setApiUserEmail(email);
         setStaffId(me.id);
         const nextPerms = [...new Set(me.roles.flatMap((r) => r.permissions))];
         setPermissions(nextPerms);
@@ -135,9 +147,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
       writeTokens(result.accessToken, result.refreshToken);
       writeApiProfileName(result.staffProfile.name);
+      const profileEmail = (
+        result.staffProfile.email ?? email
+      )
+        .trim()
+        .toLowerCase();
+      writeApiProfileEmail(profileEmail);
       writeActiveBranch(result.activeBranch);
       setApiAccessToken(result.accessToken);
       setApiUserName(result.staffProfile.name);
+      setApiUserEmail(profileEmail);
       setStaffId(result.staffProfile.id);
       setPermissions(result.permissions ?? []);
       setRoleNames(result.roles ?? []);
@@ -161,6 +180,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     resetLedgerWorkspace();
     setApiAccessToken(null);
     setApiUserName("");
+    setApiUserEmail("");
     setStaffId(null);
     setPermissions([]);
     setRoleNames([]);
@@ -172,6 +192,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       mode: "api",
       isSignedIn: Boolean(apiAccessToken),
       userName: apiUserName,
+      userEmail: apiUserEmail,
       staffId,
       permissions,
       roleNames,
@@ -184,6 +205,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [
       apiAccessToken,
       apiUserName,
+      apiUserEmail,
       staffId,
       permissions,
       roleNames,

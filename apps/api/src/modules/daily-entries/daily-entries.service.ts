@@ -8,8 +8,10 @@ import { DailyEntry, Prisma } from '@prisma/client';
 import {
   attachmentRefsDropped,
   collectDailyEntryAttachmentRefs,
+  mediaIdsFromAttachmentRefs,
 } from '../../common/daily-entry-attachments';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CaptureSessionsService } from '../capture-sessions/capture-sessions.service';
 import { RelationalSyncService } from '../relational-sync/relational-sync.service';
 import { StorageService } from '../storage/storage.service';
 import { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
@@ -154,6 +156,7 @@ export class DailyEntriesService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly relationalSync: RelationalSyncService,
+    private readonly captureSessions: CaptureSessionsService,
   ) {}
 
   async listForBranch(branchId: string): Promise<DailyEntryDto[]> {
@@ -255,20 +258,33 @@ export class DailyEntriesService {
   async prepareUpsert(branchId: string, dto: UpsertDailyEntryDto): Promise<void> {
     const existing = await this.prisma.dailyEntry.findUnique({
       where: { branchId_date: { branchId, date: dto.date } },
+      include: {
+        expenseLineRows: { select: { receiptDataUrls: true } },
+      },
     });
     if (existing?.isLocked) {
       throw new ConflictException(
         'This daily entry is locked and cannot be edited.',
       );
     }
-    const orphanedRefs = attachmentRefsDropped(
-      existing ? collectDailyEntryAttachmentRefs(existing) : [],
-      collectDailyEntryAttachmentRefs({
-        voidSaleAttachmentDataUrls: dto.voidSaleAttachmentDataUrls,
-        expenseLines: dto.expenseLines,
-      }),
-    );
+    const previousRefs = existing
+      ? collectDailyEntryAttachmentRefs({
+          voidSaleAttachmentDataUrls: existing.voidSaleAttachmentDataUrls,
+          expenseLines: existing.expenseLineRows,
+        })
+      : [];
+    const nextRefs = collectDailyEntryAttachmentRefs({
+      voidSaleAttachmentDataUrls: dto.voidSaleAttachmentDataUrls,
+      expenseLines: dto.expenseLines,
+    });
+    const orphanedRefs = attachmentRefsDropped(previousRefs, nextRefs);
     await this.deleteAttachmentRefs(branchId, orphanedRefs);
+    // Drop receipts/void media that never landed on a saved daily entry.
+    // Protect refs in this save payload (not in DB yet) and open capture trays.
+    await this.captureSessions.purgeOrphanDailyMedia(
+      branchId,
+      mediaIdsFromAttachmentRefs(nextRefs),
+    );
   }
 
   /**

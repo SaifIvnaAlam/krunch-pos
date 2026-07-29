@@ -41,6 +41,7 @@ export function writeTokens(access: string, refresh: string): void {
 }
 
 const API_PROFILE = "universal_pos_terminal_profile_name";
+const API_PROFILE_EMAIL = "universal_pos_terminal_profile_email";
 const ACTIVE_BRANCH = "universal_pos_terminal_active_branch";
 
 export type StoredActiveBranch = {
@@ -68,6 +69,24 @@ export function writeApiProfileName(name: string): void {
 export function clearApiProfileName(): void {
   try {
     sessionStorage.removeItem(API_PROFILE);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readApiProfileEmail(): string {
+  try {
+    return sessionStorage.getItem(API_PROFILE_EMAIL) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function writeApiProfileEmail(email: string): void {
+  try {
+    const trimmed = email.trim().toLowerCase();
+    if (trimmed) sessionStorage.setItem(API_PROFILE_EMAIL, trimmed);
+    else sessionStorage.removeItem(API_PROFILE_EMAIL);
   } catch {
     /* ignore */
   }
@@ -108,6 +127,7 @@ export function clearApiTokens(): void {
     sessionStorage.removeItem(ACCESS);
     sessionStorage.removeItem(REFRESH);
     sessionStorage.removeItem(API_PROFILE);
+    sessionStorage.removeItem(API_PROFILE_EMAIL);
     sessionStorage.removeItem(ACTIVE_BRANCH);
   } catch {
     /* ignore */

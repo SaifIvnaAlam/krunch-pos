@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -22,6 +23,7 @@ import {
   useState,
   useSyncExternalStore,
   type ChangeEvent,
+  type DragEvent,
   type InputHTMLAttributes,
   type ReactNode,
 } from "react";
@@ -35,8 +37,21 @@ import {
   purgeStoredMediaRef,
 } from "@/features/storage";
 import { MediaThumb } from "./MediaThumb";
+import {
+  CAPTURE_DND_MIME,
+  parseCaptureDragPayload,
+  PhoneCaptureTrayPanel,
+  type AttachmentDragSource,
+  type CaptureDragPayload,
+} from "./PhoneCaptureTrayPanel";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
+import { DateRangeCalendarField } from "./DateRangeCalendarField";
 import { SearchableSelect } from "./SearchableSelect";
+import {
+  closeCaptureSession,
+  removeCaptureItem,
+  type CaptureSessionItem,
+} from "@/features/capture";
 import {
   commitLedgerFromDailyExpenseLine,
   getLedgerBookNamesSnapshot,
@@ -54,7 +69,7 @@ import {
   commitDailyEntry,
   deleteDailyEntry,
   expenseTotalFromExpenseLines,
-  listDailyEntriesDescendingFromMap,
+  listDailyEntryHistorySlots,
   lockDailyEntry,
   roundTaka,
   savedLineKind,
@@ -101,7 +116,12 @@ import {
 } from "@/features/payables";
 import { getEmployeeById, useActiveEmployees } from "../../lib/employeeDirectoryStorage";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
-import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
+import {
+  formatDateKeyAsDisplay,
+  formatMonthKeyAsDisplay,
+  monthEndDateKey,
+  monthStartDateKey,
+} from "../../lib/dateDisplay";
 import { useSession } from "@/features/auth";
 
 type PurchaseItemDraft = {
@@ -711,7 +731,7 @@ const expenseChipReadoutClass =
 const expenseQuietInputClass =
   "h-8 w-full min-w-0 rounded-[6px] border border-solid border-transparent bg-transparent px-2 text-[12px] text-[var(--pos-text-1)] transition-[border-color,background-color,box-shadow] placeholder:text-[var(--pos-text-2)]/70 focus:border-[var(--pos-input-border)] focus:bg-[var(--pos-input-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
 const expenseRemoveBtnClass =
-  "inline-flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700";
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700 dark:hover:text-red-400";
 
 function AttachmentCountBadge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -739,26 +759,30 @@ const EXPENSE_CARD_CHROME: Record<
 > = {
   purchase: {
     shell:
-      "rounded-[10px] border border-solid border-sky-500/25 !bg-sky-50/40 p-2",
+      "rounded-[10px] border border-solid border-sky-500/25 !bg-sky-50/40 dark:!bg-sky-500/10 p-2",
     title: "Item purchase",
     header:
-      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-sky-500/25 px-2 py-1.5",
+      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-sky-500/25 dark:bg-sky-500/20 px-2 py-1.5",
   },
   regular: {
-    shell: "rounded-[10px] border border-solid border-red-500/20 bg-red-50/30 p-2",
+    shell:
+      "rounded-[10px] border border-solid border-red-500/20 bg-red-50/30 dark:bg-red-500/10 p-2",
     title: "Other expense",
-    header: "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-red-500/20 px-2 py-1.5",
+    header: "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-red-500/20 dark:bg-red-500/20 px-2 py-1.5",
   },
   staff: {
-    shell: "rounded-[10px] border border-solid border-emerald-500/25 !bg-emerald-50/40 p-2",
+    shell:
+      "rounded-[10px] border border-solid border-emerald-500/25 !bg-emerald-50/40 dark:!bg-emerald-500/10 p-2",
     title: "Staff payout",
-    header: "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-emerald-500/25 px-2 py-1.5",
+    header:
+      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-emerald-500/25 dark:bg-emerald-500/20 px-2 py-1.5",
   },
   vendor: {
-    shell: "rounded-[10px] border border-solid border-amber-500/25 !bg-amber-50/40 p-2",
+    shell:
+      "rounded-[10px] border border-solid border-amber-500/25 !bg-amber-50/40 dark:!bg-amber-500/10 p-2",
     title: "Supplier payment",
     header:
-      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-amber-500/25 px-2 py-1.5",
+      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-amber-500/25 dark:bg-amber-500/20 px-2 py-1.5",
   },
 };
 
@@ -941,10 +965,10 @@ const headerSaveBtnClass =
   "inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-[7px] px-2.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
 
 const headerLockBtnClass =
-  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-amber-500/50 bg-amber-500/10 px-2.5 text-[11px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-amber-500/50 bg-amber-500/10 px-2.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
 
 const headerUnlockBtnClass =
-  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-2.5 text-[11px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-2.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
 
 const headerHistoryBtnClass =
   "inline-flex h-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-divider)] px-2.5 text-[11px] font-semibold text-[var(--pos-text-2)] transition-colors hover:text-[var(--pos-text-1)]";
@@ -2451,6 +2475,24 @@ export function DailyEntryFormView({
   >(() => new Set());
   const [voidAttachBusy, setVoidAttachBusy] = useState(false);
   const isAttachmentUploadBusy = attachBusyLineId !== null || voidAttachBusy;
+  const [captureSessionToken, setCaptureSessionToken] = useState<string | null>(null);
+  const [captureItems, setCaptureItems] = useState<CaptureSessionItem[]>([]);
+  const [selectedCaptureItemId, setSelectedCaptureItemId] = useState<string | null>(null);
+  const [captureDragActive, setCaptureDragActive] = useState(false);
+  const [captureDropTargetKey, setCaptureDropTargetKey] = useState<string | null>(null);
+  const captureSessionTokenRef = useRef<string | null>(null);
+  captureSessionTokenRef.current = captureSessionToken;
+  const captureItemsRef = useRef(captureItems);
+  captureItemsRef.current = captureItems;
+
+  useEffect(() => {
+    const clearDrag = () => {
+      setCaptureDragActive(false);
+      setCaptureDropTargetKey(null);
+    };
+    window.addEventListener("dragend", clearDrag);
+    return () => window.removeEventListener("dragend", clearDrag);
+  }, []);
   const [openingEdit, setOpeningEdit] = useState(false);
   const [openingEditWarningOpen, setOpeningEditWarningOpen] = useState(false);
   const [historyDetailRow, setHistoryDetailRow] = useState<DailyEntryRow | null>(null);
@@ -2483,6 +2525,23 @@ export function DailyEntryFormView({
   const pendingStaffPayoutEmployeeIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    return () => {
+      const token = captureSessionTokenRef.current;
+      if (token) void closeCaptureSession(token).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeView === "entry") return;
+    const token = captureSessionTokenRef.current;
+    if (!token) return;
+    void closeCaptureSession(token).catch(() => {});
+    setCaptureSessionToken(null);
+    setCaptureItems([]);
+    setSelectedCaptureItemId(null);
+  }, [activeView]);
+
+  useEffect(() => {
     if (!openDateKey || !/^\d{4}-\d{2}-\d{2}$/.test(openDateKey)) return;
     setDateKey(openDateKey);
     setDateFieldText(formatDateKeyAsDisplay(openDateKey));
@@ -2499,27 +2558,103 @@ export function DailyEntryFormView({
     onOpenStaffPayoutEmployeeIdConsumed,
   ]);
 
-  const historyRows = useMemo(
-    () => listDailyEntriesDescendingFromMap(entryMap),
+  const historySlots = useMemo(
+    () => listDailyEntryHistorySlots(entryMap, todayKey()),
     [entryMap, savedListVersion, activeView],
   );
 
   const [entryListSearchQuery, setEntryListSearchQuery] = useState("");
+  const [historyMonthKey, setHistoryMonthKey] = useState(() => todayKey().slice(0, 7));
+  const [historyDateFrom, setHistoryDateFrom] = useState(() =>
+    monthStartDateKey(todayKey().slice(0, 7)),
+  );
+  const [historyDateTo, setHistoryDateTo] = useState(() => monthEndDateKey(todayKey().slice(0, 7)));
+
+  const historyMonthBounds = useMemo(() => {
+    if (historySlots.length === 0) {
+      const m = todayKey().slice(0, 7);
+      return { min: m, max: m };
+    }
+    return {
+      max: historySlots[0]!.date.slice(0, 7),
+      min: historySlots[historySlots.length - 1]!.date.slice(0, 7),
+    };
+  }, [historySlots]);
+
+  const historyDateBounds = useMemo(() => {
+    if (historySlots.length === 0) {
+      const t = todayKey();
+      return { min: t, max: t };
+    }
+    return {
+      max: historySlots[0]!.date,
+      min: historySlots[historySlots.length - 1]!.date,
+    };
+  }, [historySlots]);
+
+  useEffect(() => {
+    setHistoryMonthKey((prev) => {
+      if (prev < historyMonthBounds.min) return historyMonthBounds.min;
+      if (prev > historyMonthBounds.max) return historyMonthBounds.max;
+      return prev;
+    });
+  }, [historyMonthBounds]);
+
+  useEffect(() => {
+    let from = monthStartDateKey(historyMonthKey);
+    let to = monthEndDateKey(historyMonthKey);
+    if (from < historyDateBounds.min) from = historyDateBounds.min;
+    if (from > historyDateBounds.max) from = historyDateBounds.max;
+    if (to > historyDateBounds.max) to = historyDateBounds.max;
+    if (to < historyDateBounds.min) to = historyDateBounds.min;
+    if (from > to) from = to;
+    setHistoryDateFrom(from);
+    setHistoryDateTo(to);
+  }, [historyMonthKey, historyDateBounds.min, historyDateBounds.max]);
 
   const parsedEntryListSearch = useMemo(
     () => parseDailyEntrySearchQuery(entryListSearchQuery),
     [entryListSearchQuery],
   );
 
-  const filteredHistoryRows = useMemo(() => {
+  const rangeHistorySlots = useMemo(() => {
+    return historySlots.filter((slot) => {
+      if (historyDateFrom && slot.date < historyDateFrom) return false;
+      if (historyDateTo && slot.date > historyDateTo) return false;
+      return true;
+    });
+  }, [historySlots, historyDateFrom, historyDateTo]);
+
+  const filteredHistorySlots = useMemo(() => {
     const q = entryListSearchQuery.trim();
-    if (!q) return historyRows;
-    return historyRows.filter((r) => dailyEntryMatchesSearch(r, parsedEntryListSearch));
-  }, [historyRows, entryListSearchQuery, parsedEntryListSearch]);
+    if (!q) return rangeHistorySlots;
+    return rangeHistorySlots.filter((slot) => {
+      if (slot.row) return dailyEntryMatchesSearch(slot.row, parsedEntryListSearch);
+      const dateHay =
+        `${slot.date} ${formatDateKeyAsDisplay(slot.date)} missing`.toLowerCase();
+      for (const c of parsedEntryListSearch) {
+        if (c.field && c.field !== "date") return false;
+        const hit = dateHay.includes(c.value);
+        if ((c.neg && hit) || (!c.neg && !hit)) return false;
+      }
+      return true;
+    });
+  }, [rangeHistorySlots, entryListSearchQuery, parsedEntryListSearch]);
+
+  function shiftHistoryMonth(delta: number) {
+    const [ys, ms] = historyMonthKey.split("-");
+    const y = Number.parseInt(ys ?? "", 10);
+    const m = Number.parseInt(ms ?? "", 10);
+    if (!Number.isFinite(y) || !Number.isFinite(m)) return;
+    const d = new Date(y, m - 1 + delta, 1);
+    const next = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (next < historyMonthBounds.min || next > historyMonthBounds.max) return;
+    setHistoryMonthKey(next);
+  }
 
   useEffect(() => {
-    if (historyRows.length === 0) setEntryListSearchQuery("");
-  }, [historyRows.length]);
+    if (historySlots.length === 0) setEntryListSearchQuery("");
+  }, [historySlots.length]);
 
   const savedRowForDate = useMemo(
     () => entryMap[dateKey],
@@ -3650,6 +3785,410 @@ export function DailyEntryFormView({
     });
   }
 
+  function appendMediaRefToExpenseLine(
+    lineId: string,
+    mediaRef: string,
+    purchaseVendor?: string,
+  ): boolean {
+    const line = expenseLinesRef.current.find((l) => l.id === lineId);
+    if (!line) return false;
+    const vendorKey = purchaseVendor?.trim() ?? "";
+    const useVendorBucket = line.kind === "purchase" && vendorKey.length > 0;
+    if (line.kind === "purchase" && !useVendorBucket) {
+      setFormNotice({
+        kind: "field",
+        message: "Select a supplier before attaching a receipt.",
+        lineId,
+        part: "vendor",
+      });
+      return false;
+    }
+    const urls = useVendorBucket
+      ? purchaseVendorReceiptUrls(line, vendorKey)
+      : line.receiptDataUrls;
+    if (urls.includes(mediaRef)) return true;
+    const nextUrls = [...urls, mediaRef];
+    if (useVendorBucket) {
+      patchLine(lineId, {
+        vendorReceipts: {
+          ...(expenseLinesRef.current.find((l) => l.id === lineId)?.vendorReceipts ??
+            line.vendorReceipts),
+          [vendorKey]: nextUrls,
+        },
+        receiptDataUrls: [],
+      });
+    } else {
+      patchLine(lineId, { receiptDataUrls: nextUrls });
+    }
+    return true;
+  }
+
+  function appendMediaRefToVoid(mediaRef: string): void {
+    setVoidSaleAttachmentUrls((urls) =>
+      urls.includes(mediaRef) ? urls : [...urls, mediaRef],
+    );
+  }
+
+  function detachAttachmentFromLines(
+    lines: ExpenseLineDraft[],
+    from: Extract<AttachmentDragSource, { kind: "expense" }>,
+    mediaRef: string,
+  ): ExpenseLineDraft[] {
+    return lines.map((line) => {
+      if (line.id !== from.lineId) return line;
+      const vendorKey = from.purchaseVendor?.trim() ?? "";
+      if (line.kind === "purchase" && vendorKey) {
+        return {
+          ...line,
+          vendorReceipts: {
+            ...line.vendorReceipts,
+            [vendorKey]: purchaseVendorReceiptUrls(line, vendorKey).filter(
+              (u) => u !== mediaRef,
+            ),
+          },
+          receiptDataUrls: [],
+        };
+      }
+      return {
+        ...line,
+        receiptDataUrls: line.receiptDataUrls.filter((u) => u !== mediaRef),
+      };
+    });
+  }
+
+  function attachMediaRefOnLines(
+    lines: ExpenseLineDraft[],
+    lineId: string,
+    mediaRef: string,
+    purchaseVendor?: string,
+  ): ExpenseLineDraft[] | null {
+    const line = lines.find((l) => l.id === lineId);
+    if (!line) return null;
+    const vendorKey = purchaseVendor?.trim() ?? "";
+    const useVendorBucket = line.kind === "purchase" && vendorKey.length > 0;
+    if (line.kind === "purchase" && !useVendorBucket) {
+      setFormNotice({
+        kind: "field",
+        message: "Select a supplier before attaching a receipt.",
+        lineId,
+        part: "vendor",
+      });
+      return null;
+    }
+    return lines.map((row) => {
+      if (row.id !== lineId) return row;
+      if (useVendorBucket) {
+        const urls = purchaseVendorReceiptUrls(row, vendorKey);
+        if (urls.includes(mediaRef)) return row;
+        return {
+          ...row,
+          vendorReceipts: {
+            ...row.vendorReceipts,
+            [vendorKey]: [...urls, mediaRef],
+          },
+          receiptDataUrls: [],
+        };
+      }
+      if (row.receiptDataUrls.includes(mediaRef)) return row;
+      return {
+        ...row,
+        receiptDataUrls: [...row.receiptDataUrls, mediaRef],
+      };
+    });
+  }
+
+  function isSameAttachmentSource(
+    from: AttachmentDragSource,
+    target:
+      | { kind: "expense"; lineId: string; purchaseVendor?: string }
+      | { kind: "void" },
+  ): boolean {
+    if (from.kind !== target.kind) return false;
+    if (from.kind === "void") return true;
+    if (target.kind !== "expense") return false;
+    return (
+      from.lineId === target.lineId &&
+      (from.purchaseVendor?.trim() ?? "") ===
+        (target.purchaseVendor?.trim() ?? "")
+    );
+  }
+
+  /** Move an already-assigned attachment in one state update (no storage delete). */
+  function moveAssignedAttachment(
+    from: AttachmentDragSource,
+    mediaRef: string,
+    target:
+      | { kind: "expense"; lineId: string; purchaseVendor?: string }
+      | { kind: "void" },
+  ): void {
+    if (isSameAttachmentSource(from, target)) return;
+
+    if (from.kind === "void" && target.kind === "expense") {
+      const next = attachMediaRefOnLines(
+        expenseLinesRef.current,
+        target.lineId,
+        mediaRef,
+        target.purchaseVendor,
+      );
+      if (!next) return;
+      setVoidSaleAttachmentUrls((urls) => urls.filter((u) => u !== mediaRef));
+      setExpenseLines(next);
+      return;
+    }
+
+    if (from.kind === "expense" && target.kind === "void") {
+      setExpenseLines((lines) =>
+        detachAttachmentFromLines(lines, from, mediaRef),
+      );
+      appendMediaRefToVoid(mediaRef);
+      return;
+    }
+
+    if (from.kind === "expense" && target.kind === "expense") {
+      setExpenseLines((lines) => {
+        const detached = detachAttachmentFromLines(lines, from, mediaRef);
+        return (
+          attachMediaRefOnLines(
+            detached,
+            target.lineId,
+            mediaRef,
+            target.purchaseVendor,
+          ) ?? detached
+        );
+      });
+    }
+  }
+
+  function applyAttachmentDrop(
+    payload: CaptureDragPayload,
+    target:
+      | { kind: "expense"; lineId: string; purchaseVendor?: string }
+      | { kind: "void" },
+  ): void {
+    if (payload.from) {
+      moveAssignedAttachment(payload.from, payload.mediaRef, target);
+      return;
+    }
+    if (!payload.itemId) return;
+    if (target.kind === "expense") {
+      void claimCaptureOntoExpenseLine(
+        target.lineId,
+        payload.itemId,
+        payload.mediaRef,
+        target.purchaseVendor,
+      );
+      return;
+    }
+    void claimCaptureOntoVoid(payload.itemId, payload.mediaRef);
+  }
+
+  async function claimCaptureOntoExpenseLine(
+    lineId: string,
+    itemId: string,
+    mediaRef: string,
+    purchaseVendor?: string,
+  ) {
+    if (!appendMediaRefToExpenseLine(lineId, mediaRef, purchaseVendor)) return;
+    const token = captureSessionTokenRef.current;
+    if (token) {
+      try {
+        await removeCaptureItem(token, itemId, { keepMedia: true });
+      } catch {
+        // Form already owns the ref; tray will refresh on next poll.
+      }
+    }
+    setCaptureItems((prev) => prev.filter((i) => i.id !== itemId));
+    setSelectedCaptureItemId(null);
+  }
+
+  async function claimCaptureOntoVoid(itemId: string, mediaRef: string) {
+    appendMediaRefToVoid(mediaRef);
+    const token = captureSessionTokenRef.current;
+    if (token) {
+      try {
+        await removeCaptureItem(token, itemId, { keepMedia: true });
+      } catch {
+        // ignore
+      }
+    }
+    setCaptureItems((prev) => prev.filter((i) => i.id !== itemId));
+    setSelectedCaptureItemId(null);
+  }
+
+  function selectedCapturePayload(): { itemId: string; mediaRef: string } | null {
+    if (!selectedCaptureItemId) return null;
+    const item = captureItemsRef.current.find((i) => i.id === selectedCaptureItemId);
+    if (!item) return null;
+    return { itemId: item.id, mediaRef: item.mediaRef };
+  }
+
+  function attachmentDropActive(data: DataTransfer | null): boolean {
+    if (!data) return false;
+    const types = Array.from(data.types);
+    if (types.includes(CAPTURE_DND_MIME) || types.includes("text/plain")) return true;
+    if (types.includes("Files")) return true;
+    return false;
+  }
+
+  function captureDropKey(lineId: string, purchaseVendor?: string): string {
+    const vendor = purchaseVendor?.trim() ?? "";
+    return vendor ? `${lineId}::${vendor}` : lineId;
+  }
+
+  function bindExpenseCaptureDrop(
+    lineId: string,
+    options?: { purchaseVendor?: string; disabled?: boolean },
+  ): {
+    isHot: boolean;
+    className: string;
+    onDragEnter: (e: DragEvent<HTMLDivElement>) => void;
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+    onDragLeave: (e: DragEvent<HTMLDivElement>) => void;
+    onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  } {
+    const purchaseVendor = options?.purchaseVendor?.trim() ?? "";
+    const disabled = Boolean(options?.disabled);
+    const key = captureDropKey(lineId, purchaseVendor || undefined);
+    const isHot = captureDropTargetKey === key;
+    const ready =
+      (captureDragActive || Boolean(selectedCaptureItemId)) && !disabled;
+    const className = [
+      "relative transition-[box-shadow,background-color,outline-color] duration-150",
+      ready
+        ? "outline outline-1 outline-dashed outline-[var(--pos-sb-base)]/40 bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,transparent)]"
+        : "",
+      isHot
+        ? "z-[1] outline outline-2 outline-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_14%,var(--pos-card))] shadow-[0_0_0_3px_color-mix(in_srgb,var(--pos-sb-base)_25%,transparent)]"
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      isHot,
+      className,
+      onDragEnter: (e) => {
+        if (disabled || !attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        setCaptureDropTargetKey(key);
+      },
+      onDragOver: (e) => {
+        if (disabled || !attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (captureDropTargetKey !== key) setCaptureDropTargetKey(key);
+      },
+      onDragLeave: (e) => {
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setCaptureDropTargetKey((cur) => (cur === key ? null : cur));
+      },
+      onDrop: (e) => {
+        if (disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setCaptureDropTargetKey(null);
+        setCaptureDragActive(false);
+        const payload = parseCaptureDragPayload(e.dataTransfer);
+        if (payload) {
+          applyAttachmentDrop(payload, {
+            kind: "expense",
+            lineId,
+            ...(purchaseVendor ? { purchaseVendor } : {}),
+          });
+          return;
+        }
+        const files = clipboardAttachmentFilesFromDataTransfer(e.dataTransfer);
+        if (files.length > 0) {
+          void attachReceiptFilesToExpenseLine(
+            lineId,
+            files,
+            purchaseVendor || undefined,
+          );
+        }
+      },
+    };
+  }
+
+  function bindVoidCaptureDrop(): {
+    isHot: boolean;
+    className: string;
+    onDragEnter: (e: DragEvent<HTMLDivElement>) => void;
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+    onDragLeave: (e: DragEvent<HTMLDivElement>) => void;
+    onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  } {
+    const key = "void";
+    const isHot = captureDropTargetKey === key;
+    const ready = captureDragActive || Boolean(selectedCaptureItemId);
+    const className = [
+      "relative rounded-[10px] transition-[box-shadow,background-color,outline-color] duration-150",
+      ready
+        ? "outline outline-1 outline-dashed outline-[var(--pos-sb-base)]/40 bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,transparent)]"
+        : "",
+      isHot
+        ? "outline outline-2 outline-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_14%,var(--pos-card))] shadow-[0_0_0_3px_color-mix(in_srgb,var(--pos-sb-base)_25%,transparent)]"
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      isHot,
+      className,
+      onDragEnter: (e) => {
+        if (!attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        setCaptureDropTargetKey(key);
+      },
+      onDragOver: (e) => {
+        if (!attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (captureDropTargetKey !== key) setCaptureDropTargetKey(key);
+      },
+      onDragLeave: (e) => {
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setCaptureDropTargetKey((cur) => (cur === key ? null : cur));
+      },
+      onDrop: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setCaptureDropTargetKey(null);
+        setCaptureDragActive(false);
+        const payload = parseCaptureDragPayload(e.dataTransfer);
+        if (payload) {
+          applyAttachmentDrop(payload, { kind: "void" });
+          return;
+        }
+        const files = clipboardAttachmentFilesFromDataTransfer(e.dataTransfer);
+        if (files.length === 0) return;
+        void (async () => {
+          setVoidAttachBusy(true);
+          try {
+            const result = await mergeVoidAttachmentDataUrls(
+              voidSaleAttachmentUrlsRef.current,
+              files,
+            );
+            if (result.ok) {
+              clearSalesFieldNotice();
+              setVoidSaleAttachmentUrls(result.urls);
+            } else {
+              setFormNotice({
+                kind: "salesField",
+                message: result.message,
+                part: "voidAttach",
+              });
+            }
+          } finally {
+            setVoidAttachBusy(false);
+          }
+        })();
+      },
+    };
+  }
+
   /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
   function renderReceiptAddControl(
     line: ExpenseLineDraft,
@@ -3668,10 +4207,13 @@ export function DailyEntryFormView({
       ? purchaseVendorReceiptUrls(line, purchaseVendor).length
       : line.receiptDataUrls.length;
     const disabled = Boolean(options?.disabled) || busy;
+    const clickAssign = selectedCapturePayload();
     return (
       <div className="flex shrink-0 flex-col items-center gap-0.5">
         <div
-          className={`relative flex shrink-0 items-center justify-center ${btnSizeClass} ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+          className={`relative flex shrink-0 items-center justify-center ${btnSizeClass} ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""} ${
+            clickAssign && !disabled ? "ring-2 ring-[var(--pos-sb-base)]/40" : ""
+          }`}
         >
           <input
             id={inputId}
@@ -3693,7 +4235,19 @@ export function DailyEntryFormView({
             }}
           />
           <label
-            htmlFor={disabled ? undefined : inputId}
+            htmlFor={disabled || clickAssign ? undefined : inputId}
+            onClick={(e) => {
+              if (disabled) return;
+              if (clickAssign) {
+                e.preventDefault();
+                void claimCaptureOntoExpenseLine(
+                  line.id,
+                  clickAssign.itemId,
+                  clickAssign.mediaRef,
+                  forPurchaseVendor ? purchaseVendor : undefined,
+                );
+              }
+            }}
             className={`relative inline-flex shrink-0 items-center justify-center border border-solid bg-[var(--pos-card)] transition-colors ${btnSizeClass} ${disabled
               ? "cursor-not-allowed opacity-50"
               : "cursor-pointer hover:bg-[var(--pos-nav-hover)]"
@@ -3704,6 +4258,8 @@ export function DailyEntryFormView({
             aria-label={
               options?.disabled
                 ? "Select a supplier before attaching"
+                : clickAssign
+                  ? "Assign selected phone photo here"
                 : attachCount > 0
                   ? `Attach receipt image or PDF (${attachCount} attached)`
                   : "Attach receipt image or PDF"
@@ -3711,10 +4267,12 @@ export function DailyEntryFormView({
             title={
               options?.disabled
                 ? "Select a supplier before attaching"
+                : clickAssign
+                  ? "Click to assign the selected phone photo"
                 : attachErr ??
                 (attachCount > 0
-                  ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste (Ctrl+V / ⌘V) while this row is focused`
-                  : "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused")
+                  ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, paste, or drop here`
+                  : "Attach image or PDF, paste, or drop a phone photo here")
             }
           >
             <Paperclip className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
@@ -3735,6 +4293,19 @@ export function DailyEntryFormView({
     );
   }
 
+  function startAssignedAttachmentDrag(
+    e: DragEvent,
+    mediaRef: string,
+    from: AttachmentDragSource,
+  ) {
+    const payload: CaptureDragPayload = { mediaRef, from };
+    const json = JSON.stringify(payload);
+    e.dataTransfer.setData(CAPTURE_DND_MIME, json);
+    e.dataTransfer.setData("text/plain", json);
+    e.dataTransfer.effectAllowed = "move";
+    setCaptureDragActive(true);
+  }
+
   function renderReceiptThumbnails(
     line: ExpenseLineDraft,
     options?: { purchaseVendor?: string },
@@ -3745,16 +4316,27 @@ export function DailyEntryFormView({
       ? purchaseVendorReceiptUrls(line, purchaseVendor)
       : line.receiptDataUrls;
     if (urls.length === 0) return null;
+    const from: AttachmentDragSource = {
+      kind: "expense",
+      lineId: line.id,
+      ...(forPurchaseVendor ? { purchaseVendor } : {}),
+    };
     return (
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1">
         {urls.map((url, idx) => (
           <div key={`${line.id}-${purchaseVendor || "r"}-${idx}`} className="relative inline-flex">
             <button
               type="button"
-              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50"
+              draggable
+              onDragStart={(e) => startAssignedAttachmentDrag(e, url, from)}
+              onDragEnd={() => setCaptureDragActive(false)}
+              className="block cursor-grab overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 active:cursor-grabbing"
               onClick={() => setReceiptPreviewUrl(url)}
+              title="Drag to another expense or void row"
               aria-label={
-                isPdfMediaRef(url) ? `View PDF ${idx + 1}` : `View receipt ${idx + 1}`
+                isPdfMediaRef(url)
+                  ? `View or move PDF ${idx + 1}`
+                  : `View or move receipt ${idx + 1}`
               }
             >
               {isPdfMediaRef(url) ? (
@@ -3804,9 +4386,12 @@ export function DailyEntryFormView({
     const urls = voidSaleAttachmentUrls;
     const attachCount = urls.length;
     const inputId = "daily-void-attachments";
+    const clickAssign = selectedCapturePayload();
     return (
       <div
-        className={`relative flex size-9 shrink-0 items-center justify-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+        className={`relative flex size-9 shrink-0 items-center justify-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""} ${
+          clickAssign ? "ring-2 ring-[var(--pos-sb-base)]/40" : ""
+        }`}
         data-field-error-anchor="void:voidAttach"
       >
         <input
@@ -3840,17 +4425,26 @@ export function DailyEntryFormView({
           }}
         />
         <label
-          htmlFor={inputId}
+          htmlFor={clickAssign ? undefined : inputId}
+          onClick={(e) => {
+            if (!clickAssign) return;
+            e.preventDefault();
+            void claimCaptureOntoVoid(clickAssign.itemId, clickAssign.mediaRef);
+          }}
           className="relative inline-flex size-9 cursor-pointer items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
           aria-label={
-            attachCount > 0
+            clickAssign
+              ? "Assign selected phone photo to void sales"
+              : attachCount > 0
               ? `Attach PDF or image for void sales (${attachCount} attached)`
               : "Attach PDF or image for void sales"
           }
           title={
-            attachCount > 0
-              ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste while this block is focused`
-              : "Attach PDF or image, or paste an image while this section is focused"
+            clickAssign
+              ? "Click to assign the selected phone photo"
+              : attachCount > 0
+              ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, paste, or drop here`
+              : "Attach PDF or image, paste, or drop a phone photo here"
           }
         >
           <Paperclip className="size-4 shrink-0" strokeWidth={2.25} />
@@ -3863,15 +4457,24 @@ export function DailyEntryFormView({
   function renderVoidAttachmentThumbnails() {
     const urls = voidSaleAttachmentUrls;
     if (urls.length === 0) return null;
+    const from: AttachmentDragSource = { kind: "void" };
     return (
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1.5">
         {urls.map((url, idx) => (
           <div key={`void-r-${idx}`} className="relative inline-flex">
             <button
               type="button"
-              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
+              draggable
+              onDragStart={(e) => startAssignedAttachmentDrag(e, url, from)}
+              onDragEnd={() => setCaptureDragActive(false)}
+              className="block cursor-grab overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)] active:cursor-grabbing"
               onClick={() => setReceiptPreviewUrl(url)}
-              aria-label={isPdfMediaRef(url) ? `View PDF ${idx + 1}` : `View attachment ${idx + 1}`}
+              title="Drag to an expense or supplier row"
+              aria-label={
+                isPdfMediaRef(url)
+                  ? `View or move PDF ${idx + 1}`
+                  : `View or move attachment ${idx + 1}`
+              }
             >
               {isPdfMediaRef(url) ? (
                 <span className="flex size-11 flex-col items-center justify-center gap-0.5 bg-[var(--pos-page)] text-[var(--pos-text-2)]">
@@ -4290,7 +4893,40 @@ export function DailyEntryFormView({
           </div>
         </div>
       ) : (
-        <span className="col-start-2 shrink-0" aria-hidden />
+        <div className="col-start-2 flex shrink-0 items-center justify-center">
+          <div
+            className="relative flex items-center gap-0.5"
+            role="group"
+            aria-label="Filter by month"
+          >
+            <button
+              type="button"
+              onClick={() => shiftHistoryMonth(-1)}
+              disabled={historyMonthKey <= historyMonthBounds.min}
+              className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Previous month"
+              aria-label="Previous month"
+            >
+              <ChevronLeft className="size-5" strokeWidth={2.5} />
+            </button>
+            <span
+              className={`${inputClass} inline-flex !h-9 w-auto min-w-[7.5rem] items-center justify-center py-0 text-center font-semibold`}
+              aria-live="polite"
+            >
+              {formatMonthKeyAsDisplay(historyMonthKey)}
+            </span>
+            <button
+              type="button"
+              onClick={() => shiftHistoryMonth(1)}
+              disabled={historyMonthKey >= historyMonthBounds.max}
+              className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Next month"
+              aria-label="Next month"
+            >
+              <ChevronRight className="size-5" strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
       )}
       <div className="col-start-3 flex justify-end gap-1.5 justify-self-end">
         {activeView === "entry" ? (
@@ -4342,15 +4978,19 @@ export function DailyEntryFormView({
             className="self-center text-[11px] tabular-nums text-[var(--pos-text-2)]"
             title={
               entryListSearchQuery.trim()
-                ? "Entries matching search / total saved"
-                : "Total saved entries"
+                ? "Rows matching search in current filters"
+                : "Saved entries and missing days in current filters"
             }
           >
-            {historyRows.length === 0
-              ? "0 saved"
-              : entryListSearchQuery.trim()
-                ? `${filteredHistoryRows.length} / ${historyRows.length}`
-                : `${historyRows.length} saved`}
+            {(() => {
+              const savedCount = rangeHistorySlots.filter((s) => s.row).length;
+              const missingCount = rangeHistorySlots.length - savedCount;
+              if (entryListSearchQuery.trim()) {
+                return `${filteredHistorySlots.length} / ${rangeHistorySlots.length}`;
+              }
+              if (missingCount === 0) return `${savedCount} saved`;
+              return `${savedCount} saved · ${missingCount} missing`;
+            })()}
           </span>
         )}
       </div>
@@ -4421,7 +5061,7 @@ export function DailyEntryFormView({
       </div>
     ) : formNotice.kind === "globalError" ? (
       <div
-        className="shrink-0 border-b border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[11px] font-medium leading-snug text-red-800"
+        className="shrink-0 border-b border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[11px] font-medium leading-snug text-red-800 dark:bg-red-500/10 dark:text-red-300"
         role="alert"
         aria-live="assertive"
       >
@@ -4446,76 +5086,60 @@ export function DailyEntryFormView({
           ) : null}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col overflow-auto px-3 py-2">
-              {!entriesLoading && historyRows.length > 0 ? (
-                <div className="shrink-0" role="search">
-                  <label className="relative block">
-                    <span className="sr-only">Search saved entries</span>
-                    <Search
-                      className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--pos-text-2)]"
-                      strokeWidth={2.25}
-                      aria-hidden
-                    />
-                    <input
-                      type="search"
-                      value={entryListSearchQuery}
-                      onChange={(e) => setEntryListSearchQuery(e.target.value)}
-                      autoComplete="off"
-                      spellCheck={false}
-                      className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] py-1.5 pl-8 pr-8 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]/80 focus:border-[var(--pos-text-1)] focus:outline-none"
-                      placeholder='Search — try supplier:Rent cash:1000 "apr" -legacy'
-                    />
-                    {entryListSearchQuery ? (
-                      <button
-                        type="button"
-                        className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
-                        onClick={() => setEntryListSearchQuery("")}
-                        aria-label="Clear search"
-                      >
-                        <X className="size-3.5" strokeWidth={2.25} aria-hidden />
-                      </button>
-                    ) : null}
-                  </label>
+              {!entriesLoading ? (
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <div className="min-w-[12rem] flex-1" role="search">
+                    <label className="relative block">
+                      <span className="sr-only">Search daily entries</span>
+                      <Search
+                        className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--pos-text-2)]"
+                        strokeWidth={2.25}
+                        aria-hidden
+                      />
+                      <input
+                        type="search"
+                        value={entryListSearchQuery}
+                        onChange={(e) => setEntryListSearchQuery(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] py-1.5 pl-8 pr-8 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]/80 focus:border-[var(--pos-text-1)] focus:outline-none"
+                        placeholder='Search — try supplier:Rent cash:1000 "apr" missing'
+                      />
+                      {entryListSearchQuery ? (
+                        <button
+                          type="button"
+                          className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                          onClick={() => setEntryListSearchQuery("")}
+                          aria-label="Clear search"
+                        >
+                          <X className="size-3.5" strokeWidth={2.25} aria-hidden />
+                        </button>
+                      ) : null}
+                    </label>
+                  </div>
+                  <DateRangeCalendarField
+                    from={historyDateFrom}
+                    to={historyDateTo}
+                    min={historyDateBounds.min}
+                    max={historyDateBounds.max}
+                    onChange={(from, to) => {
+                      setHistoryDateFrom(from);
+                      setHistoryDateTo(to);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={openAddEntryForm}
+                    className="inline-flex h-9 shrink-0 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
+                    style={{ backgroundColor: "var(--pos-sb-base)" }}
+                  >
+                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                    Add Entry
+                  </button>
                 </div>
               ) : null}
-              {!entriesLoading && historyRows.length === 0 ? (
-                <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-dashed border-[var(--pos-border-medium)]">
-                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-dashed border-[var(--pos-border-medium)] bg-[var(--pos-page)] px-3 py-2">
-                    <h2 className={`m-0 min-w-0 leading-tight ${sectionTitleClass}`}>
-                      Saved entries
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={openAddEntryForm}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
-                      style={{ backgroundColor: "var(--pos-sb-base)" }}
-                    >
-                      <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                      Add Entry
-                    </button>
-                  </div>
-                  <p className="px-4 py-8 text-center text-[13px] text-[var(--pos-text-2)]">
-                    No saved daily entries yet. Tap <span className="font-medium">Add Entry</span> in
-                    the header row, fill the form, and save.
-                  </p>
-                </div>
-              ) : (
+              {!entriesLoading ? (
                 <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-solid [border-color:var(--pos-divider)]">
-                  <div className="flex shrink-0 flex-col gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <h2 className={`m-0 min-w-0 leading-tight ${sectionTitleClass}`}>
-                        Saved entries
-                      </h2>
-                      <button
-                        type="button"
-                        onClick={openAddEntryForm}
-                        className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
-                        style={{ backgroundColor: "var(--pos-sb-base)" }}
-                      >
-                        <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                        Add Entry
-                      </button>
-                    </div>
-                  </div>
                   <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
                     <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
                       <thead>
@@ -4532,130 +5156,181 @@ export function DailyEntryFormView({
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredHistoryRows.length === 0 ? (
+                        {filteredHistorySlots.length === 0 ? (
                           <tr>
                             <td
                               colSpan={7}
                               className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]"
                             >
                               <p className="m-0 font-medium text-[var(--pos-text-1)]">
-                                No entries match this search
+                                {entryListSearchQuery.trim()
+                                  ? "No entries match this search"
+                                  : "No days match these filters"}
                               </p>
-                              <p className="mt-1 text-[12px]">
-                                Try broader keywords, remove a scoped filter, or clear exclusions (
-                                <button
-                                  type="button"
-                                  className="font-semibold text-[var(--pos-sb-base)] underline-offset-2 hover:underline"
-                                  onClick={() => setEntryListSearchQuery("")}
-                                >
-                                  clear search
-                                </button>
-                                ).
-                              </p>
+                              {entryListSearchQuery.trim() ? (
+                                <p className="mt-1 text-[12px]">
+                                  Try broader keywords, remove a scoped filter, or clear exclusions (
+                                  <button
+                                    type="button"
+                                    className="font-semibold text-[var(--pos-sb-base)] underline-offset-2 hover:underline"
+                                    onClick={() => setEntryListSearchQuery("")}
+                                  >
+                                    clear search
+                                  </button>
+                                  ).
+                                </p>
+                              ) : (
+                                <p className="mt-1 text-[12px]">
+                                  Widen the date range, or pick another month.
+                                </p>
+                              )}
                             </td>
                           </tr>
                         ) : null}
-                        {filteredHistoryRows.map((r) => (
-                          <tr
-                            key={r.date}
-                            className="border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/15"
-                          >
-                            <td className="whitespace-nowrap px-3 py-2 font-mono text-[var(--pos-text-1)]">
-                              <span className="inline-flex items-center gap-1.5">
-                                {formatDateKeyAsDisplay(r.date)}
-                                {r.isLocked ? (
-                                  <span title="Locked — cannot edit or delete" aria-label="Locked">
-                                    <Lock
-                                      className="size-3 shrink-0 text-amber-600"
+                        {filteredHistorySlots.map((slot) => {
+                          const r = slot.row;
+                          if (!r) {
+                            return (
+                              <tr
+                                key={slot.date}
+                                className="border-b border-solid border-amber-200/80 bg-amber-100/90 transition-colors hover:bg-amber-200/70 dark:border-amber-500/30 dark:bg-amber-500/15 dark:hover:bg-amber-500/25"
+                              >
+                                <td className="whitespace-nowrap px-3 py-2 font-mono text-[var(--pos-text-1)]">
+                                  {formatDateKeyAsDisplay(slot.date)}
+                                </td>
+                                <td
+                                  colSpan={5}
+                                  className="px-3 py-2 text-[var(--pos-text-2)]"
+                                >
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
+                                    title="No daily entry saved for this date"
+                                  >
+                                    <AlertTriangle
+                                      className="size-3.5 shrink-0"
                                       strokeWidth={2.25}
                                       aria-hidden
                                     />
+                                    Missing entry
                                   </span>
-                                ) : null}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                              {formatSummaryMoney(r.openingBalance)}
-                            </td>
-                            <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                              {formatSummaryMoney(netSalesTotal(r))}
-                            </td>
-                            <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                              {formatSummaryMoney(expenseTotalFromRow(r))}
-                            </td>
-                            <td className="px-3 py-2 font-semibold tabular-nums text-[var(--pos-text-1)]">
-                              {formatSummaryMoney(r.remainingBalance)}
-                            </td>
-                            <td
-                              className="max-w-[140px] truncate px-3 py-2 text-[var(--pos-text-1)]"
-                              title={r.enteredBy?.trim() || undefined}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 rounded-md border border-solid border-amber-600/40 bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-900 transition-colors hover:bg-amber-500/25 dark:text-amber-100"
+                                    title="Add entry for this date"
+                                    aria-label={`Add entry for ${formatDateKeyAsDisplay(slot.date)}`}
+                                    onClick={() => openEntryForDate(slot.date)}
+                                  >
+                                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                                    Add Entry
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          }
+                          return (
+                            <tr
+                              key={r.date}
+                              className="border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/15"
                             >
-                              {r.enteredBy?.trim() || "—"}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2 text-right">
-                              <div className="inline-flex items-center justify-end gap-1">
-                                <button
-                                  type="button"
-                                  className={historyActionBtnClass}
-                                  title="View details"
-                                  aria-label={`View saved entry ${formatDateKeyAsDisplay(r.date)}`}
-                                  onClick={() => setHistoryDetailRow(r)}
-                                >
-                                  <Eye className="size-3.5" strokeWidth={2.25} />
-                                </button>
-                                {!r.isLocked ? (
+                              <td className="whitespace-nowrap px-3 py-2 font-mono text-[var(--pos-text-1)]">
+                                <span className="inline-flex items-center gap-1.5">
+                                  {formatDateKeyAsDisplay(r.date)}
+                                  {r.isLocked ? (
+                                    <span title="Locked — cannot edit or delete" aria-label="Locked">
+                                      <Lock
+                                        className="size-3 shrink-0 text-amber-600"
+                                        strokeWidth={2.25}
+                                        aria-hidden
+                                      />
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(r.openingBalance)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(netSalesTotal(r))}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(expenseTotalFromRow(r))}
+                              </td>
+                              <td className="px-3 py-2 font-semibold tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(r.remainingBalance)}
+                              </td>
+                              <td
+                                className="max-w-[140px] truncate px-3 py-2 text-[var(--pos-text-1)]"
+                                title={r.enteredBy?.trim() || undefined}
+                              >
+                                {r.enteredBy?.trim() || "—"}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right">
+                                <div className="inline-flex items-center justify-end gap-1">
                                   <button
                                     type="button"
                                     className={historyActionBtnClass}
-                                    title="Edit in form"
-                                    aria-label={`Edit entry ${formatDateKeyAsDisplay(r.date)}`}
-                                    onClick={() => openEntryForDate(r.date)}
+                                    title="View details"
+                                    aria-label={`View saved entry ${formatDateKeyAsDisplay(r.date)}`}
+                                    onClick={() => setHistoryDetailRow(r)}
                                   >
-                                    <Pencil className="size-3.5" strokeWidth={2.25} />
+                                    <Eye className="size-3.5" strokeWidth={2.25} />
                                   </button>
-                                ) : null}
-                                {r.isLocked ? (
-                                  <button
-                                    type="button"
-                                    className={historyActionBtnClass}
-                                    title="Unlock entry"
-                                    aria-label={`Unlock entry ${formatDateKeyAsDisplay(r.date)}`}
-                                    onClick={() => openUnlockEntryModal(r.date)}
-                                  >
-                                    <LockOpen className="size-3.5" strokeWidth={2.25} />
-                                  </button>
-                                ) : null}
-                                {!r.isLocked ? (
-                                  <>
+                                  {!r.isLocked ? (
                                     <button
                                       type="button"
                                       className={historyActionBtnClass}
-                                      title="Lock entry"
-                                      aria-label={`Lock entry ${formatDateKeyAsDisplay(r.date)}`}
-                                      onClick={() => openLockEntryModal(r.date)}
+                                      title="Edit in form"
+                                      aria-label={`Edit entry ${formatDateKeyAsDisplay(r.date)}`}
+                                      onClick={() => openEntryForDate(r.date)}
                                     >
-                                      <Lock className="size-3.5" strokeWidth={2.25} />
+                                      <Pencil className="size-3.5" strokeWidth={2.25} />
                                     </button>
+                                  ) : null}
+                                  {r.isLocked ? (
                                     <button
                                       type="button"
-                                      className={`${historyActionBtnClass} hover:border-red-400/40 hover:text-red-600`}
-                                      title="Delete entry"
-                                      aria-label={`Delete entry ${formatDateKeyAsDisplay(r.date)}`}
-                                      onClick={() => openDeleteEntryModal(r.date)}
+                                      className={historyActionBtnClass}
+                                      title="Unlock entry"
+                                      aria-label={`Unlock entry ${formatDateKeyAsDisplay(r.date)}`}
+                                      onClick={() => openUnlockEntryModal(r.date)}
                                     >
-                                      <Trash2 className="size-3.5" strokeWidth={2.25} />
+                                      <LockOpen className="size-3.5" strokeWidth={2.25} />
                                     </button>
-                                  </>
-                                ) : null}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                                  ) : null}
+                                  {!r.isLocked ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className={historyActionBtnClass}
+                                        title="Lock entry"
+                                        aria-label={`Lock entry ${formatDateKeyAsDisplay(r.date)}`}
+                                        onClick={() => openLockEntryModal(r.date)}
+                                      >
+                                        <Lock className="size-3.5" strokeWidth={2.25} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`${historyActionBtnClass} hover:border-red-400/40 hover:text-red-600`}
+                                        title="Delete entry"
+                                        aria-label={`Delete entry ${formatDateKeyAsDisplay(r.date)}`}
+                                        onClick={() => openDeleteEntryModal(r.date)}
+                                      >
+                                        <Trash2 className="size-3.5" strokeWidth={2.25} />
+                                      </button>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         </>
@@ -4755,9 +5430,27 @@ export function DailyEntryFormView({
                   <div className={entrySectionsGridClass}>
                     <div className="flex min-w-0 flex-1 flex-col gap-3">
                       <div
-                        className={`${columnShellClass} min-w-0 w-full !bg-red-50/65 ![border-color:rgba(220,38,38,0.28)]`}
+                        className={`${columnShellClass} min-w-0 w-full !bg-red-50/65 dark:!bg-red-500/10 ![border-color:rgba(220,38,38,0.28)]`}
                       >
-                        <p className={`${sectionTitleClass} !text-red-800`}>Expenses</p>
+                        {isFormLocked ? (
+                          <p className={`m-0 ${sectionTitleClass} !text-red-800 dark:!text-red-300`}>Expenses</p>
+                        ) : (
+                          <PhoneCaptureTrayPanel
+                            leading={
+                              <p className={`m-0 ${sectionTitleClass} !text-red-800 dark:!text-red-300`}>
+                                Expenses
+                              </p>
+                            }
+                            dateKey={dateKey}
+                            disabled={isFormLocked}
+                            selectedItemId={selectedCaptureItemId}
+                            onSelectItem={setSelectedCaptureItemId}
+                            onItemsChange={setCaptureItems}
+                            sessionToken={captureSessionToken}
+                            onSessionTokenChange={setCaptureSessionToken}
+                            onDragActiveChange={setCaptureDragActive}
+                          />
+                        )}
                         <div className="flex flex-col gap-3">
                           {(() => {
                             const regularLines = visibleExpenseLines.filter((l) => l.kind === "regular");
@@ -4837,12 +5530,22 @@ export function DailyEntryFormView({
                                                 ? totalAmt
                                                 : parseAmount(line.paidAmount);
                                             const dueAmt = Math.max(0, totalAmt - paidAmt);
+                                            const captureDrop = bindExpenseCaptureDrop(line.id);
                                             return (
                                               <div
                                                 key={line.id}
                                                 data-expense-line-id={line.id}
-                                                className="flex min-w-0 flex-col gap-1"
+                                                className={`flex min-w-0 flex-col gap-1 rounded-[8px] p-1 -m-1 ${captureDrop.className}`}
+                                                onDragEnter={captureDrop.onDragEnter}
+                                                onDragOver={captureDrop.onDragOver}
+                                                onDragLeave={captureDrop.onDragLeave}
+                                                onDrop={captureDrop.onDrop}
                                               >
+                                                {captureDrop.isHot ? (
+                                                  <span className="pointer-events-none absolute right-1.5 top-1 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                    Drop to attach
+                                                  </span>
+                                                ) : null}
                                                 <div className="flex min-w-0 flex-wrap items-start gap-1.5">
                                                   <div className="w-[8.5rem] shrink-0">
                                                     <SearchableSelect
@@ -5013,12 +5716,22 @@ export function DailyEntryFormView({
                                               selectedInList || !selectedId
                                                 ? null
                                                 : getEmployeeById(selectedId);
+                                            const captureDrop = bindExpenseCaptureDrop(line.id);
                                             return (
                                               <div
                                                 key={line.id}
                                                 data-expense-line-id={line.id}
-                                                className="flex min-w-0 flex-col gap-1"
+                                                className={`flex min-w-0 flex-col gap-1 rounded-[8px] p-1 -m-1 ${captureDrop.className}`}
+                                                onDragEnter={captureDrop.onDragEnter}
+                                                onDragOver={captureDrop.onDragOver}
+                                                onDragLeave={captureDrop.onDragLeave}
+                                                onDrop={captureDrop.onDrop}
                                               >
+                                                {captureDrop.isHot ? (
+                                                  <span className="pointer-events-none absolute right-1.5 top-1 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                    Drop to attach
+                                                  </span>
+                                                ) : null}
                                                 <div className="flex min-w-0 flex-wrap items-start gap-1.5">
                                                   <div
                                                     className="min-w-0 flex-1 basis-44"
@@ -5228,6 +5941,13 @@ export function DailyEntryFormView({
                                             line.id,
                                             "ledgerNote",
                                           );
+                                          const captureDrop = bindExpenseCaptureDrop(
+                                            line.id,
+                                            {
+                                              purchaseVendor: group.vendor,
+                                              disabled: !hasVendor,
+                                            },
+                                          );
                                           return (
                                             <div
                                               key={`${line.id}-vg-${group.vendor || "unassigned"}`}
@@ -5235,8 +5955,17 @@ export function DailyEntryFormView({
                                               data-purchase-vendor={
                                                 group.vendor || undefined
                                               }
-                                              className="overflow-hidden rounded-[10px] border border-solid border-sky-500/25 !bg-sky-50/40"
+                                              className={`overflow-hidden rounded-[10px] border border-solid border-sky-500/25 !bg-sky-50/40 dark:!bg-sky-500/10 ${captureDrop.className}`}
+                                              onDragEnter={captureDrop.onDragEnter}
+                                              onDragOver={captureDrop.onDragOver}
+                                              onDragLeave={captureDrop.onDragLeave}
+                                              onDrop={captureDrop.onDrop}
                                             >
+                                              {captureDrop.isHot ? (
+                                                <span className="pointer-events-none absolute right-2 top-2 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                  Drop to attach
+                                                </span>
+                                              ) : null}
                                               <div className="flex min-w-0 flex-wrap items-center gap-1.5 bg-sky-500/25 px-2 py-2">
                                                 <button
                                                   type="button"
@@ -5301,7 +6030,7 @@ export function DailyEntryFormView({
                                                     aria-invalid={
                                                       vendorErr ? true : undefined
                                                     }
-                                                    className={`h-8 rounded-[6px] border border-solid border-transparent bg-transparent px-1 ${expenseCardLabelClass} normal-case hover:bg-black/5 ${vendorErr ? FIELD_ERR_INPUT : ""}`}
+                                                    className={`h-8 rounded-[6px] border border-solid border-transparent bg-transparent px-1 ${expenseCardLabelClass} normal-case hover:bg-black/5 dark:hover:bg-white/5 ${vendorErr ? FIELD_ERR_INPUT : ""}`}
                                                   />
                                                 </div>
                                                 <div className="flex shrink-0 items-center gap-0.5">
@@ -5729,12 +6458,22 @@ export function DailyEntryFormView({
                                             );
                                             const ledgerSupplierForLine =
                                               resolveLedgerSupplierIdByBookName(trimmed);
+                                            const captureDrop = bindExpenseCaptureDrop(line.id);
                                             return (
                                               <div
                                                 key={line.id}
                                                 data-expense-line-id={line.id}
-                                                className="flex min-w-0 flex-col gap-1"
+                                                className={`flex min-w-0 flex-col gap-1 rounded-[8px] p-1 -m-1 ${captureDrop.className}`}
+                                                onDragEnter={captureDrop.onDragEnter}
+                                                onDragOver={captureDrop.onDragOver}
+                                                onDragLeave={captureDrop.onDragLeave}
+                                                onDrop={captureDrop.onDrop}
                                               >
+                                                {captureDrop.isHot ? (
+                                                  <span className="pointer-events-none absolute right-1.5 top-1 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                    Drop to attach
+                                                  </span>
+                                                ) : null}
                                                 <div className="flex min-w-0 flex-wrap items-start gap-1.5">
                                                   <div
                                                     className="min-w-0 flex-1 basis-44"
@@ -5908,9 +6647,9 @@ export function DailyEntryFormView({
 
                     <div className="flex w-full shrink-0 flex-col gap-3 sm:w-[11.5rem]">
                       <div
-                        className={`${columnShellClass} min-w-0 w-full !bg-sky-50/65 ![border-color:rgba(2,132,199,0.28)]`}
+                        className={`${columnShellClass} min-w-0 w-full !bg-sky-50/65 dark:!bg-sky-500/10 ![border-color:rgba(2,132,199,0.28)]`}
                       >
-                        <p className={`${sectionTitleClass} !text-sky-800`}>Withdraw</p>
+                        <p className={`${sectionTitleClass} !text-sky-800 dark:!text-sky-300`}>Withdraw</p>
                         <label className={salesFieldGroupClass} htmlFor="daily-bank-withdrawn">
                           <span className={labelClass}>Bank Withdraw</span>
                           <input
@@ -5929,9 +6668,9 @@ export function DailyEntryFormView({
                         </label>
                       </div>
                       <div
-                        className={`${columnShellClass} min-w-0 w-full !bg-emerald-50/65 ![border-color:rgba(5,150,105,0.28)]`}
+                        className={`${columnShellClass} min-w-0 w-full !bg-emerald-50/65 dark:!bg-emerald-500/10 ![border-color:rgba(5,150,105,0.28)]`}
                       >
-                        <p className={`${sectionTitleClass} !text-emerald-800`}>Sales</p>
+                        <p className={`${sectionTitleClass} !text-emerald-800 dark:!text-emerald-300`}>Sales</p>
                         <div
                           className="flex min-w-0 flex-col gap-3"
                           data-void-attachment-anchor
@@ -6022,7 +6761,21 @@ export function DailyEntryFormView({
                             </label>
                           </div>
                           {parseAmount(voidSale) > 0 ? (
-                            <div className="space-y-3">
+                            (() => {
+                              const voidDrop = bindVoidCaptureDrop();
+                              return (
+                            <div
+                              className={`space-y-3 p-2 ${voidDrop.className}`}
+                              onDragEnter={voidDrop.onDragEnter}
+                              onDragOver={voidDrop.onDragOver}
+                              onDragLeave={voidDrop.onDragLeave}
+                              onDrop={voidDrop.onDrop}
+                            >
+                              {voidDrop.isHot ? (
+                                <span className="pointer-events-none absolute right-2 top-2 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                  Drop to attach
+                                </span>
+                              ) : null}
                               <div className="flex min-w-0 flex-col gap-1.5">
                                 <label className={labelClass} htmlFor="daily-void-remarks">
                                   Remarks
@@ -6057,6 +6810,8 @@ export function DailyEntryFormView({
                               ) : null}
                               {renderVoidAttachmentThumbnails()}
                             </div>
+                              );
+                            })()
                           ) : null}
                         </div>
                       </div>
@@ -6454,7 +7209,7 @@ export function DailyEntryFormView({
                 <button
                   type="button"
                   disabled={isLocking}
-                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-3 text-[12px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-3 text-[12px] font-semibold text-amber-800 dark:text-amber-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => openLockEntryModal(historyDetailRow.date)}
                 >
                   <Lock className="size-3.5" strokeWidth={2.25} />
@@ -6464,7 +7219,7 @@ export function DailyEntryFormView({
                 <button
                   type="button"
                   disabled={isUnlocking}
-                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-800 dark:text-emerald-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => openUnlockEntryModal(historyDetailRow.date)}
                 >
                   <LockOpen className="size-3.5" strokeWidth={2.25} />
@@ -6852,7 +7607,7 @@ export function DailyEntryFormView({
             </p>
             {lockError ? (
               <p
-                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800"
+                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800 dark:bg-red-500/10 dark:text-red-300"
                 role="alert"
               >
                 {lockError}
@@ -6907,7 +7662,7 @@ export function DailyEntryFormView({
             </p>
             {unlockError ? (
               <p
-                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800"
+                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800 dark:bg-red-500/10 dark:text-red-300"
                 role="alert"
               >
                 {unlockError}

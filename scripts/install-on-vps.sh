@@ -67,11 +67,13 @@ if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 -s | tr -d v
   echo "==> Building POS via Node container"
   docker run --rm -v "${INSTALL_DIR}:/app" -w /app/apps/terminal \
     -e VITE_API_URL="https://${POS_DOMAIN}/api/v1" \
+    -e VITE_PUBLIC_APP_URL="https://${POS_DOMAIN}" \
     -e VITE_DEFAULT_BRANCH_ID=a0000000-0000-4000-8000-000000000001 \
     -e VITE_DEFAULT_TERMINAL_ID=terminal-prod-001 \
     node:20-bookworm-slim bash -c "npm ci && npm run build"
 else
   export VITE_API_URL="https://${POS_DOMAIN}/api/v1"
+  export VITE_PUBLIC_APP_URL="https://${POS_DOMAIN}"
   export VITE_DEFAULT_BRANCH_ID=a0000000-0000-4000-8000-000000000001
   export VITE_DEFAULT_TERMINAL_ID=terminal-prod-001
   npm ci

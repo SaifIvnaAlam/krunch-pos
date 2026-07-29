@@ -108,6 +108,7 @@ vps_ssh 'docker ps --format "{{.Names}}" | grep -E "^krunch-pos-(api|postgres)-1
 
 echo "==> Building POS for https://${POS_DOMAIN}/api/v1"
 export VITE_API_URL="https://${POS_DOMAIN}/api/v1"
+export VITE_PUBLIC_APP_URL="${VITE_PUBLIC_APP_URL:-https://${POS_DOMAIN}}"
 export VITE_DEFAULT_BRANCH_ID="${VITE_DEFAULT_BRANCH_ID:-a0000000-0000-4000-8000-000000000001}"
 export VITE_DEFAULT_TERMINAL_ID="${VITE_DEFAULT_TERMINAL_ID:-terminal-v2-001}"
 # Preview URLs must hit this stack's /api/v1/media (MediaAsset lives in v2 DB).
