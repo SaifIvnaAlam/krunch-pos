@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Other Expenses — refined prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #faf8f5;
+    --surface: #ffffff;
+    --ink: #201d1b;
+    --muted: #746d66;
+    --faint: #a8a099;
+    --hair: #ece7e2;
+    --hair-soft: #f3efeb;
+    --brand: #8a1f2b;
+    --brand-hover: #73141e;
+    --brand-tint: #f6ebec;
+    --pos: #157a52;      /* paid */
+    --neg: #c1394a;      /* due  */
+    --warn: #b1741a;     /* partial */
+    --pos-tint: #e8f3ed;
+    --neg-tint: #fbe9eb;
+    --warn-tint: #f8eeda;
+    --focus: rgba(138,31,43,.35);
+    --head-bg: #f5efe9;   /* warm shelf behind column labels + totals */
+    --head-ink: #857d75;  /* label text — darker than faint for readable headers */
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    padding: 40px 24px 80px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "cv01" 1; }
+  .cur { color: var(--faint); font-weight: 500; margin-right: 1px; }
+  .eyebrow { font-size: 10.5px; font-weight: 600; letter-spacing: .11em; text-transform: uppercase; color: var(--faint); }
+
+  /* ---------- Header ---------- */
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+  .head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -0.02em; }
+  .head-actions { display: flex; align-items: center; gap: 10px; }
+  .period {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+    background: var(--surface); border: 1px solid var(--hair); border-radius: 9px;
+    padding: 8px 12px; font-size: 13px; font-weight: 500; color: var(--ink);
+  }
+  .period:hover { border-color: #ddd5cf; }
+  .period svg { width: 14px; height: 14px; color: var(--faint); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer; border: 0; border-radius: 9px;
+    font-size: 13.5px; font-weight: 600; padding: 9px 15px; background: var(--brand); color: #fff;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04), 0 6px 16px rgba(138,31,43,.22); transition: background .15s;
+  }
+  .btn:hover { background: var(--brand-hover); }
+  .btn svg { width: 16px; height: 16px; }
+
+  /* ---------- Summary ---------- */
+  .summary {
+    display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 0;
+    background: var(--surface); border: 1px solid var(--hair); border-radius: 16px; overflow: hidden;
+    margin-bottom: 22px;
+  }
+  .sum-hero { padding: 22px 24px; border-right: 1px solid var(--hair-soft); }
+  .sum-hero .amt { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.05; margin-top: 10px; color: var(--neg); }
+  .sum-hero .amt.zero { color: var(--ink); }
+  .sum-hero .cap { margin-top: 7px; font-size: 12.5px; color: var(--muted); }
+  .sum-hero .cap b { color: var(--ink); font-weight: 600; }
+
+  .sum-settle { padding: 22px 24px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+  .settle-top { display: flex; align-items: baseline; justify-content: space-between; }
+  .settle-top .big { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .settle-top .pct { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+  .track { height: 9px; border-radius: 999px; background: var(--hair); overflow: hidden; display: flex; }
+  .track .fill { height: 100%; background: var(--pos); border-radius: 999px 0 0 999px; }
+  .legend { display: flex; gap: 22px; }
+  .legend .item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
+  .legend .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .legend .item .v { color: var(--ink); font-weight: 600; }
+  .dot-paid { background: var(--pos); }
+  .dot-due { background: var(--neg); }
+
+  /* ---------- Toolbar ---------- */
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .seg { display: inline-flex; background: #efe9e3; border-radius: 9px; padding: 3px; }
+  .seg button {
+    border: 0; background: transparent; cursor: pointer; font-size: 12.5px; font-weight: 600;
+    color: var(--muted); padding: 6px 13px; border-radius: 7px; transition: .12s;
+  }
+  .seg button.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.07); }
+  .search {
+    display: inline-flex; align-items: center; gap: 8px; background: var(--surface);
+    border: 1px solid var(--hair); border-radius: 9px; padding: 8px 12px; flex: 1; min-width: 180px; max-width: 300px;
+  }
+  .search:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--focus); }
+  .search input { border: 0; outline: 0; width: 100%; font-size: 13px; background: transparent; color: var(--ink); font-family: inherit; }
+  .search svg { width: 15px; height: 15px; color: var(--faint); }
+  .spacer { flex: 1; }
+  .density { display: inline-flex; border: 1px solid var(--hair); border-radius: 9px; overflow: hidden; background: var(--surface); }
+  .density button { border: 0; background: transparent; cursor: pointer; padding: 7px 9px; color: var(--faint); display: grid; place-items: center; }
+  .density button.active { color: var(--brand); background: var(--brand-tint); }
+  .density button + button { border-left: 1px solid var(--hair); }
+  .density svg { width: 15px; height: 15px; }
+
+  /* ---------- Table ---------- */
+  .panel { background: var(--surface); border: 1px solid var(--hair); border-radius: 16px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    position: sticky; top: 0; z-index: 1;
+    text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--head-ink); background: var(--head-bg);
+    padding: 13px 22px; border-bottom: 1px solid var(--hair); white-space: nowrap; user-select: none;
+  }
+  thead th.num-col { text-align: right; }
+  thead th.center { text-align: center; }
+  thead th.sortable { cursor: pointer; }
+  thead th.sortable:hover { color: var(--ink); }
+  thead th .caret { opacity: 0; margin-left: 4px; font-size: 9px; vertical-align: middle; }
+  thead th.sorted .caret { opacity: 1; color: var(--brand); }
+
+  tbody td { padding: var(--rowpad, 15px) 22px; border-bottom: 1px solid var(--hair-soft); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr { transition: background .12s; cursor: pointer; }
+  tbody tr:hover { background: #faf7f4; }
+
+  .c-date { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .c-title { font-weight: 600; color: var(--ink); }
+  .c-src { display: block; font-size: 11px; color: var(--faint); font-weight: 500; margin-top: 2px; }
+  .c-src::before { content: "↳ "; }
+  .chip {
+    display: inline-flex; align-items: center; font-size: 11px; font-weight: 500; color: var(--muted);
+    background: #f4f0ec; border: 1px solid var(--hair); padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  }
+  td.num-col { text-align: right; white-space: nowrap; }
+  .money { font-weight: 600; }
+  .money.muted { color: var(--faint); font-weight: 500; }
+  .due-pos { color: var(--neg); font-weight: 600; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+  .status .d { width: 7px; height: 7px; border-radius: 50%; }
+  .s-paid { color: var(--pos); } .s-paid .d { background: var(--pos); }
+  .s-partial { color: var(--warn); } .s-partial .d { background: var(--warn); }
+  .s-unpaid { color: var(--neg); } .s-unpaid .d { background: var(--neg); }
+  td.center { text-align: center; }
+
+  tfoot td { padding: 14px 22px; border-top: 1px solid var(--hair); font-size: 13px; background: var(--head-bg); }
+  tfoot .lbl { color: var(--muted); font-weight: 600; }
+  tfoot .num-col { font-weight: 700; }
+
+  .foot-note { margin-top: 14px; font-size: 11px; color: var(--faint); text-align: right; }
+  .empty { padding: 40px; text-align: center; color: var(--faint); font-size: 13px; }
+  .hide { display: none !important; }
+
+  @media (max-width: 720px) {
+    .summary { grid-template-columns: 1fr; }
+    .sum-hero { border-right: 0; border-bottom: 1px solid var(--hair-soft); }
+    th.opt, td.opt { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <h1>Other Expenses</h1>
+    <div class="head-actions">
+      <span class="period">This month
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+      </span>
+      <button class="btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New expense
+      </button>
+    </div>
+  </div>
+
+  <!-- Summary: lead with what needs action (due), pair with a settlement read -->
+  <div class="summary">
+    <div class="sum-hero">
+      <div class="eyebrow">Still due</div>
+      <div class="amt num" id="heroDue"><span class="cur">৳</span>0</div>
+      <div class="cap" id="heroCap">across <b>0</b> open bills</div>
+    </div>
+    <div class="sum-settle">
+      <div class="settle-top">
+        <span class="big num" id="spentVal"><span class="cur">৳</span>0 <span style="color:var(--muted);font-weight:500;font-size:12.5px;">spent</span></span>
+        <span class="pct" id="settlePct">0% settled</span>
+      </div>
+      <div class="track"><div class="fill" id="settleFill" style="width:0%"></div></div>
+      <div class="legend">
+        <span class="item"><span class="dot dot-paid"></span> Paid <span class="v num" id="paidVal">৳0</span></span>
+        <span class="item"><span class="dot dot-due"></span> Due <span class="v num" id="dueVal">৳0</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="seg" id="statusSeg">
+      <button class="active" data-status="all">All</button>
+      <button data-status="unpaid">Unpaid</button>
+      <button data-status="partial">Partial</button>
+      <button data-status="paid">Paid</button>
+    </div>
+    <label class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+      <input id="searchInput" type="text" placeholder="Search…" />
+    </label>
+    <span class="spacer"></span>
+    <div class="density" id="densitySeg" title="Row density">
+      <button data-density="comfortable" class="active" aria-label="Comfortable">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <button data-density="compact" aria-label="Compact">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 9h16M4 13h16M4 17h16M4 21h16"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable opt" data-sort="date">Date <span class="caret">▼</span></th>
+          <th class="sortable" data-sort="title">Title <span class="caret">▼</span></th>
+          <th class="opt">Category</th>
+          <th class="num-col sortable" data-sort="amount">Amount <span class="caret">▼</span></th>
+          <th class="num-col sortable opt" data-sort="paid">Paid <span class="caret">▼</span></th>
+          <th class="num-col sortable" data-sort="due">Due <span class="caret">▼</span></th>
+          <th class="center">Status</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+      <tfoot>
+        <tr>
+          <td class="opt"></td>
+          <td class="lbl" id="footCount">—</td>
+          <td class="opt"></td>
+          <td class="num-col num" id="footAmount"></td>
+          <td class="num-col num opt" id="footPaid"></td>
+          <td class="num-col num" id="footDue"></td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <div class="foot-note">Prototype · illustrative data</div>
+</div>
+
+<script>
+  const DATA = [
+    { date: "2026-07-19", title: "asdfasd",              cat: "asas",        src: null,          amount: 121,   paid: 121 },
+    { date: "2026-07-07", title: "Billal Vegetable Store",cat: "Vegetables",  src: "Daily entry", amount: 645,   paid: 645 },
+    { date: "2026-07-06", title: "2 Lakh Interest",       cat: "Finance",     src: "Daily entry", amount: 2000,  paid: 2000 },
+    { date: "2026-07-06", title: "Boosting",              cat: "Marketing",   src: "Daily entry", amount: 19300, paid: 19300 },
+    { date: "2026-07-05", title: "Generator Diesel",      cat: "Utilities",   src: null,          amount: 2500,  paid: 1500 },
+    { date: "2026-07-03", title: "Signboard Repair",      cat: "Maintenance", src: null,          amount: 2000,  paid: 0 },
+  ];
+
+  const fmt = (n) => n.toLocaleString("en-US");
+  const money = (n, cls = "") =>
+    `<span class="money ${cls} num"><span class="cur">৳</span>${fmt(n)}</span>`;
+  const statusOf = (r) => (r.paid >= r.amount ? "paid" : r.paid <= 0 ? "unpaid" : "partial");
+  const STATUS_LABEL = { paid: "Paid", partial: "Partial", unpaid: "Unpaid" };
+  const monthName = (d) =>
+    new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+
+  let status = "all";
+  let query = "";
+  let sortKey = "date";
+  let sortDir = -1; // -1 desc, 1 asc
+
+  const rowsEl = document.getElementById("rows");
+
+  function visible() {
+    return DATA.filter((r) => {
+      const s = statusOf(r);
+      return (status === "all" || s === status) &&
+             (!query || r.title.toLowerCase().includes(query) || r.cat.toLowerCase().includes(query));
+    }).sort((a, b) => {
+      let av, bv;
+      if (sortKey === "title") { av = a.title.toLowerCase(); bv = b.title.toLowerCase(); }
+      else if (sortKey === "date") { av = a.date; bv = b.date; }
+      else if (sortKey === "due") { av = a.amount - a.paid; bv = b.amount - b.paid; }
+      else { av = a[sortKey]; bv = b[sortKey]; }
+      return av < bv ? -sortDir : av > bv ? sortDir : 0;
+    });
+  }
+
+  function render() {
+    const rows = visible();
+    if (rows.length === 0) {
+      rowsEl.innerHTML = `<tr><td class="empty" colspan="7">No expenses match this view.</td></tr>`;
+    } else {
+      rowsEl.innerHTML = rows.map((r) => {
+        const due = r.amount - r.paid;
+        const s = statusOf(r);
+        return `<tr>
+          <td class="c-date opt">${monthName(r.date)}</td>
+          <td>
+            <span class="c-title">${r.title}</span>
+            ${r.src ? `<span class="c-src">${r.src}</span>` : ""}
+          </td>
+          <td class="opt"><span class="chip">${r.cat}</span></td>
+          <td class="num-col">${money(r.amount)}</td>
+          <td class="num-col opt">${money(r.paid, "muted")}</td>
+          <td class="num-col">${due > 0 ? `<span class="due-pos num"><span class="cur">৳</span>${fmt(due)}</span>` : `<span class="money muted num">—</span>`}</td>
+          <td class="center"><span class="status s-${s}"><span class="d"></span>${STATUS_LABEL[s]}</span></td>
+        </tr>`;
+      }).join("");
+    }
+
+    // footer totals reflect the current view
+    const t = rows.reduce((a, r) => ({ amount: a.amount + r.amount, paid: a.paid + r.paid, due: a.due + (r.amount - r.paid) }), { amount: 0, paid: 0, due: 0 });
+    document.getElementById("footCount").textContent = rows.length + (rows.length === 1 ? " entry" : " entries");
+    document.getElementById("footAmount").innerHTML = `<span class="cur">৳</span>${fmt(t.amount)}`;
+    document.getElementById("footPaid").innerHTML = `<span class="cur">৳</span>${fmt(t.paid)}`;
+    document.getElementById("footDue").innerHTML = t.due > 0 ? `<span class="due-pos"><span class="cur">৳</span>${fmt(t.due)}</span>` : `<span style="color:var(--faint)">—</span>`;
+
+    // sort header state
+    document.querySelectorAll("thead th.sortable").forEach((th) => {
+      const active = th.dataset.sort === sortKey;
+      th.classList.toggle("sorted", active);
+      const caret = th.querySelector(".caret");
+      if (caret) caret.textContent = sortDir === 1 ? "▲" : "▼";
+    });
+  }
+
+  function renderSummary() {
+    const total = DATA.reduce((s, r) => s + r.amount, 0);
+    const paid = DATA.reduce((s, r) => s + r.paid, 0);
+    const due = total - paid;
+    const openBills = DATA.filter((r) => r.amount - r.paid > 0).length;
+    const pct = total ? Math.round((paid / total) * 100) : 0;
+    const heroDue = document.getElementById("heroDue");
+    heroDue.innerHTML = `<span class="cur">৳</span>${fmt(due)}`;
+    heroDue.classList.toggle("zero", due === 0);
+    document.getElementById("heroCap").innerHTML = `across <b>${openBills}</b> open ${openBills === 1 ? "bill" : "bills"}`;
+    document.getElementById("spentVal").innerHTML = `<span class="cur">৳</span>${fmt(total)} <span style="color:var(--muted);font-weight:500;font-size:12.5px;">spent</span>`;
+    document.getElementById("settlePct").textContent = pct + "% settled";
+    document.getElementById("settleFill").style.width = pct + "%";
+    document.getElementById("paidVal").innerHTML = `<span class="cur">৳</span>${fmt(paid)}`;
+    document.getElementById("dueVal").innerHTML = `<span class="cur">৳</span>${fmt(due)}`;
+  }
+
+  document.getElementById("statusSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    document.querySelectorAll("#statusSeg button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active"); status = b.dataset.status; render();
+  });
+  document.getElementById("searchInput").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); render(); });
+  document.getElementById("densitySeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    document.querySelectorAll("#densitySeg button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    document.documentElement.style.setProperty("--rowpad", b.dataset.density === "compact" ? "9px" : "15px");
+  });
+  document.querySelectorAll("thead th.sortable").forEach((th) => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.sort;
+      if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = k === "title" ? 1 : -1; }
+      render();
+    });
+  });
+
+  renderSummary();
+  render();
+</script>
+</body>
+</html>

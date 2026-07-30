@@ -1,4 +1,6 @@
 import {
+  AlertTriangle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -21,7 +23,9 @@ import {
   useState,
   useSyncExternalStore,
   type ChangeEvent,
+  type DragEvent,
   type InputHTMLAttributes,
+  type ReactNode,
 } from "react";
 import { readValidAccessToken } from "@/features/auth";
 import {
@@ -33,7 +37,21 @@ import {
   purgeStoredMediaRef,
 } from "@/features/storage";
 import { MediaThumb } from "./MediaThumb";
+import {
+  CAPTURE_DND_MIME,
+  parseCaptureDragPayload,
+  PhoneCaptureTrayPanel,
+  type AttachmentDragSource,
+  type CaptureDragPayload,
+} from "./PhoneCaptureTrayPanel";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
+import { DateRangeCalendarField } from "./DateRangeCalendarField";
+import { SearchableSelect } from "./SearchableSelect";
+import {
+  closeCaptureSession,
+  removeCaptureItem,
+  type CaptureSessionItem,
+} from "@/features/capture";
 import {
   commitLedgerFromDailyExpenseLine,
   getLedgerBookNamesSnapshot,
@@ -42,18 +60,18 @@ import {
   resolveLedgerSupplierIdByBookName,
   subscribeLedgerWorkspace,
   validateDailyExpenseLedgerAmount,
-  openCashbooksPanel,
 } from "./LedgerModuleView";
+import { openItemPurchaseSuppliers } from "./ItemPurchaseModuleView";
 import type { LedgerAttachment } from "@/features/ledger";
 import {
   bankNetAfterWithdrawals,
   carriedOpeningBalanceForDate,
+  commitDailyEntry,
   deleteDailyEntry,
   expenseTotalFromExpenseLines,
-  listDailyEntriesDescendingFromMap,
+  listDailyEntryHistorySlots,
   lockDailyEntry,
   roundTaka,
-  saveDailyEntry,
   savedLineKind,
   setDailyEntryNavGuard,
   suggestedNewEntryDateKey,
@@ -71,8 +89,11 @@ import {
   staffLineKindFromSaved,
 } from "@/features/daily-entry/staffExpenseLine";
 import {
+  cancelSalaryWorkspacePersist,
   getSalaryBundle,
+  flushSalaryWorkspacePersist,
   loadSalaryWorkspace,
+  reloadSalaryWorkspace,
   STAFF_ADVANCE_LINE_KIND,
   STAFF_LINE_KIND,
   syncLoadedSalaryBundleToEmployees,
@@ -80,11 +101,27 @@ import {
   validateStaffPayoutAmount,
   type StaffLineKind,
 } from "@/features/payroll";
-import { flushLedgerWorkspacePersist, loadLedgerWorkspace } from "@/features/ledger";
+import {
+  cancelLedgerWorkspacePersist,
+  flushLedgerWorkspacePersist,
+  getWorkspace,
+  loadLedgerWorkspace,
+  reloadLedgerWorkspace,
+} from "@/features/ledger";
 import { getEmployeeDirectoryLoadState, loadEmployeeDirectory } from "@/features/employees";
+import {
+  createExpenseCategory,
+  listExpenseCategories,
+  type ExpenseCategory,
+} from "@/features/payables";
 import { getEmployeeById, useActiveEmployees } from "../../lib/employeeDirectoryStorage";
 import { parseNonNegativeAmount, sanitizeNonNegativeDecimalInput } from "../../lib/moneyInput";
-import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
+import {
+  formatDateKeyAsDisplay,
+  formatMonthKeyAsDisplay,
+  monthEndDateKey,
+  monthStartDateKey,
+} from "../../lib/dateDisplay";
 import { useSession } from "@/features/auth";
 
 type PurchaseItemDraft = {
@@ -93,8 +130,12 @@ type PurchaseItemDraft = {
   name: string;
   qty: string;
   unit: string;
-  /** Line total in taka — primary input; rate is derived as total ÷ qty. */
+  /** Unit price — editable; kept in sync with total via qty. */
+  rate: string;
+  /** Line total in taka — editable; kept in sync with rate via qty. */
   total: string;
+  /** Which of rate/total the user last typed, so qty edits hold the right one. */
+  lastEdited?: "rate" | "total";
 };
 
 type ExpenseLineDraft = {
@@ -103,6 +144,8 @@ type ExpenseLineDraft = {
   vendor: string;
   /** Regular expense title (no vendor) */
   label: string;
+  /** Other Expenses category (regular lines). */
+  expenseCategoryId: string;
   /** Staff expense — employee directory id */
   employeeId: string;
   /** Regular payout vs advance salary */
@@ -111,7 +154,10 @@ type ExpenseLineDraft = {
   note: string;
   /** Links to salary register when synced from a prior save. */
   salaryPaymentId?: string;
+  /** Payable total (regular) or cash amount (vendor/staff). */
   amount: string;
+  /** Cash paid now on a regular expense (defaults to total). */
+  paidAmount: string;
   receiptDataUrls: string[];
   /**
    * Purchase bills only — attachments keyed by vendor cashbook name so each
@@ -128,6 +174,11 @@ type ExpenseLineDraft = {
   ledgerNote: string;
   /** Item rows for purchase bills. */
   items: PurchaseItemDraft[];
+  /**
+   * Purchase bills only — ordered supplier group shells (may have zero items).
+   * Empty string = unassigned / pick-a-supplier row.
+   */
+  purchaseGroupVendors: string[];
   /**
    * Vendor payment rows auto-created from items purchased — amount stays synced
    * to that vendor’s purchase total until the user edits vendor/amount.
@@ -155,6 +206,7 @@ function newPurchaseItemDraft(vendor = ""): PurchaseItemDraft {
     name: "",
     qty: "1",
     unit: "pcs",
+    rate: "",
     total: "",
   };
 }
@@ -163,10 +215,12 @@ function emptyExpenseLineFields(): Omit<ExpenseLineDraft, "id" | "kind"> {
   return {
     vendor: "",
     label: "",
+    expenseCategoryId: "",
     employeeId: "",
     staffLineKind: STAFF_LINE_KIND,
     note: "",
     amount: "",
+    paidAmount: "",
     receiptDataUrls: [],
     vendorReceipts: {},
     vendorNotes: {},
@@ -174,6 +228,7 @@ function emptyExpenseLineFields(): Omit<ExpenseLineDraft, "id" | "kind"> {
     ledgerEmployeeLineKind: "",
     ledgerNote: "",
     items: [],
+    purchaseGroupVendors: [],
   };
 }
 
@@ -472,11 +527,18 @@ function buildExpenseLinesToSaveFromDrafts(
       const expenseTitle = line.label.trim();
       if (expenseTitle && amt > 0) {
         const noteTrim = line.note.trim();
+        const paid =
+          line.paidAmount.trim() === ""
+            ? amt
+            : Math.min(amt, Math.max(0, parseAmount(line.paidAmount)));
+        const catId = line.expenseCategoryId.trim();
         linesToSave.push({
           kind: "regular",
           label: expenseTitle,
           amount: amt,
+          paidAmount: paid,
           ...lineIdField,
+          ...(catId ? { expenseCategoryId: catId } : {}),
           ...(noteTrim ? { note: noteTrim } : {}),
           ...receiptField,
         });
@@ -621,6 +683,8 @@ async function mergeVoidAttachmentDataUrls(
 
 /** Select value for free-typed vendor (not yet in the saved list). */
 const VENDOR_OTHER_VALUE = "__vendor_other__";
+/** Category select sentinel — opens the new-category modal. */
+const NEW_EXPENSE_CATEGORY_VALUE = "__new_expense_category__";
 
 const inputClass =
   "h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] tabular-nums text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
@@ -646,16 +710,28 @@ const statValueHighlightClass =
   "text-[28px] font-extrabold tabular-nums leading-none text-[var(--pos-text-1)]";
 const statCardHintClass = `${statCardClass} cursor-help`;
 const expenseCardClass = "flex min-w-0 flex-col gap-1.5";
-const expenseCardRowClass = "flex min-w-0 flex-wrap items-start gap-2";
-const expensePrimaryInputClass =
-  "h-[3.125rem] w-full min-w-0 rounded-[10px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[14px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
-const expenseTitleInputClass = `${expensePrimaryInputClass} text-[16px] font-semibold`;
-const expensePrimarySelectClass = `${expensePrimaryInputClass} cursor-pointer`;
+/** Shared type scale inside Expenses: 12px fields, 11px meta/labels. */
+const expenseFieldClass =
+  "h-8 w-full min-w-0 rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-[12px] text-[var(--pos-text-1)] transition-[border-color,box-shadow] focus:border-[var(--pos-sb-base)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
+const expenseAmountFieldClass = `${expenseFieldClass} text-right font-mono font-semibold tabular-nums`;
+const expensePrimaryInputClass = expenseFieldClass;
+const expensePrimarySelectClass = `${expenseFieldClass} cursor-pointer`;
+const expenseCardLabelClass =
+  "text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]";
+const expenseMetaClass = "text-[11px] leading-snug text-[var(--pos-text-2)]";
+const expenseChipLabelClass = "text-[11px] text-[var(--pos-text-2)]";
+const expenseChipValueClass =
+  "font-mono text-[12px] font-semibold tabular-nums text-[var(--pos-text-1)]";
+const expenseChipShellClass =
+  "flex h-8 min-w-[5.5rem] items-center justify-between gap-1.5 rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2";
+/** Read-only Total above labels — no field chrome. */
+const expenseChipReadoutClass =
+  "flex h-8 items-center gap-1.5 px-1 tabular-nums";
 /** Regular-line memo: reads as quiet placeholder text until focused. */
 const expenseQuietInputClass =
   "h-8 w-full min-w-0 rounded-[6px] border border-solid border-transparent bg-transparent px-2 text-[12px] text-[var(--pos-text-1)] transition-[border-color,background-color,box-shadow] placeholder:text-[var(--pos-text-2)]/70 focus:border-[var(--pos-input-border)] focus:bg-[var(--pos-input-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--pos-sb-base)]/15";
 const expenseRemoveBtnClass =
-  "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700";
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[var(--pos-text-2)] transition-colors hover:border-red-500/50 hover:bg-red-500/5 hover:text-red-700 dark:hover:text-red-400";
 
 function AttachmentCountBadge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -671,15 +747,217 @@ function AttachmentCountBadge({ count }: { count: number }) {
 }
 
 const expenseIconBtnClass =
-  "inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]";
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]";
 const expenseNoteBtnActiveClass =
   "border-[var(--pos-sb-base)] bg-[var(--pos-nav-hover)]/20 text-[var(--pos-text-1)]";
-const expenseAddBtnBaseClass =
-  "inline-flex w-full flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid px-3 py-2.5 text-[12px] font-semibold leading-tight transition-colors hover:opacity-90";
-const expenseAddRegularBtnClass = `${expenseAddBtnBaseClass} border-red-500/35 bg-red-500/12 text-red-800 hover:bg-red-500/18`;
-const expenseAddStaffBtnClass = `${expenseAddBtnBaseClass} border-sky-500/35 bg-sky-500/12 text-sky-900 hover:bg-sky-500/18`;
-const expenseAddVendorBtnClass = `${expenseAddBtnBaseClass} border-amber-500/35 bg-amber-500/12 text-amber-900 hover:bg-amber-500/18`;
-const expenseAddPurchaseBtnClass = `${expenseAddBtnBaseClass} border-yellow-600/40 bg-yellow-500/15 text-yellow-950 hover:bg-yellow-500/25`;
+
+type ExpenseCardKind = ExpenseLineDraft["kind"];
+
+const EXPENSE_CARD_CHROME: Record<
+  ExpenseCardKind,
+  { shell: string; title: string; header: string }
+> = {
+  purchase: {
+    shell:
+      "rounded-[10px] border border-solid border-sky-500/25 !bg-sky-50/40 dark:!bg-sky-500/10 p-2",
+    title: "Item purchase",
+    header:
+      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-sky-500/25 dark:bg-sky-500/20 px-2 py-1.5",
+  },
+  regular: {
+    shell:
+      "rounded-[10px] border border-solid border-red-500/20 bg-red-50/30 dark:bg-red-500/10 p-2",
+    title: "Other expense",
+    header: "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-red-500/20 dark:bg-red-500/20 px-2 py-1.5",
+  },
+  staff: {
+    shell:
+      "rounded-[10px] border border-solid border-emerald-500/25 !bg-emerald-50/40 dark:!bg-emerald-500/10 p-2",
+    title: "Staff payout",
+    header:
+      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-emerald-500/25 dark:bg-emerald-500/20 px-2 py-1.5",
+  },
+  vendor: {
+    shell:
+      "rounded-[10px] border border-solid border-amber-500/25 !bg-amber-50/40 dark:!bg-amber-500/10 p-2",
+    title: "Supplier payment",
+    header:
+      "-mx-2 -mt-2 mb-0.5 rounded-t-[9px] bg-amber-500/25 dark:bg-amber-500/20 px-2 py-1.5",
+  },
+};
+
+function ExpenseCardShell({
+  kind,
+  lineId,
+  title,
+  actions,
+  children,
+  purchaseVendor,
+}: {
+  kind: ExpenseCardKind;
+  /** Omit when rows inside carry their own `data-expense-line-id`. */
+  lineId?: string;
+  title?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  purchaseVendor?: string;
+}) {
+  const chrome = EXPENSE_CARD_CHROME[kind];
+  return (
+    <div
+      data-expense-line-id={lineId || undefined}
+      data-purchase-vendor={purchaseVendor || undefined}
+      className={`${expenseCardClass} ${chrome.shell}`}
+    >
+      <div className={`flex items-center gap-1 ${chrome.header}`}>
+        <p className={expenseCardLabelClass}>{title ?? chrome.title}</p>
+        {actions}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ExpenseMoneyChips({
+  total,
+  paid,
+  due,
+  onTotalChange,
+  onPaidChange,
+  showPaidDue = true,
+  labelsAbove = false,
+  /** Field shells only — column headers live outside (grouped rows). */
+  hideLabels = false,
+  paidPlaceholder,
+  totalAriaLabel = "Total",
+  paidAriaLabel = "Amount paid now",
+  totalInvalid,
+  amountAnchor,
+  leading,
+  totalInputProps,
+  paidInputProps,
+}: {
+  total: number | string;
+  paid?: string;
+  due: number;
+  onTotalChange?: (value: string) => void;
+  onPaidChange?: (value: string) => void;
+  showPaidDue?: boolean;
+  /** Column headers above fields (like purchase grid). */
+  labelsAbove?: boolean;
+  hideLabels?: boolean;
+  paidPlaceholder?: string;
+  totalAriaLabel?: string;
+  paidAriaLabel?: string;
+  totalInvalid?: boolean;
+  amountAnchor?: string;
+  leading?: ReactNode;
+  totalInputProps?: InputHTMLAttributes<HTMLInputElement>;
+  paidInputProps?: InputHTMLAttributes<HTMLInputElement>;
+}) {
+  const dueTone =
+    due > 0.005
+      ? "text-red-600 dark:text-red-400"
+      : "text-emerald-700 dark:text-emerald-400";
+  const totalDisplay =
+    typeof total === "number"
+      ? total > 0
+        ? formatMoney(total)
+        : "—"
+      : total;
+  const showAbove = labelsAbove && !hideLabels;
+  const showInline = !labelsAbove && !hideLabels;
+  const col = showAbove ? "flex flex-col gap-0.5" : "contents";
+  return (
+    <div
+      className={`flex min-w-0 flex-wrap gap-1.5 ${showAbove ? "items-start" : "items-center"}`}
+      data-field-error-anchor={amountAnchor}
+    >
+      {leading}
+      <div
+        className={`ml-auto flex shrink-0 flex-wrap justify-end gap-1.5 ${showAbove ? "items-start" : "items-center"
+          }`}
+      >
+        <div className={col}>
+          {showAbove ? (
+            <span className={`${expenseCardLabelClass} text-right`}>Total</span>
+          ) : null}
+          {onTotalChange ? (
+            <label className={expenseChipShellClass}>
+              {showInline ? <span className={expenseChipLabelClass}>Total</span> : null}
+              <input
+                {...totalInputProps}
+                value={typeof total === "string" ? total : String(total)}
+                onChange={(e) => onTotalChange(e.target.value)}
+                placeholder="0"
+                aria-label={totalAriaLabel}
+                aria-invalid={totalInvalid ? true : undefined}
+                className={`w-16 bg-transparent text-right outline-none ${expenseChipValueClass} ${totalInvalid ? "!text-red-700" : ""
+                  }`}
+              />
+            </label>
+          ) : showAbove ? (
+            <div className={`${expenseChipReadoutClass} justify-end`}>
+              <span className={expenseChipValueClass}>{totalDisplay}</span>
+            </div>
+          ) : (
+            <div
+              className={`${expenseChipShellClass} cursor-default`}
+              aria-label={totalAriaLabel}
+            >
+              {showInline ? <span className={expenseChipLabelClass}>Total</span> : null}
+              <span
+                className={`w-16 text-right font-mono text-[12px] font-semibold tabular-nums text-[var(--pos-text-1)]`}
+              >
+                {totalDisplay}
+              </span>
+            </div>
+          )}
+        </div>
+        {showPaidDue && onPaidChange ? (
+          <>
+            <div className={col}>
+              {showAbove ? (
+                <span className={`${expenseCardLabelClass} text-right`}>Paid</span>
+              ) : null}
+              <label className={expenseChipShellClass}>
+                {showInline ? <span className={expenseChipLabelClass}>Paid</span> : null}
+                <input
+                  {...paidInputProps}
+                  value={paid ?? ""}
+                  onChange={(e) => onPaidChange(e.target.value)}
+                  placeholder={paidPlaceholder ?? "0"}
+                  aria-label={paidAriaLabel}
+                  className={`w-16 bg-transparent text-right outline-none ${expenseChipValueClass}`}
+                />
+              </label>
+            </div>
+            <div className={col}>
+              {showAbove ? (
+                <span className={`${expenseCardLabelClass} text-right`}>Due</span>
+              ) : null}
+              <div
+                className={`${expenseChipShellClass} cursor-default`}
+                aria-label="Amount due"
+              >
+                {showInline ? <span className={expenseChipLabelClass}>Due</span> : null}
+                <span
+                  className={`w-16 text-right font-mono text-[12px] font-semibold tabular-nums ${dueTone}`}
+                >
+                  {formatMoney(Math.max(0, due))}
+                </span>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const expenseSectionAddBtnClass =
+  "inline-flex size-7 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-1)] shadow-sm transition-colors hover:bg-[var(--pos-nav-hover)]";
+const expenseSectionEmptyClass = `${expenseMetaClass} px-0.5 py-1.5`;
 const editOpeningBtnClass =
   "inline-flex shrink-0 items-center justify-center rounded-md p-1 text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]";
 
@@ -687,10 +965,10 @@ const headerSaveBtnClass =
   "inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-[7px] px-2.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
 
 const headerLockBtnClass =
-  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-amber-500/50 bg-amber-500/10 px-2.5 text-[11px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-amber-500/50 bg-amber-500/10 px-2.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
 
 const headerUnlockBtnClass =
-  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-2.5 text-[11px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-[7px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-2.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60";
 
 const headerHistoryBtnClass =
   "inline-flex h-8 shrink-0 items-center justify-center rounded-[7px] border border-solid [border-color:var(--pos-divider)] px-2.5 text-[11px] font-semibold text-[var(--pos-text-2)] transition-colors hover:text-[var(--pos-text-1)]";
@@ -732,7 +1010,8 @@ function newPurchaseExpenseLine(): ExpenseLineDraft {
     id: newLineId(),
     kind: "purchase",
     ...emptyExpenseLineFields(),
-    items: [newPurchaseItemDraft()],
+    items: [],
+    purchaseGroupVendors: [""],
   };
 }
 
@@ -775,6 +1054,57 @@ function purchaseItemLineRate(item: PurchaseItemDraft): number | null {
   return Math.round((total / qty) * 100) / 100;
 }
 
+/** Format a computed rate/total to a clean 2-decimal string (empty if invalid). */
+function formatPurchaseComputed(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "";
+  return String(Math.round(n * 100) / 100);
+}
+
+/**
+ * Keep rate ↔ total in sync after a field edit. Rate and total are both
+ * editable: typing one recomputes the other via qty. Editing qty holds
+ * whichever value the user last typed and recomputes its partner.
+ */
+function recomputePurchaseItem(
+  item: PurchaseItemDraft,
+  patch: Partial<PurchaseItemDraft>,
+): PurchaseItemDraft {
+  const qty = parseAmount(item.qty);
+  const hasQty = item.qty.trim() !== "" && Number.isFinite(qty) && qty > 0;
+  const next = { ...item };
+
+  if (typeof patch.rate === "string") {
+    if (!next.rate.trim()) next.total = "";
+    else if (hasQty) {
+      const rate = parseAmount(next.rate);
+      if (Number.isFinite(rate)) next.total = formatPurchaseComputed(rate * qty);
+    }
+    return next;
+  }
+
+  if (typeof patch.total === "string") {
+    if (!next.total.trim()) next.rate = "";
+    else if (hasQty) {
+      const total = parseAmount(next.total);
+      if (Number.isFinite(total)) next.rate = formatPurchaseComputed(total / qty);
+    }
+    return next;
+  }
+
+  if (typeof patch.qty === "string") {
+    if (next.lastEdited === "rate" && next.rate.trim()) {
+      const rate = parseAmount(next.rate);
+      next.total = hasQty && Number.isFinite(rate) ? formatPurchaseComputed(rate * qty) : "";
+    } else if (next.total.trim()) {
+      const total = parseAmount(next.total);
+      next.rate = hasQty && Number.isFinite(total) ? formatPurchaseComputed(total / qty) : "";
+    }
+    return next;
+  }
+
+  return next;
+}
+
 function purchaseItemsTotal(items: readonly PurchaseItemDraft[]): number {
   let sum = 0;
   let any = false;
@@ -802,6 +1132,47 @@ function groupPurchaseDraftItemsByVendor(
     map.get(vendor)!.push(item);
   }
   return order.map((vendor) => ({ vendor, items: map.get(vendor)! }));
+}
+
+/** Supplier shells + their items (shells may be empty). */
+function purchaseVendorGroupsForLine(
+  line: ExpenseLineDraft,
+): Array<{ vendor: string; items: PurchaseItemDraft[] }> {
+  const byVendor = new Map<string, PurchaseItemDraft[]>();
+  for (const item of line.items) {
+    const vendor = item.vendor.trim();
+    if (!byVendor.has(vendor)) byVendor.set(vendor, []);
+    byVendor.get(vendor)!.push(item);
+  }
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of line.purchaseGroupVendors ?? []) {
+    const vendor = raw.trim();
+    if (seen.has(vendor)) continue;
+    seen.add(vendor);
+    order.push(vendor);
+  }
+  for (const vendor of byVendor.keys()) {
+    if (seen.has(vendor)) continue;
+    seen.add(vendor);
+    order.push(vendor);
+  }
+  return order.map((vendor) => ({
+    vendor,
+    items: byVendor.get(vendor) ?? [],
+  }));
+}
+
+function uniquePurchaseGroupVendors(vendors: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of vendors) {
+    const v = raw.trim();
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
 }
 
 /** Sum of valid purchase item totals per vendor across all purchase cards. */
@@ -906,6 +1277,11 @@ function purchaseVendorReceiptUrls(
 
 function draftLineCashAmount(line: ExpenseLineDraft): number {
   if (line.kind === "purchase") return 0;
+  if (line.kind === "regular") {
+    const total = parseAmount(line.amount);
+    if (line.paidAmount.trim() === "") return total;
+    return parseAmount(line.paidAmount);
+  }
   return parseAmount(line.amount);
 }
 
@@ -1081,7 +1457,7 @@ function findFirstExpenseValidationError(
     if (line.kind === "vendor") {
       if (parseAmount(line.amount) > 0 && !line.vendor.trim()) {
         return {
-          message: "Select or enter a cashbook name, or remove this row.",
+          message: "Select or enter a supplier name, or remove this row.",
           lineId: line.id,
           part: "vendor",
         };
@@ -1097,7 +1473,7 @@ function findFirstExpenseValidationError(
       const supplierId = resolveLedgerSupplierIdByBookName(line.vendor.trim());
       if (noteTrim && !supplierId) {
         return {
-          message: "Memo is only used when the name matches a cashbook.",
+          message: "Memo is only used when the name matches a supplier.",
           lineId: line.id,
           part: "ledgerNote",
         };
@@ -1135,14 +1511,14 @@ function findFirstExpenseValidationError(
         if (!touched) continue;
         if (!item.vendor.trim()) {
           return {
-            message: "Select a vendor for each item.",
+            message: "Select a supplier for each item.",
             lineId: line.id,
             part: "vendor",
           };
         }
         if (!resolveLedgerSupplierIdByBookName(item.vendor.trim())) {
           return {
-            message: "Purchases must use an existing vendor cashbook.",
+            message: "Purchases must use an existing supplier.",
             lineId: line.id,
             part: "vendor",
           };
@@ -1158,7 +1534,7 @@ function findFirstExpenseValidationError(
       const items = committedPurchaseItemsFromDraft(line.items);
       if (!items || items.length === 0) {
         return {
-          message: "Add at least one item with vendor, name, qty, and total.",
+          message: "Add at least one item with supplier, name, qty, and total.",
           lineId: line.id,
           part: "amount",
         };
@@ -1175,7 +1551,17 @@ function findFirstExpenseValidationError(
       }
       if (line.label.trim() && parseAmount(line.amount) <= 0) {
         return {
-          message: "Enter an amount for this expense.",
+          message: "Enter the expense total.",
+          lineId: line.id,
+          part: "amount",
+        };
+      }
+      const total = parseAmount(line.amount);
+      const paid =
+        line.paidAmount.trim() === "" ? total : parseAmount(line.paidAmount);
+      if (line.label.trim() && paid > total + 0.001) {
+        return {
+          message: "Paid cannot be more than total.",
           lineId: line.id,
           part: "amount",
         };
@@ -1312,6 +1698,14 @@ function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined):
       lineId: line.lineId ?? "",
       vendor: kind === "vendor" || kind === "purchase" ? (line.vendor ?? "").trim() : "",
       label: kind === "regular" ? (line.label ?? "").trim() : "",
+      expenseCategoryId:
+        kind === "regular" ? (line.expenseCategoryId ?? "").trim() : "",
+      paidAmount:
+        kind === "regular"
+          ? typeof line.paidAmount === "number"
+            ? line.paidAmount
+            : line.amount
+          : null,
       employeeId: kind === "staff" ? (line.employeeId ?? "").trim() : "",
       staffLineKind:
         kind === "staff" ? staffLineKindFromSaved(line as ExpenseLineSaved) : "",
@@ -1330,8 +1724,8 @@ function normalizeExpenseLinesForCompare(lines: ExpenseLineSaved[] | undefined):
     };
   });
   rows.sort((a, b) =>
-    `${a.kind}\0${a.lineId}\0${a.vendor}\0${a.label}\0${a.employeeId}\0${a.staffLineKind}\0${a.salaryPaymentId}\0${a.amount}\0${a.ledgerKind}\0${a.ledgerEmployeeLineKind}\0${a.ledgerNote}\0${a.note}\0${a.items}`.localeCompare(
-      `${b.kind}\0${b.lineId}\0${b.vendor}\0${b.label}\0${b.employeeId}\0${b.staffLineKind}\0${b.salaryPaymentId}\0${b.amount}\0${b.ledgerKind}\0${b.ledgerEmployeeLineKind}\0${b.ledgerNote}\0${b.note}\0${b.items}`,
+    `${a.kind}\0${a.lineId}\0${a.vendor}\0${a.label}\0${a.expenseCategoryId}\0${a.paidAmount}\0${a.employeeId}\0${a.staffLineKind}\0${a.salaryPaymentId}\0${a.amount}\0${a.ledgerKind}\0${a.ledgerEmployeeLineKind}\0${a.ledgerNote}\0${a.note}\0${a.items}`.localeCompare(
+      `${b.kind}\0${b.lineId}\0${b.vendor}\0${b.label}\0${b.expenseCategoryId}\0${b.paidAmount}\0${b.employeeId}\0${b.staffLineKind}\0${b.salaryPaymentId}\0${b.amount}\0${b.ledgerKind}\0${b.ledgerEmployeeLineKind}\0${b.ledgerNote}\0${b.note}\0${b.items}`,
     ),
   );
   return JSON.stringify(rows);
@@ -1442,13 +1836,13 @@ function syncDailyExpenseLedgerLinks({
       attachments: ledgerAttachmentsFromReceiptRefs(receiptUrls),
       ...(purchaseItems
         ? {
-            items: purchaseItems.map((i) => ({
-              name: i.name,
-              qty: i.qty,
-              unit: i.unit,
-              rate: i.rate,
-            })),
-          }
+          items: purchaseItems.map((i) => ({
+            name: i.name,
+            qty: i.qty,
+            unit: i.unit,
+            rate: i.rate,
+          })),
+        }
         : {}),
     });
 
@@ -1515,11 +1909,11 @@ function savedEntryBodyEquals(prior: DailyEntryRow, next: DailyEntryRow): boolea
     priorVoid === nextVoid &&
     (prior.voidSaleRemarks ?? "").trim() === (next.voidSaleRemarks ?? "").trim() &&
     normalizeVoidSaleAttachments(prior.voidSaleAttachmentDataUrls) ===
-      normalizeVoidSaleAttachments(next.voidSaleAttachmentDataUrls) &&
+    normalizeVoidSaleAttachments(next.voidSaleAttachmentDataUrls) &&
     prior.remainingBalance === next.remainingBalance &&
     (prior.bankWithdrawn ?? 0) === (next.bankWithdrawn ?? 0) &&
     normalizeExpenseLinesForCompare(prior.expenseLines) ===
-      normalizeExpenseLinesForCompare(next.expenseLines) &&
+    normalizeExpenseLinesForCompare(next.expenseLines) &&
     (prior.enteredBy ?? "") === (next.enteredBy ?? "")
   );
 }
@@ -1553,18 +1947,24 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
         const itemDrafts =
           line.items && line.items.length > 0
             ? line.items.map((item) => ({
-                key: item.id || newLineId(),
-                vendor: lineVendor,
-                name: item.name,
-                qty: String(item.qty),
-                unit: item.unit || "pcs",
-                total:
-                  item.total > 0
-                    ? String(item.total)
-                    : item.rate > 0 && item.qty > 0
-                      ? String(Math.round(item.qty * item.rate * 100) / 100)
-                      : "",
-              }))
+              key: item.id || newLineId(),
+              vendor: lineVendor,
+              name: item.name,
+              qty: String(item.qty),
+              unit: item.unit || "pcs",
+              rate:
+                item.rate > 0
+                  ? String(item.rate)
+                  : item.total > 0 && item.qty > 0
+                    ? String(Math.round((item.total / item.qty) * 100) / 100)
+                    : "",
+              total:
+                item.total > 0
+                  ? String(item.total)
+                  : item.rate > 0 && item.qty > 0
+                    ? String(Math.round(item.qty * item.rate * 100) / 100)
+                    : "",
+            }))
             : [newPurchaseItemDraft(lineVendor)];
         const existing = purchaseDraftById.get(draftId);
         const vendorReceiptPatch =
@@ -1577,6 +1977,10 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
             : {};
         if (existing) {
           existing.items = [...existing.items, ...itemDrafts];
+          existing.purchaseGroupVendors = uniquePurchaseGroupVendors([
+            ...existing.purchaseGroupVendors,
+            ...(lineVendor ? [lineVendor] : []),
+          ]);
           existing.amount = String(
             (parseAmount(existing.amount) || 0) + (line.amount || 0),
           );
@@ -1610,19 +2014,30 @@ function draftsFromRow(r: DailyEntryRow): ExpenseLineDraft[] {
             vendorNotes: vendorNotePatch,
             ledgerNote: "",
             items: itemDrafts,
+            purchaseGroupVendors: lineVendor ? [lineVendor] : [""],
           };
           purchaseDraftById.set(draftId, draft);
           drafts.push(draft);
         }
         continue;
       }
+      const paidSaved =
+        kind === "regular" && typeof line.paidAmount === "number"
+          ? line.paidAmount
+          : kind === "regular"
+            ? line.amount
+            : undefined;
       drafts.push({
         id: line.lineId ?? newLineId(),
         kind,
         ...emptyExpenseLineFields(),
         vendor: kind === "vendor" ? (line.vendor ?? "") : "",
         label: kind === "regular" ? (line.label ?? "") : "",
+        expenseCategoryId:
+          kind === "regular" ? (line.expenseCategoryId ?? "") : "",
         amount: line.amount === 0 ? "" : String(line.amount),
+        paidAmount:
+          paidSaved != null && paidSaved !== 0 ? String(paidSaved) : paidSaved === 0 ? "0" : "",
         receiptDataUrls: [...(line.receiptDataUrls ?? [])],
         ledgerNote: kind === "vendor" ? (line.ledgerNote ?? "") : "",
         note: kind === "regular" ? (line.note ?? "") : "",
@@ -1850,7 +2265,9 @@ type DailyEntrySearchClause = {
 
 const DAILY_ENTRY_SEARCH_FIELD_ALIASES: Record<string, keyof DailyEntrySearchSegments> = {
   date: "date",
+  supplier: "vendor",
   vendor: "vendor",
+  s: "vendor",
   v: "vendor",
   title: "title",
   regular: "title",
@@ -1984,11 +2401,14 @@ function amountFieldProps(
 
 export function DailyEntryFormView({
   openDateKey = null,
+  historyNavNonce = 0,
   openStaffPayoutEmployeeId = null,
   onOpenDateKeyConsumed,
   onOpenStaffPayoutEmployeeIdConsumed,
 }: {
   openDateKey?: string | null;
+  /** Bumped when sidebar "Daily Entry Form" is re-clicked — return to history list. */
+  historyNavNonce?: number;
   openStaffPayoutEmployeeId?: string | null;
   onOpenDateKeyConsumed?: () => void;
   onOpenStaffPayoutEmployeeIdConsumed?: () => void;
@@ -2024,14 +2444,55 @@ export function DailyEntryFormView({
   const [voidSaleRemarks, setVoidSaleRemarks] = useState("");
   const [voidSaleAttachmentUrls, setVoidSaleAttachmentUrls] = useState<string[]>([]);
   const [expenseLines, setExpenseLines] = useState<ExpenseLineDraft[]>(() => []);
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([]);
+  const [categoryModalLineId, setCategoryModalLineId] = useState<string | null>(null);
+  const [categoryModalName, setCategoryModalName] = useState("");
+  const [categoryModalBusy, setCategoryModalBusy] = useState(false);
+  const [categoryModalError, setCategoryModalError] = useState<string | null>(null);
   const [bankWithdrawn, setBankWithdrawn] = useState("");
   const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
+
+  useEffect(() => {
+    let alive = true;
+    void listExpenseCategories()
+      .then((rows) => {
+        if (alive) setExpenseCategories(rows.filter((c) => c.active));
+      })
+      .catch(() => {
+        if (alive) setExpenseCategories([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [attachBusyLineId, setAttachBusyLineId] = useState<string | null>(null);
   const [openExpenseNoteLineIds, setOpenExpenseNoteLineIds] = useState<Set<string>>(
     () => new Set(),
   );
+  /** Purchase vendor groups start expanded; keys here are collapsed. */
+  const [collapsedPurchaseVendorKeys, setCollapsedPurchaseVendorKeys] = useState<
+    Set<string>
+  >(() => new Set());
   const [voidAttachBusy, setVoidAttachBusy] = useState(false);
   const isAttachmentUploadBusy = attachBusyLineId !== null || voidAttachBusy;
+  const [captureSessionToken, setCaptureSessionToken] = useState<string | null>(null);
+  const [captureItems, setCaptureItems] = useState<CaptureSessionItem[]>([]);
+  const [selectedCaptureItemId, setSelectedCaptureItemId] = useState<string | null>(null);
+  const [captureDragActive, setCaptureDragActive] = useState(false);
+  const [captureDropTargetKey, setCaptureDropTargetKey] = useState<string | null>(null);
+  const captureSessionTokenRef = useRef<string | null>(null);
+  captureSessionTokenRef.current = captureSessionToken;
+  const captureItemsRef = useRef(captureItems);
+  captureItemsRef.current = captureItems;
+
+  useEffect(() => {
+    const clearDrag = () => {
+      setCaptureDragActive(false);
+      setCaptureDropTargetKey(null);
+    };
+    window.addEventListener("dragend", clearDrag);
+    return () => window.removeEventListener("dragend", clearDrag);
+  }, []);
   const [openingEdit, setOpeningEdit] = useState(false);
   const [openingEditWarningOpen, setOpeningEditWarningOpen] = useState(false);
   const [historyDetailRow, setHistoryDetailRow] = useState<DailyEntryRow | null>(null);
@@ -2064,6 +2525,23 @@ export function DailyEntryFormView({
   const pendingStaffPayoutEmployeeIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    return () => {
+      const token = captureSessionTokenRef.current;
+      if (token) void closeCaptureSession(token).catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeView === "entry") return;
+    const token = captureSessionTokenRef.current;
+    if (!token) return;
+    void closeCaptureSession(token).catch(() => {});
+    setCaptureSessionToken(null);
+    setCaptureItems([]);
+    setSelectedCaptureItemId(null);
+  }, [activeView]);
+
+  useEffect(() => {
     if (!openDateKey || !/^\d{4}-\d{2}-\d{2}$/.test(openDateKey)) return;
     setDateKey(openDateKey);
     setDateFieldText(formatDateKeyAsDisplay(openDateKey));
@@ -2080,27 +2558,103 @@ export function DailyEntryFormView({
     onOpenStaffPayoutEmployeeIdConsumed,
   ]);
 
-  const historyRows = useMemo(
-    () => listDailyEntriesDescendingFromMap(entryMap),
+  const historySlots = useMemo(
+    () => listDailyEntryHistorySlots(entryMap, todayKey()),
     [entryMap, savedListVersion, activeView],
   );
 
   const [entryListSearchQuery, setEntryListSearchQuery] = useState("");
+  const [historyMonthKey, setHistoryMonthKey] = useState(() => todayKey().slice(0, 7));
+  const [historyDateFrom, setHistoryDateFrom] = useState(() =>
+    monthStartDateKey(todayKey().slice(0, 7)),
+  );
+  const [historyDateTo, setHistoryDateTo] = useState(() => monthEndDateKey(todayKey().slice(0, 7)));
+
+  const historyMonthBounds = useMemo(() => {
+    if (historySlots.length === 0) {
+      const m = todayKey().slice(0, 7);
+      return { min: m, max: m };
+    }
+    return {
+      max: historySlots[0]!.date.slice(0, 7),
+      min: historySlots[historySlots.length - 1]!.date.slice(0, 7),
+    };
+  }, [historySlots]);
+
+  const historyDateBounds = useMemo(() => {
+    if (historySlots.length === 0) {
+      const t = todayKey();
+      return { min: t, max: t };
+    }
+    return {
+      max: historySlots[0]!.date,
+      min: historySlots[historySlots.length - 1]!.date,
+    };
+  }, [historySlots]);
+
+  useEffect(() => {
+    setHistoryMonthKey((prev) => {
+      if (prev < historyMonthBounds.min) return historyMonthBounds.min;
+      if (prev > historyMonthBounds.max) return historyMonthBounds.max;
+      return prev;
+    });
+  }, [historyMonthBounds]);
+
+  useEffect(() => {
+    let from = monthStartDateKey(historyMonthKey);
+    let to = monthEndDateKey(historyMonthKey);
+    if (from < historyDateBounds.min) from = historyDateBounds.min;
+    if (from > historyDateBounds.max) from = historyDateBounds.max;
+    if (to > historyDateBounds.max) to = historyDateBounds.max;
+    if (to < historyDateBounds.min) to = historyDateBounds.min;
+    if (from > to) from = to;
+    setHistoryDateFrom(from);
+    setHistoryDateTo(to);
+  }, [historyMonthKey, historyDateBounds.min, historyDateBounds.max]);
 
   const parsedEntryListSearch = useMemo(
     () => parseDailyEntrySearchQuery(entryListSearchQuery),
     [entryListSearchQuery],
   );
 
-  const filteredHistoryRows = useMemo(() => {
+  const rangeHistorySlots = useMemo(() => {
+    return historySlots.filter((slot) => {
+      if (historyDateFrom && slot.date < historyDateFrom) return false;
+      if (historyDateTo && slot.date > historyDateTo) return false;
+      return true;
+    });
+  }, [historySlots, historyDateFrom, historyDateTo]);
+
+  const filteredHistorySlots = useMemo(() => {
     const q = entryListSearchQuery.trim();
-    if (!q) return historyRows;
-    return historyRows.filter((r) => dailyEntryMatchesSearch(r, parsedEntryListSearch));
-  }, [historyRows, entryListSearchQuery, parsedEntryListSearch]);
+    if (!q) return rangeHistorySlots;
+    return rangeHistorySlots.filter((slot) => {
+      if (slot.row) return dailyEntryMatchesSearch(slot.row, parsedEntryListSearch);
+      const dateHay =
+        `${slot.date} ${formatDateKeyAsDisplay(slot.date)} missing`.toLowerCase();
+      for (const c of parsedEntryListSearch) {
+        if (c.field && c.field !== "date") return false;
+        const hit = dateHay.includes(c.value);
+        if ((c.neg && hit) || (!c.neg && !hit)) return false;
+      }
+      return true;
+    });
+  }, [rangeHistorySlots, entryListSearchQuery, parsedEntryListSearch]);
+
+  function shiftHistoryMonth(delta: number) {
+    const [ys, ms] = historyMonthKey.split("-");
+    const y = Number.parseInt(ys ?? "", 10);
+    const m = Number.parseInt(ms ?? "", 10);
+    if (!Number.isFinite(y) || !Number.isFinite(m)) return;
+    const d = new Date(y, m - 1 + delta, 1);
+    const next = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (next < historyMonthBounds.min || next > historyMonthBounds.max) return;
+    setHistoryMonthKey(next);
+  }
 
   useEffect(() => {
-    if (historyRows.length === 0) setEntryListSearchQuery("");
-  }, [historyRows.length]);
+    if (historySlots.length === 0) setEntryListSearchQuery("");
+  }, [historySlots.length]);
 
   const savedRowForDate = useMemo(
     () => entryMap[dateKey],
@@ -2127,31 +2681,63 @@ export function DailyEntryFormView({
   );
 
   const purchaseVendorOptions = useMemo(() => {
-    // Vendor-purpose books only (purchases are bills against suppliers).
-    const vendorBooks = getLedgerBookNamesSnapshot("vendor");
-    const set = new Set(vendorBooks);
+    // Same cashbook list as supplier payments (all books are vendor).
+    const set = new Set(ledgerBookNames);
     for (const line of expenseLines) {
       if (line.kind !== "purchase") continue;
-      const v = line.vendor.trim();
-      if (v) set.add(v);
+      for (const v of line.purchaseGroupVendors ?? []) {
+        if (v.trim()) set.add(v.trim());
+      }
+      for (const item of line.items) {
+        const v = item.vendor.trim();
+        if (v) set.add(v);
+      }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [expenseLines, ledgerBookNames]);
 
-  const cashExpenseLines = useMemo(
-    () => expenseLines.filter((l) => l.kind !== "purchase"),
-    [expenseLines],
-  );
-  const purchaseExpenseLines = useMemo(
-    () => expenseLines.filter((l) => l.kind === "purchase"),
-    [expenseLines],
+  /** Suppliers that already have an item-purchase bill on this day. */
+  const purchaseVendorsOnDay = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of expenseLines) {
+      if (l.kind !== "purchase") continue;
+      for (const v of l.purchaseGroupVendors ?? []) {
+        if (v.trim()) set.add(v.trim());
+      }
+      for (const item of l.items) {
+        const v = item.vendor.trim();
+        if (v) set.add(v);
+      }
+    }
+    return set;
+  }, [expenseLines]);
+
+  /**
+   * Expenses list: purchase cards + cash lines. Hide auto "Paid now" vendor
+   * rows when that supplier already has a purchase card (Paid now lives there).
+   */
+  const visibleExpenseLines = useMemo(
+    () =>
+      expenseLines.filter((l) => {
+        if (l.kind === "purchase") return true;
+        if (l.kind !== "vendor") return true;
+        if (l.syncedFromPurchaseVendor) return false;
+        const v = l.vendor.trim();
+        return !v || !purchaseVendorsOnDay.has(v);
+      }),
+    [expenseLines, purchaseVendorsOnDay],
   );
 
-  const purchaseBillsTotal = useMemo(
-    () =>
-      purchaseExpenseLines.reduce((s, line) => s + purchaseItemsTotal(line.items), 0),
-    [purchaseExpenseLines],
-  );
+  /** First vendor-payment line for each vendor name (the "paid" side of a purchase). */
+  const vendorPaymentLineByVendor = useMemo(() => {
+    const map = new Map<string, ExpenseLineDraft>();
+    for (const l of expenseLines) {
+      if (l.kind !== "vendor") continue;
+      const v = l.vendor.trim();
+      if (v && !map.has(v)) map.set(v, l);
+    }
+    return map;
+  }, [expenseLines]);
 
   const expenseSum = useMemo(
     () => expenseLines.reduce((s, line) => s + draftLineCashAmount(line), 0),
@@ -2567,6 +3153,8 @@ export function DailyEntryFormView({
         ExpenseLineDraft,
         | "vendor"
         | "amount"
+        | "paidAmount"
+        | "expenseCategoryId"
         | "label"
         | "note"
         | "receiptDataUrls"
@@ -2582,10 +3170,19 @@ export function DailyEntryFormView({
       >
     >,
   ) {
-    const nextPatch =
-      typeof patch.amount === "string"
-        ? { ...patch, amount: sanitizeNonNegativeDecimalInput(patch.amount) }
-        : patch;
+    let nextPatch = patch;
+    if (typeof patch.amount === "string") {
+      nextPatch = {
+        ...nextPatch,
+        amount: sanitizeNonNegativeDecimalInput(patch.amount),
+      };
+    }
+    if (typeof patch.paidAmount === "string") {
+      nextPatch = {
+        ...nextPatch,
+        paidAmount: sanitizeNonNegativeDecimalInput(patch.paidAmount),
+      };
+    }
     setFormNotice((n) => {
       if (n.kind !== "field" || n.lineId !== id) return n;
       if ("vendor" in nextPatch && n.part === "vendor") return { kind: "none" };
@@ -2650,10 +3247,15 @@ export function DailyEntryFormView({
             if (typeof patch.qty === "string") {
               next.qty = sanitizeNonNegativeDecimalInput(patch.qty);
             }
+            if (typeof patch.rate === "string") {
+              next.rate = sanitizeNonNegativeDecimalInput(patch.rate);
+              next.lastEdited = "rate";
+            }
             if (typeof patch.total === "string") {
               next.total = sanitizeNonNegativeDecimalInput(patch.total);
+              next.lastEdited = "total";
             }
-            return next;
+            return recomputePurchaseItem(next, patch);
           }),
         };
       });
@@ -2674,7 +3276,7 @@ export function DailyEntryFormView({
     if (line.kind === "purchase" && !useVendorBucket) {
       setFormNotice({
         kind: "field",
-        message: "Select a vendor before attaching a receipt.",
+        message: "Select a supplier before attaching a receipt.",
         lineId,
         part: "vendor",
       });
@@ -2796,7 +3398,7 @@ export function DailyEntryFormView({
       const purchaseVendor =
         line.kind === "purchase"
           ? purchaseVendorFromEventTarget(e.target) ??
-            purchaseVendorFromEventTarget(document.activeElement)
+          purchaseVendorFromEventTarget(document.activeElement)
           : null;
       void attachReceiptFilesToExpenseLine(
         lineId,
@@ -2820,8 +3422,186 @@ export function DailyEntryFormView({
     setExpenseLines((lines) => [...lines, newRegularExpenseLine()]);
   }
 
+  function expandPurchaseVendorGroup(lineId: string, vendor: string) {
+    const key = purchaseVendorNoteKey(lineId, vendor);
+    setCollapsedPurchaseVendorKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }
+
+  function togglePurchaseVendorGroup(lineId: string, vendor: string) {
+    const key = purchaseVendorNoteKey(lineId, vendor);
+    setCollapsedPurchaseVendorKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   function addPurchaseExpenseLine() {
-    setExpenseLines((lines) => [...lines, newPurchaseExpenseLine()]);
+    const existing = expenseLinesRef.current.find((l) => l.kind === "purchase");
+    if (!existing) {
+      const line = newPurchaseExpenseLine();
+      expandPurchaseVendorGroup(line.id, "");
+      setExpenseLines((lines) => [...lines, line]);
+      return;
+    }
+    const groups = existing.purchaseGroupVendors ?? [];
+    if (groups.some((v) => v.trim() === "")) {
+      expandPurchaseVendorGroup(existing.id, "");
+      setExpenseLines((lines) =>
+        lines.map((l) => {
+          if (l.id !== existing.id) return l;
+          const rest = (l.purchaseGroupVendors ?? []).filter(
+            (v) => v.trim() !== "",
+          );
+          return { ...l, purchaseGroupVendors: ["", ...rest] };
+        }),
+      );
+      return;
+    }
+    expandPurchaseVendorGroup(existing.id, "");
+    setExpenseLines((lines) =>
+      lines.map((l) =>
+        l.id === existing.id
+          ? {
+            ...l,
+            purchaseGroupVendors: ["", ...(l.purchaseGroupVendors ?? [])],
+          }
+          : l,
+      ),
+    );
+  }
+
+  function addPurchaseItemForVendor(lineId: string, vendor: string) {
+    expandPurchaseVendorGroup(lineId, vendor);
+    setExpenseLines((lines) => {
+      const updated = lines.map((l) => {
+        if (l.id !== lineId || l.kind !== "purchase") return l;
+        const groups = l.purchaseGroupVendors ?? [];
+        const nextGroups = groups.includes(vendor)
+          ? groups
+          : [...groups, vendor];
+        return {
+          ...l,
+          purchaseGroupVendors: nextGroups,
+          items: [...l.items, newPurchaseItemDraft(vendor)],
+        };
+      });
+      return applyPurchaseVendorExpenseSync(updated);
+    });
+  }
+
+  /** Move every item (and note/receipt buckets) in a purchase group to a new supplier. */
+  function setPurchaseVendorGroupName(
+    lineId: string,
+    fromVendor: string,
+    toVendor: string,
+  ) {
+    const from = fromVendor.trim();
+    const to = toVendor.trim();
+    if (from === to) return;
+
+    const line = expenseLinesRef.current.find((l) => l.id === lineId);
+    if (!line || line.kind !== "purchase") return;
+    const existingVendors = new Set(
+      purchaseVendorGroupsForLine(line)
+        .map((g) => g.vendor)
+        .filter((v) => v && v !== from),
+    );
+    // Already used on another group — UI disables these; refuse to rename here.
+    if (to && existingVendors.has(to)) return;
+
+    setFormNotice((n) => {
+      if (n.kind !== "field" || n.lineId !== lineId) return n;
+      if (n.part === "vendor" || n.part === "amount") return { kind: "none" };
+      return n;
+    });
+    const fromKey = purchaseVendorNoteKey(lineId, from);
+    const toKey = purchaseVendorNoteKey(lineId, to);
+    setOpenExpenseNoteLineIds((prev) => {
+      if (!prev.has(fromKey) && !prev.has(toKey)) return prev;
+      const next = new Set(prev);
+      if (next.has(fromKey)) {
+        next.delete(fromKey);
+        next.add(toKey);
+      }
+      return next;
+    });
+    setCollapsedPurchaseVendorKeys((prev) => {
+      if (!prev.has(fromKey) && !prev.has(toKey)) return prev;
+      const next = new Set(prev);
+      if (next.has(fromKey)) {
+        next.delete(fromKey);
+        next.add(toKey);
+      }
+      return next;
+    });
+    expandPurchaseVendorGroup(lineId, to);
+    setExpenseLines((lines) => {
+      const updated = lines.map((l) => {
+        if (l.id !== lineId || l.kind !== "purchase") return l;
+        const items = l.items.map((item) =>
+          item.vendor.trim() === from ? { ...item, vendor: to } : item,
+        );
+        const vendorNotes = { ...(l.vendorNotes ?? {}) };
+        const vendorReceipts = { ...(l.vendorReceipts ?? {}) };
+        if (from) {
+          if (to) {
+            if (vendorNotes[from] && !vendorNotes[to]?.trim()) {
+              vendorNotes[to] = vendorNotes[from];
+            }
+            if (
+              (vendorReceipts[from]?.length ?? 0) > 0 &&
+              !(vendorReceipts[to]?.length)
+            ) {
+              vendorReceipts[to] = vendorReceipts[from];
+            }
+          }
+          delete vendorNotes[from];
+          delete vendorReceipts[from];
+        }
+        const nextGroups = uniquePurchaseGroupVendors(
+          (l.purchaseGroupVendors ?? []).map((v) =>
+            v.trim() === from ? to : v,
+          ),
+        );
+        return {
+          ...l,
+          items,
+          vendorNotes,
+          vendorReceipts,
+          purchaseGroupVendors: nextGroups,
+        };
+      });
+      return applyPurchaseVendorExpenseSync(updated);
+    });
+  }
+
+  /**
+   * Inline "Paid now" on a purchase card: set how much was paid to `vendor`
+   * right now. Routes to the vendor's payment line (the cash-out side). Editing
+   * an auto-synced line detaches it (see patchLine) so a partial amount sticks.
+   */
+  function setPurchaseVendorPaid(vendor: string, value: string) {
+    const v = vendor.trim();
+    if (!v) return;
+    const existing = expenseLinesRef.current.find(
+      (l) => l.kind === "vendor" && l.vendor.trim() === v,
+    );
+    if (existing) {
+      patchLine(existing.id, { amount: value });
+      return;
+    }
+    dismissedPurchaseExpenseVendorsRef.current.delete(v);
+    setExpenseLines((lines) => [
+      ...lines,
+      { ...newVendorExpenseLine(), vendor: v, amount: value },
+    ]);
   }
 
   function removeExpenseLine(id: string) {
@@ -2896,7 +3676,7 @@ export function DailyEntryFormView({
         aria-expanded={noteOpen}
         title={noteOpen ? "Hide note" : hasNote ? "Edit note" : "Add note"}
       >
-        <StickyNote className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+        <StickyNote className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
       </button>
     );
   }
@@ -2918,12 +3698,11 @@ export function DailyEntryFormView({
           if (disabled) return;
           togglePurchaseVendorNote(line.id, vendor);
         }}
-        className={`${expenseIconBtnClass} ${noteText || noteOpen ? expenseNoteBtnActiveClass : ""} ${
-          disabled ? "cursor-not-allowed opacity-50" : ""
-        }`}
+        className={`${expenseIconBtnClass} ${noteText || noteOpen ? expenseNoteBtnActiveClass : ""} ${disabled ? "cursor-not-allowed opacity-50" : ""
+          }`}
         aria-label={
           disabled
-            ? "Select a vendor before adding a note"
+            ? "Select a supplier before adding a note"
             : noteOpen
               ? "Hide note"
               : noteText
@@ -2933,7 +3712,7 @@ export function DailyEntryFormView({
         aria-expanded={noteOpen}
         title={
           disabled
-            ? "Select a vendor before adding a note"
+            ? "Select a supplier before adding a note"
             : noteOpen
               ? "Hide note"
               : noteText
@@ -2941,7 +3720,7 @@ export function DailyEntryFormView({
                 : "Add note"
         }
       >
-        <StickyNote className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
+        <StickyNote className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
       </button>
     );
   }
@@ -2950,42 +3729,13 @@ export function DailyEntryFormView({
     setFormNotice((n) =>
       n.kind === "field" && n.lineId === lineId ? { kind: "none" } : n,
     );
-    const line = expenseLinesRef.current.find((l) => l.id === lineId);
-    if (!line || line.kind !== "purchase") return;
-    const removed = line.items.find((i) => i.key === itemKey);
-    const vendor = removed?.vendor.trim() ?? "";
-    const remaining = line.items.filter((i) => i.key !== itemKey);
-    const vendorStillUsed = remaining.some((i) => i.vendor.trim() === vendor);
-    if (vendor && !vendorStillUsed) {
-      setOpenExpenseNoteLineIds((prev) => {
-        const next = new Set(prev);
-        next.delete(purchaseVendorNoteKey(lineId, vendor));
-        return next;
-      });
-    }
     setExpenseLines((lines) => {
       const updated = lines.flatMap((l) => {
         if (l.id !== lineId || l.kind !== "purchase") return [l];
         const nextItems = l.items.filter((i) => i.key !== itemKey);
-        if (nextItems.length === 0) return [];
-        const removedVendor =
-          l.items.find((i) => i.key === itemKey)?.vendor.trim() ?? "";
-        const stillUsed = nextItems.some((i) => i.vendor.trim() === removedVendor);
-        if (!removedVendor || stillUsed) {
-          return [{ ...l, items: nextItems }];
-        }
-        const nextReceipts = { ...(l.vendorReceipts ?? {}) };
-        const nextNotes = { ...(l.vendorNotes ?? {}) };
-        delete nextReceipts[removedVendor];
-        delete nextNotes[removedVendor];
-        return [
-          {
-            ...l,
-            items: nextItems,
-            vendorReceipts: nextReceipts,
-            vendorNotes: nextNotes,
-          },
-        ];
+        const groups = l.purchaseGroupVendors ?? [];
+        if (nextItems.length === 0 && groups.length === 0) return [];
+        return [{ ...l, items: nextItems }];
       });
       return applyPurchaseVendorExpenseSync(updated);
     });
@@ -2995,24 +3745,37 @@ export function DailyEntryFormView({
     setFormNotice((n) =>
       n.kind === "field" && n.lineId === lineId ? { kind: "none" } : n,
     );
+    const groupKey = purchaseVendorNoteKey(lineId, vendor);
     setOpenExpenseNoteLineIds((prev) => {
       const next = new Set(prev);
-      next.delete(purchaseVendorNoteKey(lineId, vendor));
+      next.delete(groupKey);
+      return next;
+    });
+    setCollapsedPurchaseVendorKeys((prev) => {
+      if (!prev.has(groupKey)) return prev;
+      const next = new Set(prev);
+      next.delete(groupKey);
       return next;
     });
     setExpenseLines((lines) => {
       const updated = lines.flatMap((line) => {
         if (line.id !== lineId || line.kind !== "purchase") return [line];
         const remaining = line.items.filter((i) => i.vendor.trim() !== vendor);
-        if (remaining.length === 0) return [];
+        const nextGroups = (line.purchaseGroupVendors ?? []).filter(
+          (v) => v.trim() !== vendor,
+        );
+        if (remaining.length === 0 && nextGroups.length === 0) return [];
         const nextReceipts = { ...line.vendorReceipts };
         const nextNotes = { ...line.vendorNotes };
-        delete nextReceipts[vendor];
-        delete nextNotes[vendor];
+        if (vendor) {
+          delete nextReceipts[vendor];
+          delete nextNotes[vendor];
+        }
         return [
           {
             ...line,
             items: remaining,
+            purchaseGroupVendors: nextGroups,
             vendorReceipts: nextReceipts,
             vendorNotes: nextNotes,
           },
@@ -3022,6 +3785,410 @@ export function DailyEntryFormView({
     });
   }
 
+  function appendMediaRefToExpenseLine(
+    lineId: string,
+    mediaRef: string,
+    purchaseVendor?: string,
+  ): boolean {
+    const line = expenseLinesRef.current.find((l) => l.id === lineId);
+    if (!line) return false;
+    const vendorKey = purchaseVendor?.trim() ?? "";
+    const useVendorBucket = line.kind === "purchase" && vendorKey.length > 0;
+    if (line.kind === "purchase" && !useVendorBucket) {
+      setFormNotice({
+        kind: "field",
+        message: "Select a supplier before attaching a receipt.",
+        lineId,
+        part: "vendor",
+      });
+      return false;
+    }
+    const urls = useVendorBucket
+      ? purchaseVendorReceiptUrls(line, vendorKey)
+      : line.receiptDataUrls;
+    if (urls.includes(mediaRef)) return true;
+    const nextUrls = [...urls, mediaRef];
+    if (useVendorBucket) {
+      patchLine(lineId, {
+        vendorReceipts: {
+          ...(expenseLinesRef.current.find((l) => l.id === lineId)?.vendorReceipts ??
+            line.vendorReceipts),
+          [vendorKey]: nextUrls,
+        },
+        receiptDataUrls: [],
+      });
+    } else {
+      patchLine(lineId, { receiptDataUrls: nextUrls });
+    }
+    return true;
+  }
+
+  function appendMediaRefToVoid(mediaRef: string): void {
+    setVoidSaleAttachmentUrls((urls) =>
+      urls.includes(mediaRef) ? urls : [...urls, mediaRef],
+    );
+  }
+
+  function detachAttachmentFromLines(
+    lines: ExpenseLineDraft[],
+    from: Extract<AttachmentDragSource, { kind: "expense" }>,
+    mediaRef: string,
+  ): ExpenseLineDraft[] {
+    return lines.map((line) => {
+      if (line.id !== from.lineId) return line;
+      const vendorKey = from.purchaseVendor?.trim() ?? "";
+      if (line.kind === "purchase" && vendorKey) {
+        return {
+          ...line,
+          vendorReceipts: {
+            ...line.vendorReceipts,
+            [vendorKey]: purchaseVendorReceiptUrls(line, vendorKey).filter(
+              (u) => u !== mediaRef,
+            ),
+          },
+          receiptDataUrls: [],
+        };
+      }
+      return {
+        ...line,
+        receiptDataUrls: line.receiptDataUrls.filter((u) => u !== mediaRef),
+      };
+    });
+  }
+
+  function attachMediaRefOnLines(
+    lines: ExpenseLineDraft[],
+    lineId: string,
+    mediaRef: string,
+    purchaseVendor?: string,
+  ): ExpenseLineDraft[] | null {
+    const line = lines.find((l) => l.id === lineId);
+    if (!line) return null;
+    const vendorKey = purchaseVendor?.trim() ?? "";
+    const useVendorBucket = line.kind === "purchase" && vendorKey.length > 0;
+    if (line.kind === "purchase" && !useVendorBucket) {
+      setFormNotice({
+        kind: "field",
+        message: "Select a supplier before attaching a receipt.",
+        lineId,
+        part: "vendor",
+      });
+      return null;
+    }
+    return lines.map((row) => {
+      if (row.id !== lineId) return row;
+      if (useVendorBucket) {
+        const urls = purchaseVendorReceiptUrls(row, vendorKey);
+        if (urls.includes(mediaRef)) return row;
+        return {
+          ...row,
+          vendorReceipts: {
+            ...row.vendorReceipts,
+            [vendorKey]: [...urls, mediaRef],
+          },
+          receiptDataUrls: [],
+        };
+      }
+      if (row.receiptDataUrls.includes(mediaRef)) return row;
+      return {
+        ...row,
+        receiptDataUrls: [...row.receiptDataUrls, mediaRef],
+      };
+    });
+  }
+
+  function isSameAttachmentSource(
+    from: AttachmentDragSource,
+    target:
+      | { kind: "expense"; lineId: string; purchaseVendor?: string }
+      | { kind: "void" },
+  ): boolean {
+    if (from.kind !== target.kind) return false;
+    if (from.kind === "void") return true;
+    if (target.kind !== "expense") return false;
+    return (
+      from.lineId === target.lineId &&
+      (from.purchaseVendor?.trim() ?? "") ===
+        (target.purchaseVendor?.trim() ?? "")
+    );
+  }
+
+  /** Move an already-assigned attachment in one state update (no storage delete). */
+  function moveAssignedAttachment(
+    from: AttachmentDragSource,
+    mediaRef: string,
+    target:
+      | { kind: "expense"; lineId: string; purchaseVendor?: string }
+      | { kind: "void" },
+  ): void {
+    if (isSameAttachmentSource(from, target)) return;
+
+    if (from.kind === "void" && target.kind === "expense") {
+      const next = attachMediaRefOnLines(
+        expenseLinesRef.current,
+        target.lineId,
+        mediaRef,
+        target.purchaseVendor,
+      );
+      if (!next) return;
+      setVoidSaleAttachmentUrls((urls) => urls.filter((u) => u !== mediaRef));
+      setExpenseLines(next);
+      return;
+    }
+
+    if (from.kind === "expense" && target.kind === "void") {
+      setExpenseLines((lines) =>
+        detachAttachmentFromLines(lines, from, mediaRef),
+      );
+      appendMediaRefToVoid(mediaRef);
+      return;
+    }
+
+    if (from.kind === "expense" && target.kind === "expense") {
+      setExpenseLines((lines) => {
+        const detached = detachAttachmentFromLines(lines, from, mediaRef);
+        return (
+          attachMediaRefOnLines(
+            detached,
+            target.lineId,
+            mediaRef,
+            target.purchaseVendor,
+          ) ?? detached
+        );
+      });
+    }
+  }
+
+  function applyAttachmentDrop(
+    payload: CaptureDragPayload,
+    target:
+      | { kind: "expense"; lineId: string; purchaseVendor?: string }
+      | { kind: "void" },
+  ): void {
+    if (payload.from) {
+      moveAssignedAttachment(payload.from, payload.mediaRef, target);
+      return;
+    }
+    if (!payload.itemId) return;
+    if (target.kind === "expense") {
+      void claimCaptureOntoExpenseLine(
+        target.lineId,
+        payload.itemId,
+        payload.mediaRef,
+        target.purchaseVendor,
+      );
+      return;
+    }
+    void claimCaptureOntoVoid(payload.itemId, payload.mediaRef);
+  }
+
+  async function claimCaptureOntoExpenseLine(
+    lineId: string,
+    itemId: string,
+    mediaRef: string,
+    purchaseVendor?: string,
+  ) {
+    if (!appendMediaRefToExpenseLine(lineId, mediaRef, purchaseVendor)) return;
+    const token = captureSessionTokenRef.current;
+    if (token) {
+      try {
+        await removeCaptureItem(token, itemId, { keepMedia: true });
+      } catch {
+        // Form already owns the ref; tray will refresh on next poll.
+      }
+    }
+    setCaptureItems((prev) => prev.filter((i) => i.id !== itemId));
+    setSelectedCaptureItemId(null);
+  }
+
+  async function claimCaptureOntoVoid(itemId: string, mediaRef: string) {
+    appendMediaRefToVoid(mediaRef);
+    const token = captureSessionTokenRef.current;
+    if (token) {
+      try {
+        await removeCaptureItem(token, itemId, { keepMedia: true });
+      } catch {
+        // ignore
+      }
+    }
+    setCaptureItems((prev) => prev.filter((i) => i.id !== itemId));
+    setSelectedCaptureItemId(null);
+  }
+
+  function selectedCapturePayload(): { itemId: string; mediaRef: string } | null {
+    if (!selectedCaptureItemId) return null;
+    const item = captureItemsRef.current.find((i) => i.id === selectedCaptureItemId);
+    if (!item) return null;
+    return { itemId: item.id, mediaRef: item.mediaRef };
+  }
+
+  function attachmentDropActive(data: DataTransfer | null): boolean {
+    if (!data) return false;
+    const types = Array.from(data.types);
+    if (types.includes(CAPTURE_DND_MIME) || types.includes("text/plain")) return true;
+    if (types.includes("Files")) return true;
+    return false;
+  }
+
+  function captureDropKey(lineId: string, purchaseVendor?: string): string {
+    const vendor = purchaseVendor?.trim() ?? "";
+    return vendor ? `${lineId}::${vendor}` : lineId;
+  }
+
+  function bindExpenseCaptureDrop(
+    lineId: string,
+    options?: { purchaseVendor?: string; disabled?: boolean },
+  ): {
+    isHot: boolean;
+    className: string;
+    onDragEnter: (e: DragEvent<HTMLDivElement>) => void;
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+    onDragLeave: (e: DragEvent<HTMLDivElement>) => void;
+    onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  } {
+    const purchaseVendor = options?.purchaseVendor?.trim() ?? "";
+    const disabled = Boolean(options?.disabled);
+    const key = captureDropKey(lineId, purchaseVendor || undefined);
+    const isHot = captureDropTargetKey === key;
+    const ready =
+      (captureDragActive || Boolean(selectedCaptureItemId)) && !disabled;
+    const className = [
+      "relative transition-[box-shadow,background-color,outline-color] duration-150",
+      ready
+        ? "outline outline-1 outline-dashed outline-[var(--pos-sb-base)]/40 bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,transparent)]"
+        : "",
+      isHot
+        ? "z-[1] outline outline-2 outline-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_14%,var(--pos-card))] shadow-[0_0_0_3px_color-mix(in_srgb,var(--pos-sb-base)_25%,transparent)]"
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      isHot,
+      className,
+      onDragEnter: (e) => {
+        if (disabled || !attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        setCaptureDropTargetKey(key);
+      },
+      onDragOver: (e) => {
+        if (disabled || !attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (captureDropTargetKey !== key) setCaptureDropTargetKey(key);
+      },
+      onDragLeave: (e) => {
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setCaptureDropTargetKey((cur) => (cur === key ? null : cur));
+      },
+      onDrop: (e) => {
+        if (disabled) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setCaptureDropTargetKey(null);
+        setCaptureDragActive(false);
+        const payload = parseCaptureDragPayload(e.dataTransfer);
+        if (payload) {
+          applyAttachmentDrop(payload, {
+            kind: "expense",
+            lineId,
+            ...(purchaseVendor ? { purchaseVendor } : {}),
+          });
+          return;
+        }
+        const files = clipboardAttachmentFilesFromDataTransfer(e.dataTransfer);
+        if (files.length > 0) {
+          void attachReceiptFilesToExpenseLine(
+            lineId,
+            files,
+            purchaseVendor || undefined,
+          );
+        }
+      },
+    };
+  }
+
+  function bindVoidCaptureDrop(): {
+    isHot: boolean;
+    className: string;
+    onDragEnter: (e: DragEvent<HTMLDivElement>) => void;
+    onDragOver: (e: DragEvent<HTMLDivElement>) => void;
+    onDragLeave: (e: DragEvent<HTMLDivElement>) => void;
+    onDrop: (e: DragEvent<HTMLDivElement>) => void;
+  } {
+    const key = "void";
+    const isHot = captureDropTargetKey === key;
+    const ready = captureDragActive || Boolean(selectedCaptureItemId);
+    const className = [
+      "relative rounded-[10px] transition-[box-shadow,background-color,outline-color] duration-150",
+      ready
+        ? "outline outline-1 outline-dashed outline-[var(--pos-sb-base)]/40 bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,transparent)]"
+        : "",
+      isHot
+        ? "outline outline-2 outline-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_14%,var(--pos-card))] shadow-[0_0_0_3px_color-mix(in_srgb,var(--pos-sb-base)_25%,transparent)]"
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      isHot,
+      className,
+      onDragEnter: (e) => {
+        if (!attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        setCaptureDropTargetKey(key);
+      },
+      onDragOver: (e) => {
+        if (!attachmentDropActive(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (captureDropTargetKey !== key) setCaptureDropTargetKey(key);
+      },
+      onDragLeave: (e) => {
+        const related = e.relatedTarget as Node | null;
+        if (related && e.currentTarget.contains(related)) return;
+        setCaptureDropTargetKey((cur) => (cur === key ? null : cur));
+      },
+      onDrop: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setCaptureDropTargetKey(null);
+        setCaptureDragActive(false);
+        const payload = parseCaptureDragPayload(e.dataTransfer);
+        if (payload) {
+          applyAttachmentDrop(payload, { kind: "void" });
+          return;
+        }
+        const files = clipboardAttachmentFilesFromDataTransfer(e.dataTransfer);
+        if (files.length === 0) return;
+        void (async () => {
+          setVoidAttachBusy(true);
+          try {
+            const result = await mergeVoidAttachmentDataUrls(
+              voidSaleAttachmentUrlsRef.current,
+              files,
+            );
+            if (result.ok) {
+              clearSalesFieldNotice();
+              setVoidSaleAttachmentUrls(result.urls);
+            } else {
+              setFormNotice({
+                kind: "salesField",
+                message: result.message,
+                part: "voidAttach",
+              });
+            }
+          } finally {
+            setVoidAttachBusy(false);
+          }
+        })();
+      },
+    };
+  }
+
   /** Add / attach receipt control — kept compact to sit on the same row as vendor, amount, and delete. */
   function renderReceiptAddControl(
     line: ExpenseLineDraft,
@@ -3029,6 +4196,7 @@ export function DailyEntryFormView({
   ) {
     const purchaseVendor = options?.purchaseVendor?.trim() ?? "";
     const forPurchaseVendor = line.kind === "purchase" && purchaseVendor.length > 0;
+    const btnSizeClass = "size-8 rounded-[7px]";
     const inputId = forPurchaseVendor
       ? `daily-expense-receipt-${line.id}-${purchaseVendor}`
       : `daily-expense-receipt-${line.id}`;
@@ -3039,73 +4207,103 @@ export function DailyEntryFormView({
       ? purchaseVendorReceiptUrls(line, purchaseVendor).length
       : line.receiptDataUrls.length;
     const disabled = Boolean(options?.disabled) || busy;
+    const clickAssign = selectedCapturePayload();
     return (
       <div className="flex shrink-0 flex-col items-center gap-0.5">
-      <div
-        className={`relative flex size-12 shrink-0 items-center justify-center ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
-      >
-        <input
-          id={inputId}
-          type="file"
-          accept={RECEIPT_FILE_ACCEPT}
-          multiple
-          disabled={disabled}
-          className="sr-only"
-          tabIndex={-1}
-          aria-hidden
-          onChange={(e) => {
-            const picked = e.target.files ? Array.from(e.target.files) : [];
-            e.target.value = "";
-            void attachReceiptFilesToExpenseLine(
-              line.id,
-              picked,
-              forPurchaseVendor ? purchaseVendor : undefined,
-            );
-          }}
-        />
-        <label
-          htmlFor={disabled ? undefined : inputId}
-          className={`relative inline-flex size-12 shrink-0 items-center justify-center rounded-[10px] border border-solid transition-colors ${
-            disabled
-              ? "cursor-not-allowed opacity-50"
-              : "cursor-pointer hover:bg-[var(--pos-nav-hover)]/30"
-          } ${
-            attachErr
-              ? "border-red-500/70 text-red-700"
-              : "border-[var(--pos-divider)] text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
+        <div
+          className={`relative flex shrink-0 items-center justify-center ${btnSizeClass} ${attachErr ? FIELD_ERR_ATTACH_WRAP : ""} ${
+            clickAssign && !disabled ? "ring-2 ring-[var(--pos-sb-base)]/40" : ""
           }`}
-          aria-label={
-            options?.disabled
-              ? "Select a vendor before attaching"
-              : attachCount > 0
-                ? `Attach receipt image or PDF (${attachCount} attached)`
-                : "Attach receipt image or PDF"
-          }
-          title={
-            options?.disabled
-              ? "Select a vendor before attaching"
-              : attachErr ??
+        >
+          <input
+            id={inputId}
+            type="file"
+            accept={RECEIPT_FILE_ACCEPT}
+            multiple
+            disabled={disabled}
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden
+            onChange={(e) => {
+              const picked = e.target.files ? Array.from(e.target.files) : [];
+              e.target.value = "";
+              void attachReceiptFilesToExpenseLine(
+                line.id,
+                picked,
+                forPurchaseVendor ? purchaseVendor : undefined,
+              );
+            }}
+          />
+          <label
+            htmlFor={disabled || clickAssign ? undefined : inputId}
+            onClick={(e) => {
+              if (disabled) return;
+              if (clickAssign) {
+                e.preventDefault();
+                void claimCaptureOntoExpenseLine(
+                  line.id,
+                  clickAssign.itemId,
+                  clickAssign.mediaRef,
+                  forPurchaseVendor ? purchaseVendor : undefined,
+                );
+              }
+            }}
+            className={`relative inline-flex shrink-0 items-center justify-center border border-solid bg-[var(--pos-card)] transition-colors ${btnSizeClass} ${disabled
+              ? "cursor-not-allowed opacity-50"
+              : "cursor-pointer hover:bg-[var(--pos-nav-hover)]"
+              } ${attachErr
+                ? "border-red-500/70 text-red-700"
+                : "border-[var(--pos-divider)] text-[var(--pos-text-2)] hover:border-[var(--pos-sb-base)] hover:text-[var(--pos-text-1)]"
+              }`}
+            aria-label={
+              options?.disabled
+                ? "Select a supplier before attaching"
+                : clickAssign
+                  ? "Assign selected phone photo here"
+                : attachCount > 0
+                  ? `Attach receipt image or PDF (${attachCount} attached)`
+                  : "Attach receipt image or PDF"
+            }
+            title={
+              options?.disabled
+                ? "Select a supplier before attaching"
+                : clickAssign
+                  ? "Click to assign the selected phone photo"
+                : attachErr ??
                 (attachCount > 0
-                  ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste (Ctrl+V / ⌘V) while this row is focused`
-                  : "Attach image or PDF, or paste an image (Ctrl+V / ⌘V) while this row is focused")
-          }
-        >
-          <Paperclip className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
-          <AttachmentCountBadge count={attachCount} />
-        </label>
-      </div>
-      {busy ? (
-        <span className="text-[9px] leading-tight text-[var(--pos-text-2)]">Uploading…</span>
-      ) : attachErr ? (
-        <span
-          role="alert"
-          className="max-w-[5.5rem] text-center text-[9px] leading-tight text-red-700"
-        >
-          {attachErr}
-        </span>
-      ) : null}
+                  ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, paste, or drop here`
+                  : "Attach image or PDF, paste, or drop a phone photo here")
+            }
+          >
+            <Paperclip className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+            <AttachmentCountBadge count={attachCount} />
+          </label>
+        </div>
+        {busy ? (
+          <span className="text-[9px] leading-tight text-[var(--pos-text-2)]">Uploading…</span>
+        ) : attachErr ? (
+          <span
+            role="alert"
+            className="max-w-[5.5rem] text-center text-[9px] leading-tight text-red-700"
+          >
+            {attachErr}
+          </span>
+        ) : null}
       </div>
     );
+  }
+
+  function startAssignedAttachmentDrag(
+    e: DragEvent,
+    mediaRef: string,
+    from: AttachmentDragSource,
+  ) {
+    const payload: CaptureDragPayload = { mediaRef, from };
+    const json = JSON.stringify(payload);
+    e.dataTransfer.setData(CAPTURE_DND_MIME, json);
+    e.dataTransfer.setData("text/plain", json);
+    e.dataTransfer.effectAllowed = "move";
+    setCaptureDragActive(true);
   }
 
   function renderReceiptThumbnails(
@@ -3118,16 +4316,27 @@ export function DailyEntryFormView({
       ? purchaseVendorReceiptUrls(line, purchaseVendor)
       : line.receiptDataUrls;
     if (urls.length === 0) return null;
+    const from: AttachmentDragSource = {
+      kind: "expense",
+      lineId: line.id,
+      ...(forPurchaseVendor ? { purchaseVendor } : {}),
+    };
     return (
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1">
         {urls.map((url, idx) => (
           <div key={`${line.id}-${purchaseVendor || "r"}-${idx}`} className="relative inline-flex">
             <button
               type="button"
-              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50"
+              draggable
+              onDragStart={(e) => startAssignedAttachmentDrag(e, url, from)}
+              onDragEnd={() => setCaptureDragActive(false)}
+              className="block cursor-grab overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 active:cursor-grabbing"
               onClick={() => setReceiptPreviewUrl(url)}
+              title="Drag to another expense or void row"
               aria-label={
-                isPdfMediaRef(url) ? `View PDF ${idx + 1}` : `View receipt ${idx + 1}`
+                isPdfMediaRef(url)
+                  ? `View or move PDF ${idx + 1}`
+                  : `View or move receipt ${idx + 1}`
               }
             >
               {isPdfMediaRef(url) ? (
@@ -3177,9 +4386,12 @@ export function DailyEntryFormView({
     const urls = voidSaleAttachmentUrls;
     const attachCount = urls.length;
     const inputId = "daily-void-attachments";
+    const clickAssign = selectedCapturePayload();
     return (
       <div
-        className={`relative flex size-9 shrink-0 items-center justify-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""}`}
+        className={`relative flex size-9 shrink-0 items-center justify-center ${voidAttachErr ? FIELD_ERR_ATTACH_WRAP : ""} ${
+          clickAssign ? "ring-2 ring-[var(--pos-sb-base)]/40" : ""
+        }`}
         data-field-error-anchor="void:voidAttach"
       >
         <input
@@ -3213,17 +4425,26 @@ export function DailyEntryFormView({
           }}
         />
         <label
-          htmlFor={inputId}
+          htmlFor={clickAssign ? undefined : inputId}
+          onClick={(e) => {
+            if (!clickAssign) return;
+            e.preventDefault();
+            void claimCaptureOntoVoid(clickAssign.itemId, clickAssign.mediaRef);
+          }}
           className="relative inline-flex size-9 cursor-pointer items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] text-[var(--pos-text-2)] transition-colors hover:border-[var(--pos-sb-base)] hover:bg-[var(--pos-nav-hover)]/30 hover:text-[var(--pos-text-1)]"
           aria-label={
-            attachCount > 0
+            clickAssign
+              ? "Assign selected phone photo to void sales"
+              : attachCount > 0
               ? `Attach PDF or image for void sales (${attachCount} attached)`
               : "Attach PDF or image for void sales"
           }
           title={
-            attachCount > 0
-              ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, or paste while this block is focused`
-              : "Attach PDF or image, or paste an image while this section is focused"
+            clickAssign
+              ? "Click to assign the selected phone photo"
+              : attachCount > 0
+              ? `${attachCount} attachment${attachCount === 1 ? "" : "s"} — add more, paste, or drop here`
+              : "Attach PDF or image, paste, or drop a phone photo here"
           }
         >
           <Paperclip className="size-4 shrink-0" strokeWidth={2.25} />
@@ -3236,15 +4457,24 @@ export function DailyEntryFormView({
   function renderVoidAttachmentThumbnails() {
     const urls = voidSaleAttachmentUrls;
     if (urls.length === 0) return null;
+    const from: AttachmentDragSource = { kind: "void" };
     return (
       <div className="flex flex-wrap items-center gap-1 border-t border-solid [border-color:var(--pos-divider)] pt-1.5">
         {urls.map((url, idx) => (
           <div key={`void-r-${idx}`} className="relative inline-flex">
             <button
               type="button"
-              className="block overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
+              draggable
+              onDragStart={(e) => startAssignedAttachmentDrag(e, url, from)}
+              onDragEnd={() => setCaptureDragActive(false)}
+              className="block cursor-grab overflow-hidden rounded-[6px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)] active:cursor-grabbing"
               onClick={() => setReceiptPreviewUrl(url)}
-              aria-label={isPdfMediaRef(url) ? `View PDF ${idx + 1}` : `View attachment ${idx + 1}`}
+              title="Drag to an expense or supplier row"
+              aria-label={
+                isPdfMediaRef(url)
+                  ? `View or move PDF ${idx + 1}`
+                  : `View or move attachment ${idx + 1}`
+              }
             >
               {isPdfMediaRef(url) ? (
                 <span className="flex size-11 flex-col items-center justify-center gap-0.5 bg-[var(--pos-page)] text-[var(--pos-text-2)]">
@@ -3342,10 +4572,13 @@ export function DailyEntryFormView({
           dateKey,
         });
 
+      // I3: derive the salary bundle in memory but do NOT persist it on its own —
+      // it rides along in the single atomic commit below.
       const staffSync = await syncStaffExpensesToSalaryRegister({
         dateKey,
         nextLines: syncedExpenseLines,
         priorLines: prior?.expenseLines,
+        persist: false,
       });
       if (!staffSync.ok) {
         setFormNotice({ kind: "globalError", message: staffSync.message });
@@ -3360,14 +4593,42 @@ export function DailyEntryFormView({
 
       setIsSaving(true);
       try {
-        await flushLedgerWorkspacePersist();
-        const result = await saveDailyEntry(next);
+        // I3 — atomic cross-module save. The daily entry, the derived ledger
+        // workspace (mutated in-memory by syncDailyExpenseLedgerLinks), and the
+        // salary bundle commit together in ONE server transaction, so a failure
+        // in any leg rolls back all of them instead of orphaning data. Suppress
+        // the stores' own debounced PUTs so they can't race or double-write.
+        const ledgerWs = getWorkspace();
+        cancelLedgerWorkspacePersist();
+        cancelSalaryWorkspacePersist();
+
+        const result = await commitDailyEntry(
+          next,
+          {
+            suppliers: ledgerWs.suppliers,
+            moves: ledgerWs.moves,
+            ledger: ledgerWs.ledger,
+          },
+          {
+            selectedMonthKey: staffSync.bundle.selectedMonthKey,
+            months: staffSync.bundle.months,
+          },
+        );
+
         if (!result.ok) {
+          // Nothing committed server-side; realign in-memory stores to the
+          // (unchanged) server truth so no stale local state lingers.
+          await Promise.all([reloadLedgerWorkspace(), reloadSalaryWorkspace()]);
           setFormNotice({ kind: "global", message: result.message });
           return;
         }
 
-        await refreshEntries();
+        // Pull the committed truth back into the ledger/salary stores.
+        await Promise.all([
+          refreshEntries(),
+          reloadLedgerWorkspace(),
+          reloadSalaryWorkspace(),
+        ]);
         setSavedListVersion((v) => v + 1);
         setOpeningEdit(false);
         const baseMsg = prior
@@ -3376,7 +4637,7 @@ export function DailyEntryFormView({
         setFormNotice({
           kind: "global",
           message: ledgerPostFailed
-            ? `${baseMsg} Cashbook payments: one or more lines could not be saved — check amounts.`
+            ? `${baseMsg} Supplier payments: one or more lines could not be saved — check amounts.`
             : baseMsg,
         });
         setActiveView("history");
@@ -3423,6 +4684,13 @@ export function DailyEntryFormView({
   function leaveEntryFormForHistory() {
     requestLeaveIfNeeded(() => setActiveView("history"));
   }
+
+  useEffect(() => {
+    if (!historyNavNonce) return;
+    leaveEntryFormForHistory();
+    // Only react to sidebar re-click; leaveEntryFormForHistory uses this render's dirty guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyNavNonce]);
 
   function openNativeDatePicker() {
     const el = datePickerRef.current;
@@ -3527,13 +4795,26 @@ export function DailyEntryFormView({
 
   async function executeDeleteHistoryEntry(dateIso: string) {
     if (!entryMap[dateIso]) return;
+    // Settle any pending ledger/salary edit first so a debounced write can't
+    // re-add the day's bills/payouts after the server removes them.
+    await Promise.all([
+      flushLedgerWorkspacePersist(),
+      flushSalaryWorkspacePersist().catch(() => { }),
+    ]);
     const result = await deleteDailyEntry(dateIso);
     if (!result.ok) {
       setFormNotice({ kind: "global", message: result.message });
       return;
     }
     closeDeleteEntryModal();
-    await refreshEntries();
+    // The server safe-cascades this day's unreferenced bills/POs and its posted
+    // staff payouts; pull fresh ledger + salary truth so neither Cashbooks nor
+    // the Salary register shows (or re-saves) the removed rows.
+    await Promise.all([
+      refreshEntries(),
+      reloadLedgerWorkspace(),
+      reloadSalaryWorkspace(),
+    ]);
     setSavedListVersion((v) => v + 1);
     setFormNotice({ kind: "global", message: "Entry deleted." });
     setHistoryDetailRow((open) => (open?.date === dateIso ? null : open));
@@ -3612,7 +4893,40 @@ export function DailyEntryFormView({
           </div>
         </div>
       ) : (
-        <span className="col-start-2 shrink-0" aria-hidden />
+        <div className="col-start-2 flex shrink-0 items-center justify-center">
+          <div
+            className="relative flex items-center gap-0.5"
+            role="group"
+            aria-label="Filter by month"
+          >
+            <button
+              type="button"
+              onClick={() => shiftHistoryMonth(-1)}
+              disabled={historyMonthKey <= historyMonthBounds.min}
+              className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Previous month"
+              aria-label="Previous month"
+            >
+              <ChevronLeft className="size-5" strokeWidth={2.5} />
+            </button>
+            <span
+              className={`${inputClass} inline-flex !h-9 w-auto min-w-[7.5rem] items-center justify-center py-0 text-center font-semibold`}
+              aria-live="polite"
+            >
+              {formatMonthKeyAsDisplay(historyMonthKey)}
+            </span>
+            <button
+              type="button"
+              onClick={() => shiftHistoryMonth(1)}
+              disabled={historyMonthKey >= historyMonthBounds.max}
+              className="inline-flex h-9 min-w-9 shrink-0 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--pos-sb-base)] disabled:cursor-not-allowed disabled:opacity-50"
+              title="Next month"
+              aria-label="Next month"
+            >
+              <ChevronRight className="size-5" strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
       )}
       <div className="col-start-3 flex justify-end gap-1.5 justify-self-end">
         {activeView === "entry" ? (
@@ -3664,15 +4978,19 @@ export function DailyEntryFormView({
             className="self-center text-[11px] tabular-nums text-[var(--pos-text-2)]"
             title={
               entryListSearchQuery.trim()
-                ? "Entries matching search / total saved"
-                : "Total saved entries"
+                ? "Rows matching search in current filters"
+                : "Saved entries and missing days in current filters"
             }
           >
-            {historyRows.length === 0
-              ? "0 saved"
-              : entryListSearchQuery.trim()
-                ? `${filteredHistoryRows.length} / ${historyRows.length}`
-                : `${historyRows.length} saved`}
+            {(() => {
+              const savedCount = rangeHistorySlots.filter((s) => s.row).length;
+              const missingCount = rangeHistorySlots.length - savedCount;
+              if (entryListSearchQuery.trim()) {
+                return `${filteredHistorySlots.length} / ${rangeHistorySlots.length}`;
+              }
+              if (missingCount === 0) return `${savedCount} saved`;
+              return `${savedCount} saved · ${missingCount} missing`;
+            })()}
           </span>
         )}
       </div>
@@ -3682,11 +5000,10 @@ export function DailyEntryFormView({
   const editingExistingBanner =
     activeView === "entry" && savedRowForDate ? (
       <div
-        className={`shrink-0 border-b border-solid px-3 py-2.5 sm:px-4 sm:py-3 ${
-          isFormLocked
-            ? "border-amber-700/40 border-l-4 border-l-amber-400 bg-amber-800 text-amber-50"
-            : "border-[color-mix(in_srgb,var(--pos-sb-base)_50%,black)] border-l-4 border-l-[color-mix(in_srgb,var(--pos-sb-base)_70%,white)] bg-[var(--pos-sb-base)] text-white"
-        }`}
+        className={`shrink-0 border-b border-solid px-3 py-2.5 sm:px-4 sm:py-3 ${isFormLocked
+          ? "border-amber-700/40 border-l-4 border-l-amber-400 bg-amber-800 text-amber-50"
+          : "border-[color-mix(in_srgb,var(--pos-sb-base)_50%,black)] border-l-4 border-l-[color-mix(in_srgb,var(--pos-sb-base)_70%,white)] bg-[var(--pos-sb-base)] text-white"
+          }`}
         role="status"
         aria-live="polite"
       >
@@ -3703,9 +5020,8 @@ export function DailyEntryFormView({
           </p>
           {savedRowForDate.updatedAt ? (
             <p
-              className={`shrink-0 text-[12px] font-medium tabular-nums leading-snug sm:text-[13px] ${
-                isFormLocked ? "text-amber-100/90" : "text-white/80"
-              }`}
+              className={`shrink-0 text-[12px] font-medium tabular-nums leading-snug sm:text-[13px] ${isFormLocked ? "text-amber-100/90" : "text-white/80"
+                }`}
             >
               Saved{" "}
               {new Date(savedRowForDate.updatedAt).toLocaleString(undefined, {
@@ -3745,7 +5061,7 @@ export function DailyEntryFormView({
       </div>
     ) : formNotice.kind === "globalError" ? (
       <div
-        className="shrink-0 border-b border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[11px] font-medium leading-snug text-red-800"
+        className="shrink-0 border-b border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[11px] font-medium leading-snug text-red-800 dark:bg-red-500/10 dark:text-red-300"
         role="alert"
         aria-live="assertive"
       >
@@ -3770,216 +5086,251 @@ export function DailyEntryFormView({
           ) : null}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col overflow-auto px-3 py-2">
-            {!entriesLoading && historyRows.length > 0 ? (
-              <div className="shrink-0" role="search">
-                <label className="relative block">
-                  <span className="sr-only">Search saved entries</span>
-                  <Search
-                    className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--pos-text-2)]"
-                    strokeWidth={2.25}
-                    aria-hidden
+              {!entriesLoading ? (
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <div className="min-w-[12rem] flex-1" role="search">
+                    <label className="relative block">
+                      <span className="sr-only">Search daily entries</span>
+                      <Search
+                        className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--pos-text-2)]"
+                        strokeWidth={2.25}
+                        aria-hidden
+                      />
+                      <input
+                        type="search"
+                        value={entryListSearchQuery}
+                        onChange={(e) => setEntryListSearchQuery(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] py-1.5 pl-8 pr-8 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]/80 focus:border-[var(--pos-text-1)] focus:outline-none"
+                        placeholder='Search — try supplier:Rent cash:1000 "apr" missing'
+                      />
+                      {entryListSearchQuery ? (
+                        <button
+                          type="button"
+                          className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                          onClick={() => setEntryListSearchQuery("")}
+                          aria-label="Clear search"
+                        >
+                          <X className="size-3.5" strokeWidth={2.25} aria-hidden />
+                        </button>
+                      ) : null}
+                    </label>
+                  </div>
+                  <DateRangeCalendarField
+                    from={historyDateFrom}
+                    to={historyDateTo}
+                    min={historyDateBounds.min}
+                    max={historyDateBounds.max}
+                    onChange={(from, to) => {
+                      setHistoryDateFrom(from);
+                      setHistoryDateTo(to);
+                    }}
                   />
-                  <input
-                    type="search"
-                    value={entryListSearchQuery}
-                    onChange={(e) => setEntryListSearchQuery(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] py-1.5 pl-8 pr-8 text-[12px] text-[var(--pos-text-1)] placeholder:text-[var(--pos-text-2)]/80 focus:border-[var(--pos-text-1)] focus:outline-none"
-                    placeholder='Search — try vendor:Rent cash:1000 "apr" -legacy'
-                  />
-                  {entryListSearchQuery ? (
-                    <button
-                      type="button"
-                      className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-[var(--pos-text-2)] hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
-                      onClick={() => setEntryListSearchQuery("")}
-                      aria-label="Clear search"
-                    >
-                      <X className="size-3.5" strokeWidth={2.25} aria-hidden />
-                    </button>
-                  ) : null}
-                </label>
-              </div>
-            ) : null}
-            {!entriesLoading && historyRows.length === 0 ? (
-              <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-dashed border-[var(--pos-border-medium)]">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-dashed border-[var(--pos-border-medium)] bg-[var(--pos-page)] px-3 py-2">
-                  <h2 className={`m-0 min-w-0 leading-tight ${sectionTitleClass}`}>
-                    Saved entries
-                  </h2>
                   <button
                     type="button"
                     onClick={openAddEntryForm}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
+                    className="inline-flex h-9 shrink-0 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
                     style={{ backgroundColor: "var(--pos-sb-base)" }}
                   >
                     <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
                     Add Entry
                   </button>
                 </div>
-                <p className="px-4 py-8 text-center text-[13px] text-[var(--pos-text-2)]">
-                  No saved daily entries yet. Tap <span className="font-medium">Add Entry</span> in
-                  the header row, fill the form, and save.
-                </p>
-              </div>
-            ) : (
-              <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-solid [border-color:var(--pos-divider)]">
-                <div className="flex shrink-0 flex-col gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <h2 className={`m-0 min-w-0 leading-tight ${sectionTitleClass}`}>
-                      Saved entries
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={openAddEntryForm}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
-                      style={{ backgroundColor: "var(--pos-sb-base)" }}
-                    >
-                      <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                      Add Entry
-                    </button>
+              ) : null}
+              {!entriesLoading ? (
+                <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-solid [border-color:var(--pos-divider)]">
+                  <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
+                    <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
+                      <thead>
+                        <tr className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]">
+                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Date</th>
+                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Opening</th>
+                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Net sales</th>
+                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Expenses Σ</th>
+                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Remaining</th>
+                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Entered by</th>
+                          <th className="px-3 py-2 text-right font-semibold text-[var(--pos-text-2)]">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredHistorySlots.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={7}
+                              className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]"
+                            >
+                              <p className="m-0 font-medium text-[var(--pos-text-1)]">
+                                {entryListSearchQuery.trim()
+                                  ? "No entries match this search"
+                                  : "No days match these filters"}
+                              </p>
+                              {entryListSearchQuery.trim() ? (
+                                <p className="mt-1 text-[12px]">
+                                  Try broader keywords, remove a scoped filter, or clear exclusions (
+                                  <button
+                                    type="button"
+                                    className="font-semibold text-[var(--pos-sb-base)] underline-offset-2 hover:underline"
+                                    onClick={() => setEntryListSearchQuery("")}
+                                  >
+                                    clear search
+                                  </button>
+                                  ).
+                                </p>
+                              ) : (
+                                <p className="mt-1 text-[12px]">
+                                  Widen the date range, or pick another month.
+                                </p>
+                              )}
+                            </td>
+                          </tr>
+                        ) : null}
+                        {filteredHistorySlots.map((slot) => {
+                          const r = slot.row;
+                          if (!r) {
+                            return (
+                              <tr
+                                key={slot.date}
+                                className="border-b border-solid border-amber-200/80 bg-amber-100/90 transition-colors hover:bg-amber-200/70 dark:border-amber-500/30 dark:bg-amber-500/15 dark:hover:bg-amber-500/25"
+                              >
+                                <td className="whitespace-nowrap px-3 py-2 font-mono text-[var(--pos-text-1)]">
+                                  {formatDateKeyAsDisplay(slot.date)}
+                                </td>
+                                <td
+                                  colSpan={5}
+                                  className="px-3 py-2 text-[var(--pos-text-2)]"
+                                >
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
+                                    title="No daily entry saved for this date"
+                                  >
+                                    <AlertTriangle
+                                      className="size-3.5 shrink-0"
+                                      strokeWidth={2.25}
+                                      aria-hidden
+                                    />
+                                    Missing entry
+                                  </span>
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2 text-right">
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 rounded-md border border-solid border-amber-600/40 bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-900 transition-colors hover:bg-amber-500/25 dark:text-amber-100"
+                                    title="Add entry for this date"
+                                    aria-label={`Add entry for ${formatDateKeyAsDisplay(slot.date)}`}
+                                    onClick={() => openEntryForDate(slot.date)}
+                                  >
+                                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
+                                    Add Entry
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          }
+                          return (
+                            <tr
+                              key={r.date}
+                              className="border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/15"
+                            >
+                              <td className="whitespace-nowrap px-3 py-2 font-mono text-[var(--pos-text-1)]">
+                                <span className="inline-flex items-center gap-1.5">
+                                  {formatDateKeyAsDisplay(r.date)}
+                                  {r.isLocked ? (
+                                    <span title="Locked — cannot edit or delete" aria-label="Locked">
+                                      <Lock
+                                        className="size-3 shrink-0 text-amber-600"
+                                        strokeWidth={2.25}
+                                        aria-hidden
+                                      />
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(r.openingBalance)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(netSalesTotal(r))}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(expenseTotalFromRow(r))}
+                              </td>
+                              <td className="px-3 py-2 font-semibold tabular-nums text-[var(--pos-text-1)]">
+                                {formatSummaryMoney(r.remainingBalance)}
+                              </td>
+                              <td
+                                className="max-w-[140px] truncate px-3 py-2 text-[var(--pos-text-1)]"
+                                title={r.enteredBy?.trim() || undefined}
+                              >
+                                {r.enteredBy?.trim() || "—"}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right">
+                                <div className="inline-flex items-center justify-end gap-1">
+                                  <button
+                                    type="button"
+                                    className={historyActionBtnClass}
+                                    title="View details"
+                                    aria-label={`View saved entry ${formatDateKeyAsDisplay(r.date)}`}
+                                    onClick={() => setHistoryDetailRow(r)}
+                                  >
+                                    <Eye className="size-3.5" strokeWidth={2.25} />
+                                  </button>
+                                  {!r.isLocked ? (
+                                    <button
+                                      type="button"
+                                      className={historyActionBtnClass}
+                                      title="Edit in form"
+                                      aria-label={`Edit entry ${formatDateKeyAsDisplay(r.date)}`}
+                                      onClick={() => openEntryForDate(r.date)}
+                                    >
+                                      <Pencil className="size-3.5" strokeWidth={2.25} />
+                                    </button>
+                                  ) : null}
+                                  {r.isLocked ? (
+                                    <button
+                                      type="button"
+                                      className={historyActionBtnClass}
+                                      title="Unlock entry"
+                                      aria-label={`Unlock entry ${formatDateKeyAsDisplay(r.date)}`}
+                                      onClick={() => openUnlockEntryModal(r.date)}
+                                    >
+                                      <LockOpen className="size-3.5" strokeWidth={2.25} />
+                                    </button>
+                                  ) : null}
+                                  {!r.isLocked ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className={historyActionBtnClass}
+                                        title="Lock entry"
+                                        aria-label={`Lock entry ${formatDateKeyAsDisplay(r.date)}`}
+                                        onClick={() => openLockEntryModal(r.date)}
+                                      >
+                                        <Lock className="size-3.5" strokeWidth={2.25} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`${historyActionBtnClass} hover:border-red-400/40 hover:text-red-600`}
+                                        title="Delete entry"
+                                        aria-label={`Delete entry ${formatDateKeyAsDisplay(r.date)}`}
+                                        onClick={() => openDeleteEntryModal(r.date)}
+                                      >
+                                        <Trash2 className="size-3.5" strokeWidth={2.25} />
+                                      </button>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-                <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
-                  <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
-                  <thead>
-                    <tr className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]">
-                      <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Date</th>
-                      <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Opening</th>
-                      <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Net sales</th>
-                      <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Expenses Σ</th>
-                      <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Remaining</th>
-                      <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Entered by</th>
-                      <th className="px-3 py-2 text-right font-semibold text-[var(--pos-text-2)]">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredHistoryRows.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={7}
-                          className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]"
-                        >
-                          <p className="m-0 font-medium text-[var(--pos-text-1)]">
-                            No entries match this search
-                          </p>
-                          <p className="mt-1 text-[12px]">
-                            Try broader keywords, remove a scoped filter, or clear exclusions (
-                            <button
-                              type="button"
-                              className="font-semibold text-[var(--pos-sb-base)] underline-offset-2 hover:underline"
-                              onClick={() => setEntryListSearchQuery("")}
-                            >
-                              clear search
-                            </button>
-                            ).
-                          </p>
-                        </td>
-                      </tr>
-                    ) : null}
-                    {filteredHistoryRows.map((r) => (
-                      <tr
-                        key={r.date}
-                        className="border-b border-solid [border-color:var(--pos-divider)] transition-colors hover:bg-[var(--pos-nav-hover)]/15"
-                      >
-                        <td className="whitespace-nowrap px-3 py-2 font-mono text-[var(--pos-text-1)]">
-                          <span className="inline-flex items-center gap-1.5">
-                            {formatDateKeyAsDisplay(r.date)}
-                            {r.isLocked ? (
-                              <span title="Locked — cannot edit or delete" aria-label="Locked">
-                                <Lock
-                                  className="size-3 shrink-0 text-amber-600"
-                                  strokeWidth={2.25}
-                                  aria-hidden
-                                />
-                              </span>
-                            ) : null}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                          {formatSummaryMoney(r.openingBalance)}
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                          {formatSummaryMoney(netSalesTotal(r))}
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
-                          {formatSummaryMoney(expenseTotalFromRow(r))}
-                        </td>
-                        <td className="px-3 py-2 font-semibold tabular-nums text-[var(--pos-text-1)]">
-                          {formatSummaryMoney(r.remainingBalance)}
-                        </td>
-                        <td
-                          className="max-w-[140px] truncate px-3 py-2 text-[var(--pos-text-1)]"
-                          title={r.enteredBy?.trim() || undefined}
-                        >
-                          {r.enteredBy?.trim() || "—"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-right">
-                          <div className="inline-flex items-center justify-end gap-1">
-                            <button
-                              type="button"
-                              className={historyActionBtnClass}
-                              title="View details"
-                              aria-label={`View saved entry ${formatDateKeyAsDisplay(r.date)}`}
-                              onClick={() => setHistoryDetailRow(r)}
-                            >
-                              <Eye className="size-3.5" strokeWidth={2.25} />
-                            </button>
-                            {!r.isLocked ? (
-                              <button
-                                type="button"
-                                className={historyActionBtnClass}
-                                title="Edit in form"
-                                aria-label={`Edit entry ${formatDateKeyAsDisplay(r.date)}`}
-                                onClick={() => openEntryForDate(r.date)}
-                              >
-                                <Pencil className="size-3.5" strokeWidth={2.25} />
-                              </button>
-                            ) : null}
-                            {r.isLocked ? (
-                              <button
-                                type="button"
-                                className={historyActionBtnClass}
-                                title="Unlock entry"
-                                aria-label={`Unlock entry ${formatDateKeyAsDisplay(r.date)}`}
-                                onClick={() => openUnlockEntryModal(r.date)}
-                              >
-                                <LockOpen className="size-3.5" strokeWidth={2.25} />
-                              </button>
-                            ) : null}
-                            {!r.isLocked ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className={historyActionBtnClass}
-                                  title="Lock entry"
-                                  aria-label={`Lock entry ${formatDateKeyAsDisplay(r.date)}`}
-                                  onClick={() => openLockEntryModal(r.date)}
-                                >
-                                  <Lock className="size-3.5" strokeWidth={2.25} />
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`${historyActionBtnClass} hover:border-red-400/40 hover:text-red-600`}
-                                  title="Delete entry"
-                                  aria-label={`Delete entry ${formatDateKeyAsDisplay(r.date)}`}
-                                  onClick={() => openDeleteEntryModal(r.date)}
-                                >
-                                  <Trash2 className="size-3.5" strokeWidth={2.25} />
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              </div>
-            )}
+              ) : null}
             </div>
           </div>
         </>
@@ -3996,925 +5347,1479 @@ export function DailyEntryFormView({
                 handleSave();
               }}
             >
-        <fieldset
-          disabled={isFormLocked}
-          className="m-0 min-w-0 border-0 p-0 disabled:opacity-100"
-        >
-        <div className="flex flex-col gap-3 px-3 pb-3 pt-3 sm:px-4 sm:pb-4">
-          <div className={statsSummaryClass}>
-            <div
-              className={statCardHintClass}
-              title="Previous day's closing balance · pencil to edit"
-            >
-              <p className={labelClass}>Opening Balance</p>
-              <div className="flex min-h-[1.375rem] items-center gap-1.5">
-                {openingEdit ? (
-                  <input
-                    ref={openingInputRef}
-                    {...amountFieldProps("next")}
-                    value={openingBalance}
-                    onChange={linkNonNegativeAmount(setOpeningBalance)}
-                    onBlur={() => setOpeningEdit(false)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        setOpeningEdit(false);
-                      }
-                    }}
-                    className={`${amountInputClass} flex-1`}
-                    aria-label="Opening balance"
-                  />
-                ) : (
-                  <>
-                    <p className={`min-w-0 flex-1 ${statValueClass}`}>
-                      {formatSummaryMoney(parseAmount(openingBalance))}
-                    </p>
-                    <button
-                      type="button"
-                      className={editOpeningBtnClass}
-                      aria-label="Edit opening balance"
-                      onClick={requestOpeningBalanceEdit}
+              <fieldset
+                disabled={isFormLocked}
+                className="m-0 min-w-0 border-0 p-0 disabled:opacity-100"
+              >
+                <div className="flex flex-col gap-3 px-3 pb-3 pt-3 sm:px-4 sm:pb-4">
+                  <div className={statsSummaryClass}>
+                    <div
+                      className={statCardHintClass}
+                      title="Previous day's closing balance · pencil to edit"
                     >
-                      <Pencil className="size-3.5" strokeWidth={2.25} />
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-            <div
-              className={statCardHintClass}
-              title="All sales channels − void sales"
-            >
-              <p className={labelClass}>Sales</p>
-              <p className={statValueClass}>
-                {formatSummaryMoney(netSalesAfterVoid)}
-              </p>
-            </div>
-            <div className={statCardHintClass} title="Sum of all expense line amounts">
-              <p className={labelClass}>Expenses</p>
-              <p className={statValueClass}>
-                {formatSummaryMoney(expenseSum)}
-              </p>
-            </div>
-            <div
-              className={statCardHintClass}
-              title="Bank sales − withdrawn today"
-            >
-              <p className={labelClass}>Bank balance (today)</p>
-              <p className={statValueClass}>
-                {formatSummaryMoney(bankNetBalance)}
-              </p>
-            </div>
-            <div
-              className={`${statCardHintClass} relative before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,var(--pos-card))]`}
-              title="Opening + sales (excl. bank) − void − expenses · bank sales stay in bank balance"
-            >
-              <p className={labelClass}>Closing Balance</p>
-              <p className={statValueHighlightClass}>
-                {formatSummaryMoney(remaining)}
-              </p>
-            </div>
-          </div>
+                      <p className={labelClass}>Opening Balance</p>
+                      <div className="flex min-h-[1.375rem] items-center gap-1.5">
+                        {openingEdit ? (
+                          <input
+                            ref={openingInputRef}
+                            {...amountFieldProps("next")}
+                            value={openingBalance}
+                            onChange={linkNonNegativeAmount(setOpeningBalance)}
+                            onBlur={() => setOpeningEdit(false)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                setOpeningEdit(false);
+                              }
+                            }}
+                            className={`${amountInputClass} flex-1`}
+                            aria-label="Opening balance"
+                          />
+                        ) : (
+                          <>
+                            <p className={`min-w-0 flex-1 ${statValueClass}`}>
+                              {formatSummaryMoney(parseAmount(openingBalance))}
+                            </p>
+                            <button
+                              type="button"
+                              className={editOpeningBtnClass}
+                              aria-label="Edit opening balance"
+                              onClick={requestOpeningBalanceEdit}
+                            >
+                              <Pencil className="size-3.5" strokeWidth={2.25} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      className={statCardHintClass}
+                      title="All sales channels − void sales"
+                    >
+                      <p className={labelClass}>Sales</p>
+                      <p className={statValueClass}>
+                        {formatSummaryMoney(netSalesAfterVoid)}
+                      </p>
+                    </div>
+                    <div className={statCardHintClass} title="Sum of all expense line amounts">
+                      <p className={labelClass}>Expenses</p>
+                      <p className={statValueClass}>
+                        {formatSummaryMoney(expenseSum)}
+                      </p>
+                    </div>
+                    <div
+                      className={statCardHintClass}
+                      title="Bank sales − withdrawn today"
+                    >
+                      <p className={labelClass}>Bank balance (today)</p>
+                      <p className={statValueClass}>
+                        {formatSummaryMoney(bankNetBalance)}
+                      </p>
+                    </div>
+                    <div
+                      className={`${statCardHintClass} relative before:absolute before:inset-x-0 before:top-0 before:h-[3px] before:bg-[var(--pos-sb-base)] !bg-[color-mix(in_srgb,var(--pos-sb-base)_5%,var(--pos-card))]`}
+                      title="Opening + sales (excl. bank) − void − expenses · bank sales stay in bank balance"
+                    >
+                      <p className={labelClass}>Closing Balance</p>
+                      <p className={statValueHighlightClass}>
+                        {formatSummaryMoney(remaining)}
+                      </p>
+                    </div>
+                  </div>
 
-          <div className={entrySectionsGridClass}>
-            <div className="flex min-w-0 flex-1 flex-col gap-3">
-            <div
-              className={`${columnShellClass} w-full !bg-yellow-50/70 ![border-color:rgba(202,138,4,0.35)]`}
-            >
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <p className={`${sectionTitleClass} !text-yellow-900`}>Items purchased</p>
-              {purchaseBillsTotal > 0 ? (
-                <p className="text-[11px] tabular-nums text-[var(--pos-text-2)]">
-                  Bills ৳{formatSummaryMoney(purchaseBillsTotal)}
-                  <span className="ml-1 text-[10px]">(not cash)</span>
-                </p>
-              ) : null}
-            </div>
-            <p className="text-[11px] leading-snug text-[var(--pos-text-2)]">
-              Record stock bought on credit against a vendor — posts as a bill in Cashbooks.
-            </p>
-            {purchaseExpenseLines.length === 0 ? (
-              <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
-                No purchases for this day yet.
-              </p>
-            ) : null}
-            <div className="flex flex-col gap-4">
-              {purchaseExpenseLines.map((line) => {
-                const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
-                const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
-                const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-                const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
-                const vendorGroups = groupPurchaseDraftItemsByVendor(line.items);
-                const lastItemVendor =
-                  [...line.items].reverse().find((i) => i.vendor.trim())?.vendor ?? "";
-                const itemField =
-                  "h-8 w-full rounded-[7px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-1.5 text-[12px] text-[var(--pos-text-1)]";
-                return (
-                  <div
-                    key={line.id}
-                    data-expense-line-id={line.id}
-                    className={expenseCardClass}
-                  >
-                    <div className="space-y-3">
-                      {vendorGroups.map((group) => {
-                        const groupTotal = purchaseItemsTotal(group.items);
-                        const hasVendor = group.vendor.length > 0;
-                        return (
-                          <div
-                            key={`${line.id}-vg-${group.vendor || "unassigned"}`}
-                            data-purchase-vendor={group.vendor}
-                            className="space-y-1.5 rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]/50 p-2"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
-                                {hasVendor ? group.vendor : "Select vendor"}
+                  <div className={entrySectionsGridClass}>
+                    <div className="flex min-w-0 flex-1 flex-col gap-3">
+                      <div
+                        className={`${columnShellClass} min-w-0 w-full !bg-red-50/65 dark:!bg-red-500/10 ![border-color:rgba(220,38,38,0.28)]`}
+                      >
+                        {isFormLocked ? (
+                          <p className={`m-0 ${sectionTitleClass} !text-red-800 dark:!text-red-300`}>Expenses</p>
+                        ) : (
+                          <PhoneCaptureTrayPanel
+                            leading={
+                              <p className={`m-0 ${sectionTitleClass} !text-red-800 dark:!text-red-300`}>
+                                Expenses
                               </p>
-                            </div>
-                            <div className="overflow-x-auto">
-                              <div
-                                className="mb-1 grid min-w-[480px] gap-1 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]"
-                                style={{
-                                  gridTemplateColumns:
-                                    "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
-                                }}
-                              >
-                                <span>Vendor</span>
-                                <span>Name</span>
-                                <span className="text-right">Qty</span>
-                                <span>Unit</span>
-                                <span className="text-right">Total</span>
-                                <span className="text-right">Rate</span>
-                                <span />
-                              </div>
-                              <div className="space-y-1.5">
-                                {group.items.map((row) => {
-                                  const idx = line.items.findIndex((i) => i.key === row.key);
-                                  const lineRate = purchaseItemLineRate(row);
-                                  return (
-                                    <div
-                                      key={row.key}
-                                      className="grid min-w-[480px] items-center gap-1"
-                                      style={{
-                                        gridTemplateColumns:
-                                          "minmax(7rem,0.9fr) minmax(0,1.2fr) 52px 64px 72px 72px 28px",
-                                      }}
-                                    >
-                                      <select
-                                        value={row.vendor}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            vendor: e.target.value,
-                                          })
-                                        }
-                                        aria-label={`Item ${idx + 1} vendor`}
-                                        className={itemField}
-                                      >
-                                        <option value="">Vendor…</option>
-                                        {purchaseVendorOptions.map((name) => (
-                                          <option key={name} value={name}>
-                                            {name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="text"
-                                        value={row.name}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            name: e.target.value,
-                                          })
-                                        }
-                                        placeholder="Item name"
-                                        aria-label={`Item ${idx + 1} name`}
-                                        className={itemField}
-                                      />
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min={0}
-                                        step="any"
-                                        value={row.qty}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            qty: e.target.value,
-                                          })
-                                        }
-                                        placeholder="1"
-                                        aria-label={`Item ${idx + 1} quantity`}
-                                        className={`${itemField} text-right font-mono`}
-                                      />
-                                      <select
-                                        value={row.unit}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            unit: e.target.value,
-                                          })
-                                        }
-                                        aria-label={`Item ${idx + 1} unit`}
-                                        className={itemField}
-                                      >
-                                        {PURCHASE_ITEM_UNITS.map((u) => (
-                                          <option key={u} value={u}>
-                                            {u}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min={0}
-                                        step="any"
-                                        value={row.total}
-                                        onChange={(e) =>
-                                          patchPurchaseItem(line.id, row.key, {
-                                            total: e.target.value,
-                                          })
-                                        }
-                                        placeholder="0"
-                                        aria-label={`Item ${idx + 1} total`}
-                                        className={`${itemField} text-right font-mono`}
-                                      />
-                                      <div
-                                        className="flex h-8 items-center justify-end px-1 font-mono text-[11px] font-semibold tabular-nums text-[var(--pos-text-1)]"
-                                        aria-label={`Item ${idx + 1} rate`}
-                                      >
-                                        {lineRate !== null ? formatMoney(lineRate) : "—"}
-                                      </div>
+                            }
+                            dateKey={dateKey}
+                            disabled={isFormLocked}
+                            selectedItemId={selectedCaptureItemId}
+                            onSelectItem={setSelectedCaptureItemId}
+                            onItemsChange={setCaptureItems}
+                            sessionToken={captureSessionToken}
+                            onSessionTokenChange={setCaptureSessionToken}
+                            onDragActiveChange={setCaptureDragActive}
+                          />
+                        )}
+                        <div className="flex flex-col gap-3">
+                          {(() => {
+                            const regularLines = visibleExpenseLines.filter((l) => l.kind === "regular");
+                            const staffLines = visibleExpenseLines.filter((l) => l.kind === "staff");
+                            const purchaseLines = visibleExpenseLines.filter((l) => l.kind === "purchase");
+                            const vendorLines = visibleExpenseLines.filter((l) => l.kind === "vendor");
+                            type ExpenseRenderUnit =
+                              | { key: string; type: "regulars"; lines: typeof regularLines }
+                              | { key: string; type: "staffs"; lines: typeof staffLines }
+                              | { key: string; type: "purchases"; lines: typeof purchaseLines }
+                              | { key: string; type: "vendors"; lines: typeof vendorLines };
+                            const units: ExpenseRenderUnit[] = [
+                              {
+                                key: "purchases",
+                                type: "purchases",
+                                lines: purchaseLines,
+                              },
+                              {
+                                key: "regulars",
+                                type: "regulars",
+                                lines: regularLines,
+                              },
+                              {
+                                key: "staffs",
+                                type: "staffs",
+                                lines: staffLines,
+                              },
+                              {
+                                key: "vendors",
+                                type: "vendors",
+                                lines: vendorLines,
+                              },
+                            ];
+                            return units.map((unit) => {
+                              if (unit.type === "regulars") {
+                                return (
+                                  <ExpenseCardShell
+                                    key={unit.key}
+                                    kind="regular"
+                                    actions={
                                       <button
                                         type="button"
-                                        onClick={() => removePurchaseItem(line.id, row.key)}
-                                        className="inline-flex size-7 items-center justify-center rounded-full text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
-                                        aria-label={`Remove item ${idx + 1}`}
+                                        onClick={addRegularExpenseLine}
+                                        className={expenseSectionAddBtnClass}
+                                        aria-label="Add expense"
                                       >
-                                        <Trash2
-                                          className="size-3.5"
-                                          strokeWidth={2.25}
-                                        />
+                                        <Plus className="size-3.5" strokeWidth={2.5} aria-hidden />
+                                      </button>
+                                    }
+                                  >
+                                    {unit.lines.length === 0 ? (
+                                      <p className={expenseSectionEmptyClass}>
+                                        No expenses yet — tap + to add
+                                      </p>
+                                    ) : (
+                                      <>
+                                        <div
+                                          className={`mb-0.5 flex min-w-0 flex-wrap items-end gap-1.5 px-0.5 ${expenseCardLabelClass}`}
+                                        >
+                                          <span className="w-[8.5rem] shrink-0">Category</span>
+                                          <span className="min-w-0 flex-1">Title</span>
+                                          <span className="ml-auto flex shrink-0 justify-end gap-1.5">
+                                            <span className="w-[5.5rem] text-right">Total</span>
+                                            <span className="w-[5.5rem] text-right">Paid</span>
+                                            <span className="w-[5.5rem] text-right">Due</span>
+                                          </span>
+                                          <span className="w-[6.5rem] shrink-0" />
+                                        </div>
+                                        <div className="flex flex-col gap-2">
+                                          {unit.lines.map((line) => {
+                                            const labelErr = fieldErrorMessage(formNotice, line.id, "label");
+                                            const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
+                                            const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+                                            const totalAmt = parseAmount(line.amount);
+                                            const paidAmt =
+                                              line.paidAmount.trim() === ""
+                                                ? totalAmt
+                                                : parseAmount(line.paidAmount);
+                                            const dueAmt = Math.max(0, totalAmt - paidAmt);
+                                            const captureDrop = bindExpenseCaptureDrop(line.id);
+                                            return (
+                                              <div
+                                                key={line.id}
+                                                data-expense-line-id={line.id}
+                                                className={`flex min-w-0 flex-col gap-1 rounded-[8px] p-1 -m-1 ${captureDrop.className}`}
+                                                onDragEnter={captureDrop.onDragEnter}
+                                                onDragOver={captureDrop.onDragOver}
+                                                onDragLeave={captureDrop.onDragLeave}
+                                                onDrop={captureDrop.onDrop}
+                                              >
+                                                {captureDrop.isHot ? (
+                                                  <span className="pointer-events-none absolute right-1.5 top-1 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                    Drop to attach
+                                                  </span>
+                                                ) : null}
+                                                <div className="flex min-w-0 flex-wrap items-start gap-1.5">
+                                                  <div className="w-[8.5rem] shrink-0">
+                                                    <SearchableSelect
+                                                      className={expensePrimarySelectClass}
+                                                      value={line.expenseCategoryId}
+                                                      onChange={(val) => {
+                                                        if (val === NEW_EXPENSE_CATEGORY_VALUE) {
+                                                          setCategoryModalLineId(line.id);
+                                                          setCategoryModalName("");
+                                                          setCategoryModalError(null);
+                                                          return;
+                                                        }
+                                                        patchLine(line.id, { expenseCategoryId: val });
+                                                      }}
+                                                      aria-label="Expense category"
+                                                      placeholder="Category…"
+                                                      options={[
+                                                        { value: "", label: "Category…" },
+                                                        ...expenseCategories.map((c) => ({
+                                                          value: c.id,
+                                                          label: c.name,
+                                                        })),
+                                                        {
+                                                          value: NEW_EXPENSE_CATEGORY_VALUE,
+                                                          label: "+ New category…",
+                                                        },
+                                                      ]}
+                                                    />
+                                                  </div>
+                                                  <div
+                                                    className="min-w-0 flex-1"
+                                                    data-field-error-anchor={`${line.id}:label`}
+                                                  >
+                                                    <input
+                                                      type="text"
+                                                      value={line.label}
+                                                      onChange={(e) =>
+                                                        patchLine(line.id, { label: e.target.value })
+                                                      }
+                                                      placeholder="Expense title"
+                                                      className={`${expenseFieldClass} font-semibold ${labelErr ? FIELD_ERR_INPUT : ""}`}
+                                                      autoComplete="off"
+                                                      aria-label="Expense title"
+                                                      aria-invalid={labelErr ? true : undefined}
+                                                      aria-required
+                                                    />
+                                                    <ExpenseFieldErrorBubble message={labelErr} />
+                                                  </div>
+                                                  <div className="ml-auto min-w-0 shrink-0">
+                                                    <ExpenseMoneyChips
+                                                      hideLabels
+                                                      total={line.amount}
+                                                      paid={line.paidAmount}
+                                                      due={dueAmt}
+                                                      onTotalChange={(next) => {
+                                                        const prevTotal = line.amount;
+                                                        const prevPaid = line.paidAmount;
+                                                        const keepPaidSynced =
+                                                          prevPaid.trim() === "" || prevPaid === prevTotal;
+                                                        patchLine(line.id, {
+                                                          amount: next,
+                                                          ...(keepPaidSynced ? { paidAmount: next } : {}),
+                                                        });
+                                                      }}
+                                                      onPaidChange={(v) =>
+                                                        patchLine(line.id, { paidAmount: v })
+                                                      }
+                                                      paidPlaceholder={line.amount || "0"}
+                                                      totalAriaLabel="Expense total"
+                                                      totalInvalid={Boolean(amountErr)}
+                                                      amountAnchor={`${line.id}:amount`}
+                                                      totalInputProps={amountFieldProps("next")}
+                                                      paidInputProps={amountFieldProps("next")}
+                                                    />
+                                                  </div>
+                                                  <div className="flex shrink-0 items-start gap-0.5">
+                                                    {renderExpenseNoteToggle(line)}
+                                                    {renderReceiptAddControl(line)}
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => removeExpenseLine(line.id)}
+                                                      className={expenseRemoveBtnClass}
+                                                      aria-label="Remove expense line"
+                                                    >
+                                                      <Trash2
+                                                        className="size-3.5 shrink-0"
+                                                        strokeWidth={2.25}
+                                                        aria-hidden
+                                                      />
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                                <ExpenseFieldErrorBubble message={amountErr} />
+                                                {openExpenseNoteLineIds.has(line.id) ? (
+                                                  <input
+                                                    id={`expense-note-${line.id}`}
+                                                    type="text"
+                                                    value={line.note}
+                                                    onChange={(e) =>
+                                                      patchLine(line.id, { note: e.target.value })
+                                                    }
+                                                    placeholder="Add a note (optional)"
+                                                    className={expenseQuietInputClass}
+                                                    autoComplete="off"
+                                                    aria-label="Note"
+                                                    data-field-error-anchor={`${line.id}:note`}
+                                                  />
+                                                ) : null}
+                                                {attachErr ? (
+                                                  <div data-field-error-anchor={`${line.id}:attach`}>
+                                                    <ExpenseFieldErrorBubble message={attachErr} />
+                                                  </div>
+                                                ) : null}
+                                                {renderReceiptThumbnails(line)}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </>
+                                    )}
+                                  </ExpenseCardShell>
+                                );
+                              }
+                              if (unit.type === "staffs") {
+                                return (
+                                  <ExpenseCardShell
+                                    key={unit.key}
+                                    kind="staff"
+                                    actions={
+                                      <button
+                                        type="button"
+                                        onClick={addStaffExpenseLine}
+                                        className={expenseSectionAddBtnClass}
+                                        aria-label="Add staff payout"
+                                      >
+                                        <Plus className="size-3.5" strokeWidth={2.5} aria-hidden />
+                                      </button>
+                                    }
+                                  >
+                                    {unit.lines.length === 0 ? (
+                                      <p className={expenseSectionEmptyClass}>
+                                        No staff payouts yet — tap + to add
+                                      </p>
+                                    ) : (
+                                      <>
+                                        <div
+                                          className={`mb-0.5 flex min-w-0 flex-wrap items-end gap-1.5 px-0.5 ${expenseCardLabelClass}`}
+                                        >
+                                          <span className="min-w-0 flex-1 basis-44">Employee</span>
+                                          <span className="w-[8.5rem] shrink-0 text-right">Amount</span>
+                                          <span className="w-14 shrink-0 text-center">Advance</span>
+                                          <span className="w-[6.5rem] shrink-0" />
+                                        </div>
+                                        <div className="flex flex-col gap-2">
+                                          {unit.lines.map((line) => {
+                                            const employeeErr = fieldErrorMessage(
+                                              formNotice,
+                                              line.id,
+                                              "employeeId",
+                                            );
+                                            const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
+                                            const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
+                                            const selectedId = line.employeeId.trim();
+                                            const selectedInList =
+                                              !selectedId ||
+                                              staffSelectEmployees.some((emp) => emp.id === selectedId);
+                                            const orphan =
+                                              selectedInList || !selectedId
+                                                ? null
+                                                : getEmployeeById(selectedId);
+                                            const captureDrop = bindExpenseCaptureDrop(line.id);
+                                            return (
+                                              <div
+                                                key={line.id}
+                                                data-expense-line-id={line.id}
+                                                className={`flex min-w-0 flex-col gap-1 rounded-[8px] p-1 -m-1 ${captureDrop.className}`}
+                                                onDragEnter={captureDrop.onDragEnter}
+                                                onDragOver={captureDrop.onDragOver}
+                                                onDragLeave={captureDrop.onDragLeave}
+                                                onDrop={captureDrop.onDrop}
+                                              >
+                                                {captureDrop.isHot ? (
+                                                  <span className="pointer-events-none absolute right-1.5 top-1 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                    Drop to attach
+                                                  </span>
+                                                ) : null}
+                                                <div className="flex min-w-0 flex-wrap items-start gap-1.5">
+                                                  <div
+                                                    className="min-w-0 flex-1 basis-44"
+                                                    data-field-error-anchor={`${line.id}:employeeId`}
+                                                  >
+                                                    <SearchableSelect
+                                                      className={`${expensePrimarySelectClass} ${employeeErr ? FIELD_ERR_INPUT : ""}`}
+                                                      value={line.employeeId}
+                                                      onChange={(employeeId) =>
+                                                        patchLine(line.id, { employeeId })
+                                                      }
+                                                      aria-label="Employee"
+                                                      aria-invalid={employeeErr ? true : undefined}
+                                                      placeholder="Employee…"
+                                                      options={[
+                                                        { value: "", label: "Employee…" },
+                                                        ...(orphan
+                                                          ? [
+                                                            {
+                                                              value: selectedId,
+                                                              label:
+                                                                orphan.name?.trim() || "Unknown employee",
+                                                            },
+                                                          ]
+                                                          : []),
+                                                        ...staffSelectEmployees.map((emp) => ({
+                                                          value: emp.id,
+                                                          label: emp.name,
+                                                        })),
+                                                      ]}
+                                                    />
+                                                    <ExpenseFieldErrorBubble message={employeeErr} />
+                                                  </div>
+                                                  <div
+                                                    className="w-[8.5rem] shrink-0"
+                                                    data-field-error-anchor={`${line.id}:amount`}
+                                                  >
+                                                    <input
+                                                      {...amountFieldProps("next")}
+                                                      value={line.amount}
+                                                      onChange={(e) =>
+                                                        patchLine(line.id, { amount: e.target.value })
+                                                      }
+                                                      placeholder="0"
+                                                      className={`${expenseAmountFieldClass} ${amountErr ? FIELD_ERR_INPUT : ""}`}
+                                                      aria-label="Staff payout amount"
+                                                      aria-invalid={amountErr ? true : undefined}
+                                                    />
+                                                    <ExpenseFieldErrorBubble message={amountErr} />
+                                                  </div>
+                                                  <label
+                                                    className={`inline-flex h-8 w-14 shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-solid ${line.staffLineKind === STAFF_ADVANCE_LINE_KIND
+                                                      ? "border-emerald-500/40 bg-emerald-500/10"
+                                                      : "[border-color:var(--pos-divider)]"
+                                                      }`}
+                                                    aria-label="Advance salary"
+                                                    title="Advance salary"
+                                                  >
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={
+                                                        line.staffLineKind === STAFF_ADVANCE_LINE_KIND
+                                                      }
+                                                      onChange={(e) =>
+                                                        patchLine(line.id, {
+                                                          staffLineKind: e.target.checked
+                                                            ? STAFF_ADVANCE_LINE_KIND
+                                                            : STAFF_LINE_KIND,
+                                                        })
+                                                      }
+                                                      className="size-3.5 shrink-0 accent-[var(--pos-text-1)]"
+                                                    />
+                                                  </label>
+                                                  <div className="flex shrink-0 items-start gap-0.5">
+                                                    {renderExpenseNoteToggle(line)}
+                                                    {renderReceiptAddControl(line)}
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => removeExpenseLine(line.id)}
+                                                      className={expenseRemoveBtnClass}
+                                                      aria-label="Remove expense line"
+                                                    >
+                                                      <Trash2
+                                                        className="size-3.5 shrink-0"
+                                                        strokeWidth={2.25}
+                                                        aria-hidden
+                                                      />
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                                {openExpenseNoteLineIds.has(line.id) ? (
+                                                  <input
+                                                    id={`expense-note-${line.id}`}
+                                                    type="text"
+                                                    value={line.note}
+                                                    onChange={(e) =>
+                                                      patchLine(line.id, { note: e.target.value })
+                                                    }
+                                                    placeholder="Add a note (optional)"
+                                                    className={expenseQuietInputClass}
+                                                    autoComplete="off"
+                                                    aria-label="Note"
+                                                    data-field-error-anchor={`${line.id}:note`}
+                                                  />
+                                                ) : null}
+                                                {attachErr ? (
+                                                  <div data-field-error-anchor={`${line.id}:attach`}>
+                                                    <ExpenseFieldErrorBubble message={attachErr} />
+                                                  </div>
+                                                ) : null}
+                                                {renderReceiptThumbnails(line)}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </>
+                                    )}
+                                  </ExpenseCardShell>
+                                );
+                              }
+                              if (unit.type === "purchases") {
+                                const itemField = expenseFieldClass;
+                                const purchaseThClass =
+                                  "px-1.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--pos-text-2)]";
+                                const purchaseTdClass = "px-1.5 py-1 align-middle";
+                                const purchaseRemoveTdClass =
+                                  "w-9 px-0 py-1 align-middle text-center";
+                                const vendorGroups = unit.lines.flatMap((line) =>
+                                  purchaseVendorGroupsForLine(line).map((group) => ({
+                                    line,
+                                    group,
+                                  })),
+                                );
+                                const takenPurchaseVendors = new Set(
+                                  vendorGroups
+                                    .map(({ group }) => group.vendor.trim())
+                                    .filter(Boolean),
+                                );
+                                return (
+                                  <div key={unit.key} className="flex flex-col gap-3">
+                                    <div className="flex items-center gap-1 rounded-[9px] bg-sky-500/25 px-2 py-1.5">
+                                      <p className={expenseCardLabelClass}>
+                                        Item purchase
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={addPurchaseExpenseLine}
+                                        className={expenseSectionAddBtnClass}
+                                        aria-label="Add purchase"
+                                      >
+                                        <Plus className="size-3.5" strokeWidth={2.5} aria-hidden />
                                       </button>
                                     </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                patchLine(line.id, {
-                                  items: [
-                                    ...line.items,
-                                    newPurchaseItemDraft(group.vendor || lastItemVendor),
-                                  ],
-                                })
-                              }
-                              className="inline-flex h-7 items-center gap-1 rounded-[7px] px-2 text-[11px] font-medium text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)]"
-                            >
-                              <Plus className="size-3" strokeWidth={2.5} aria-hidden />
-                              Add item
-                            </button>
-                            <div className={expenseCardRowClass}>
-                              <div
-                                className="flex min-w-0 flex-1 flex-col gap-1"
-                                data-field-error-anchor={`${line.id}:amount`}
-                              >
-                                <div className="flex h-[3.125rem] items-center justify-between gap-2 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3">
-                                  <span className="text-[11px] text-[var(--pos-text-2)]">
-                                    Total
-                                  </span>
-                                  <span className="font-mono text-[13px] font-semibold tabular-nums text-[var(--pos-text-1)]">
-                                    {groupTotal > 0 ? formatMoney(groupTotal) : "—"}
-                                  </span>
-                                </div>
-                                <ExpenseFieldErrorBubble
-                                  message={amountErr ?? vendorErr}
-                                />
-                              </div>
-                              <div className="flex shrink-0 items-center gap-1">
-                                {renderPurchaseVendorNoteToggle(line, group.vendor, {
-                                  disabled: !hasVendor,
-                                })}
-                                {renderReceiptAddControl(line, {
-                                  purchaseVendor: group.vendor,
-                                  disabled: !hasVendor,
-                                })}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    removePurchaseVendorGroup(line.id, group.vendor)
-                                  }
-                                  className={expenseRemoveBtnClass}
-                                  aria-label={
-                                    hasVendor
-                                      ? `Remove ${group.vendor} purchase`
-                                      : "Remove unassigned items"
-                                  }
-                                >
-                                  <Trash2
-                                    className="size-4 shrink-0"
-                                    strokeWidth={2.25}
-                                    aria-hidden
-                                  />
-                                </button>
-                              </div>
-                            </div>
-                            {openExpenseNoteLineIds.has(
-                              purchaseVendorNoteKey(line.id, group.vendor),
-                            ) && hasVendor ? (
-                              <div
-                                className="min-w-0"
-                                data-field-error-anchor={`${line.id}:ledgerNote`}
-                              >
-                                <input
-                                  id={`purchase-note-${line.id}-${group.vendor}`}
-                                  name="purchase-vendor-note"
-                                  type="text"
-                                  value={line.vendorNotes?.[group.vendor] ?? ""}
-                                  onChange={(e) =>
-                                    patchLine(line.id, {
-                                      vendorNotes: {
-                                        ...(line.vendorNotes ?? {}),
-                                        [group.vendor]: e.target.value,
-                                      },
-                                    })
-                                  }
-                                  placeholder="Bill note (optional)"
-                                  className={expenseQuietInputClass}
-                                  autoComplete="off"
-                                  aria-label={`${group.vendor} bill note`}
-                                />
-                                <ExpenseFieldErrorBubble message={ledgerNoteErr} />
-                              </div>
-                            ) : null}
-                            {renderReceiptThumbnails(line, {
-                              purchaseVendor: group.vendor,
-                            })}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {purchaseVendorOptions.length === 0 ? (
-                      <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                        Add a vendor cashbook in{" "}
-                        <button
-                          type="button"
-                          onClick={() => openCashbooksPanel("books")}
-                          className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
-                        >
-                          Cashbooks
-                        </button>{" "}
-                        first.
-                      </p>
-                    ) : null}
-                    {attachErr ? (
-                      <div data-field-error-anchor={`${line.id}:attach`}>
-                        <ExpenseFieldErrorBubble message={attachErr} />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex shrink-0 flex-col gap-2 pt-1">
-              <button
-                type="button"
-                onClick={addPurchaseExpenseLine}
-                className={expenseAddPurchaseBtnClass}
-              >
-                <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                Add items purchased
-              </button>
-            </div>
-          </div>
-
-            <div
-              className={`${columnShellClass} min-w-0 w-full !bg-red-50/65 ![border-color:rgba(220,38,38,0.28)]`}
-            >
-              <p className={`${sectionTitleClass} !text-red-800`}>Expenses</p>
-              <div className="max-w-[11.5rem]">
-                <label className={salesFieldGroupClass} htmlFor="daily-bank-withdrawn">
-                  <span className={labelClass}>Withdrawn from bank</span>
-                  <input
-                    id="daily-bank-withdrawn"
-                    {...amountFieldProps("next")}
-                    value={bankWithdrawn}
-                    onChange={(e) => {
-                      clearSalesFieldNotice();
-                      setBankWithdrawn(sanitizeNonNegativeDecimalInput(e.target.value));
-                    }}
-                    className={`${amountInputClass} ${bankWithdrawnErr ? FIELD_ERR_INPUT : ""}`}
-                    data-field-error-anchor="void:bankWithdrawn"
-                    aria-invalid={bankWithdrawnErr ? true : undefined}
-                  />
-                  <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
-                </label>
-              </div>
-              {cashExpenseLines.length === 0 ? (
-                <p className="py-2 text-center text-[12px] leading-snug text-[var(--pos-text-2)]">
-                  No cash expenses for this day yet — add one below.
-                </p>
-              ) : null}
-              <div className="flex flex-col gap-4">
-                {cashExpenseLines.map((line) => {
-                  if (line.kind === "staff") {
-                    const employeeErr = fieldErrorMessage(formNotice, line.id, "employeeId");
-                    const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
-                    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-                    return (
-                      <div
-                        key={line.id}
-                        data-expense-line-id={line.id}
-                        className={expenseCardClass}
-                      >
-                        <div className={expenseCardRowClass}>
-                          <div
-                            className="flex min-w-0 flex-1 basis-44 flex-col gap-1"
-                            data-field-error-anchor={`${line.id}:employeeId`}
-                          >
-                            <select
-                              className={`${expensePrimarySelectClass} ${employeeErr ? FIELD_ERR_INPUT : ""}`}
-                              value={line.employeeId}
-                              onChange={(e) =>
-                                patchLine(line.id, { employeeId: e.target.value })
-                              }
-                              aria-label="Employee"
-                              aria-invalid={employeeErr ? true : undefined}
-                            >
-                              <option value="">Employee…</option>
-                              {(() => {
-                                const selectedId = line.employeeId.trim();
-                                const selectedInList =
-                                  !selectedId ||
-                                  staffSelectEmployees.some((emp) => emp.id === selectedId);
-                                if (selectedInList) return null;
-                                const orphan = getEmployeeById(selectedId);
-                                return (
-                                  <option value={selectedId}>
-                                    {orphan?.name?.trim() || "Unknown employee"}
-                                  </option>
+                                    <div className="flex flex-col gap-2">
+                                      {vendorGroups.length === 0 ? (
+                                        <p className={expenseSectionEmptyClass}>
+                                          {purchaseVendorOptions.length === 0 ? (
+                                            <>
+                                              Add a supplier in{" "}
+                                              <button
+                                                type="button"
+                                                onClick={() => openItemPurchaseSuppliers()}
+                                                className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
+                                              >
+                                                Item Purchases
+                                              </button>{" "}
+                                              first.
+                                            </>
+                                          ) : (
+                                            "No purchases yet — tap + to add"
+                                          )}
+                                        </p>
+                                      ) : (
+                                        vendorGroups.map(({ line, group }) => {
+                                          const groupTotal = purchaseItemsTotal(group.items);
+                                          const hasVendor = group.vendor.length > 0;
+                                          const groupKey = purchaseVendorNoteKey(
+                                            line.id,
+                                            group.vendor,
+                                          );
+                                          const expanded =
+                                            !collapsedPurchaseVendorKeys.has(groupKey);
+                                          const paidLine = hasVendor
+                                            ? vendorPaymentLineByVendor.get(
+                                              group.vendor.trim(),
+                                            )
+                                            : undefined;
+                                          const paidNow = parseAmount(paidLine?.amount ?? "");
+                                          const dueNow = groupTotal - paidNow;
+                                          const vendorErr = fieldErrorMessage(
+                                            formNotice,
+                                            line.id,
+                                            "vendor",
+                                          );
+                                          const amountErr = fieldErrorMessage(
+                                            formNotice,
+                                            line.id,
+                                            "amount",
+                                          );
+                                          const attachErr = fieldErrorMessage(
+                                            formNotice,
+                                            line.id,
+                                            "attach",
+                                          );
+                                          const ledgerNoteErr = fieldErrorMessage(
+                                            formNotice,
+                                            line.id,
+                                            "ledgerNote",
+                                          );
+                                          const captureDrop = bindExpenseCaptureDrop(
+                                            line.id,
+                                            {
+                                              purchaseVendor: group.vendor,
+                                              disabled: !hasVendor,
+                                            },
+                                          );
+                                          return (
+                                            <div
+                                              key={`${line.id}-vg-${group.vendor || "unassigned"}`}
+                                              data-expense-line-id={line.id}
+                                              data-purchase-vendor={
+                                                group.vendor || undefined
+                                              }
+                                              className={`overflow-hidden rounded-[10px] border border-solid border-sky-500/25 !bg-sky-50/40 dark:!bg-sky-500/10 ${captureDrop.className}`}
+                                              onDragEnter={captureDrop.onDragEnter}
+                                              onDragOver={captureDrop.onDragOver}
+                                              onDragLeave={captureDrop.onDragLeave}
+                                              onDrop={captureDrop.onDrop}
+                                            >
+                                              {captureDrop.isHot ? (
+                                                <span className="pointer-events-none absolute right-2 top-2 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                  Drop to attach
+                                                </span>
+                                              ) : null}
+                                              <div className="flex min-w-0 flex-wrap items-center gap-1.5 bg-sky-500/25 px-2 py-2">
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    togglePurchaseVendorGroup(
+                                                      line.id,
+                                                      group.vendor,
+                                                    )
+                                                  }
+                                                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-[7px] text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                                                  aria-expanded={expanded}
+                                                  aria-label={
+                                                    expanded
+                                                      ? `Hide ${hasVendor ? group.vendor : "unassigned"} items`
+                                                      : `Show ${hasVendor ? group.vendor : "unassigned"} items`
+                                                  }
+                                                >
+                                                  <ChevronDown
+                                                    className={`size-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`}
+                                                    strokeWidth={2.25}
+                                                    aria-hidden
+                                                  />
+                                                </button>
+                                                <div
+                                                  className="min-w-0 flex-1 basis-40"
+                                                  data-field-error-anchor={`${line.id}:vendor`}
+                                                >
+                                                  <SearchableSelect
+                                                    value={group.vendor}
+                                                    onChange={(vendor) =>
+                                                      setPurchaseVendorGroupName(
+                                                        line.id,
+                                                        group.vendor,
+                                                        vendor,
+                                                      )
+                                                    }
+                                                    options={[
+                                                      {
+                                                        value: "",
+                                                        label: "Select Supplier",
+                                                      },
+                                                      ...purchaseVendorOptions.map(
+                                                        (name) => {
+                                                          const alreadyAdded =
+                                                            takenPurchaseVendors.has(
+                                                              name,
+                                                            ) &&
+                                                            name !== group.vendor;
+                                                          return {
+                                                            value: name,
+                                                            label: name,
+                                                            hint: alreadyAdded
+                                                              ? "Added"
+                                                              : undefined,
+                                                            disabled: alreadyAdded,
+                                                          };
+                                                        },
+                                                      ),
+                                                    ]}
+                                                    placeholder="Select Supplier"
+                                                    aria-label="Select Supplier"
+                                                    aria-invalid={
+                                                      vendorErr ? true : undefined
+                                                    }
+                                                    className={`h-8 rounded-[6px] border border-solid border-transparent bg-transparent px-1 ${expenseCardLabelClass} normal-case hover:bg-black/5 dark:hover:bg-white/5 ${vendorErr ? FIELD_ERR_INPUT : ""}`}
+                                                  />
+                                                </div>
+                                                <div className="flex shrink-0 items-center gap-0.5">
+                                                  {renderPurchaseVendorNoteToggle(
+                                                    line,
+                                                    group.vendor,
+                                                    { disabled: !hasVendor },
+                                                  )}
+                                                  {renderReceiptAddControl(line, {
+                                                    purchaseVendor: group.vendor,
+                                                    disabled: !hasVendor,
+                                                  })}
+                                                  <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                      removePurchaseVendorGroup(
+                                                        line.id,
+                                                        group.vendor,
+                                                      )
+                                                    }
+                                                    className={expenseRemoveBtnClass}
+                                                    aria-label={
+                                                      hasVendor
+                                                        ? `Remove ${group.vendor} purchase`
+                                                        : "Remove unassigned items"
+                                                    }
+                                                  >
+                                                    <Trash2
+                                                      className="size-3.5 shrink-0"
+                                                      strokeWidth={2.25}
+                                                      aria-hidden
+                                                    />
+                                                  </button>
+                                                </div>
+                                                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:ml-auto">
+                                                  <div
+                                                    className={`${expenseChipShellClass} min-w-[7rem] cursor-default`}
+                                                    aria-label={`${hasVendor ? group.vendor : "Unassigned"} total`}
+                                                    data-field-error-anchor={`${line.id}:amount`}
+                                                  >
+                                                    <span className={expenseChipLabelClass}>
+                                                      Total
+                                                    </span>
+                                                    <span
+                                                      className={`min-w-0 flex-1 text-right ${expenseChipValueClass}`}
+                                                    >
+                                                      {groupTotal > 0
+                                                        ? formatMoney(groupTotal)
+                                                        : "—"}
+                                                    </span>
+                                                  </div>
+                                                  {hasVendor ? (
+                                                    <>
+                                                      <label className={expenseChipShellClass}>
+                                                        <span
+                                                          className={expenseChipLabelClass}
+                                                        >
+                                                          Paid
+                                                        </span>
+                                                        <input
+                                                          {...amountFieldProps("next")}
+                                                          value={paidLine?.amount ?? ""}
+                                                          onChange={(e) =>
+                                                            setPurchaseVendorPaid(
+                                                              group.vendor,
+                                                              e.target.value,
+                                                            )
+                                                          }
+                                                          placeholder="0"
+                                                          aria-label={`Amount paid to ${group.vendor}`}
+                                                          className={`w-16 bg-transparent text-right outline-none ${expenseChipValueClass}`}
+                                                        />
+                                                      </label>
+                                                      <div
+                                                        className={`${expenseChipShellClass} cursor-default`}
+                                                        aria-label={`Amount due to ${group.vendor || "supplier"}`}
+                                                      >
+                                                        <span
+                                                          className={expenseChipLabelClass}
+                                                        >
+                                                          Due
+                                                        </span>
+                                                        <span
+                                                          className={`w-16 text-right font-mono text-[12px] font-semibold tabular-nums ${dueNow > 0.005
+                                                            ? "text-red-600 dark:text-red-400"
+                                                            : "text-emerald-700 dark:text-emerald-400"
+                                                            }`}
+                                                        >
+                                                          {formatMoney(Math.max(0, dueNow))}
+                                                        </span>
+                                                      </div>
+                                                    </>
+                                                  ) : null}
+                                                </div>
+                                              </div>
+                                              <div className="px-2">
+                                                <ExpenseFieldErrorBubble
+                                                  message={amountErr ?? vendorErr}
+                                                />
+                                              </div>
+                                              {openExpenseNoteLineIds.has(groupKey) &&
+                                                hasVendor ? (
+                                                <div
+                                                  className="min-w-0 px-2 pb-2"
+                                                  data-field-error-anchor={`${line.id}:ledgerNote`}
+                                                >
+                                                  <input
+                                                    id={`purchase-note-${line.id}-${group.vendor}`}
+                                                    name="purchase-vendor-note"
+                                                    type="text"
+                                                    value={
+                                                      line.vendorNotes?.[group.vendor] ?? ""
+                                                    }
+                                                    onChange={(e) =>
+                                                      patchLine(line.id, {
+                                                        vendorNotes: {
+                                                          ...(line.vendorNotes ?? {}),
+                                                          [group.vendor]: e.target.value,
+                                                        },
+                                                      })
+                                                    }
+                                                    placeholder="Bill note (optional)"
+                                                    className={expenseQuietInputClass}
+                                                    autoComplete="off"
+                                                    aria-label={`${group.vendor} bill note`}
+                                                  />
+                                                  <ExpenseFieldErrorBubble
+                                                    message={ledgerNoteErr}
+                                                  />
+                                                </div>
+                                              ) : null}
+                                              {attachErr ? (
+                                                <div
+                                                  className="px-2 pb-2"
+                                                  data-field-error-anchor={`${line.id}:attach`}
+                                                >
+                                                  <ExpenseFieldErrorBubble
+                                                    message={attachErr}
+                                                  />
+                                                </div>
+                                              ) : null}
+                                              {expanded ? (
+                                                <div className="border-t border-solid [border-color:var(--pos-divider)]">
+                                                  <div className="overflow-x-auto">
+                                                    <table className="w-full min-w-[440px] table-fixed border-collapse">
+                                                      <colgroup>
+                                                        <col />
+                                                        <col className="w-14" />
+                                                        <col className="w-14" />
+                                                        <col className="w-16" />
+                                                        <col className="w-[7rem]" />
+                                                        <col className="w-9" />
+                                                      </colgroup>
+                                                      <thead>
+                                                        <tr className="bg-sky-500/20">
+                                                          <th
+                                                            scope="col"
+                                                            className={`${purchaseThClass} text-left`}
+                                                          >
+                                                            Name
+                                                          </th>
+                                                          <th
+                                                            scope="col"
+                                                            className={purchaseThClass}
+                                                            style={{ textAlign: "center" }}
+                                                          >
+                                                            Qty
+                                                          </th>
+                                                          <th
+                                                            scope="col"
+                                                            className={purchaseThClass}
+                                                            style={{ textAlign: "center" }}
+                                                          >
+                                                            Unit
+                                                          </th>
+                                                          <th
+                                                            scope="col"
+                                                            className={purchaseThClass}
+                                                            style={{ textAlign: "center" }}
+                                                          >
+                                                            Rate
+                                                          </th>
+                                                          <th
+                                                            scope="col"
+                                                            className={purchaseThClass}
+                                                            style={{ textAlign: "center" }}
+                                                          >
+                                                            Total
+                                                          </th>
+                                                          <th
+                                                            scope="col"
+                                                            className={`${purchaseThClass} w-9 px-0 text-center`}
+                                                          >
+                                                            <span className="sr-only">
+                                                              Remove
+                                                            </span>
+                                                          </th>
+                                                        </tr>
+                                                      </thead>
+                                                      <tbody>
+                                                        {group.items.map((row, idx) => (
+                                                          <tr
+                                                            key={`${line.id}-${row.key}`}
+                                                            data-expense-line-id={line.id}
+                                                            data-purchase-vendor={
+                                                              row.vendor.trim() || undefined
+                                                            }
+                                                          >
+                                                            <td className={purchaseTdClass}>
+                                                              <input
+                                                                type="text"
+                                                                value={row.name}
+                                                                onChange={(e) =>
+                                                                  patchPurchaseItem(
+                                                                    line.id,
+                                                                    row.key,
+                                                                    { name: e.target.value },
+                                                                  )
+                                                                }
+                                                                placeholder="Item name"
+                                                                aria-label={`Item ${idx + 1} name`}
+                                                                className={itemField}
+                                                              />
+                                                            </td>
+                                                            <td className={purchaseTdClass}>
+                                                              <input
+                                                                type="number"
+                                                                inputMode="decimal"
+                                                                min={0}
+                                                                step="any"
+                                                                value={row.qty}
+                                                                onChange={(e) =>
+                                                                  patchPurchaseItem(
+                                                                    line.id,
+                                                                    row.key,
+                                                                    { qty: e.target.value },
+                                                                  )
+                                                                }
+                                                                placeholder="1"
+                                                                aria-label={`Item ${idx + 1} quantity`}
+                                                                className={`${itemField} text-right font-mono`}
+                                                              />
+                                                            </td>
+                                                            <td className={purchaseTdClass}>
+                                                              <SearchableSelect
+                                                                value={row.unit}
+                                                                onChange={(nextUnit) =>
+                                                                  patchPurchaseItem(
+                                                                    line.id,
+                                                                    row.key,
+                                                                    { unit: nextUnit },
+                                                                  )
+                                                                }
+                                                                options={PURCHASE_ITEM_UNITS.map(
+                                                                  (u) => ({
+                                                                    value: u,
+                                                                    label: u,
+                                                                  }),
+                                                                )}
+                                                                aria-label={`Item ${idx + 1} unit`}
+                                                                className={itemField}
+                                                              />
+                                                            </td>
+                                                            <td className={purchaseTdClass}>
+                                                              <input
+                                                                type="number"
+                                                                inputMode="decimal"
+                                                                min={0}
+                                                                step="any"
+                                                                value={row.rate}
+                                                                onChange={(e) =>
+                                                                  patchPurchaseItem(
+                                                                    line.id,
+                                                                    row.key,
+                                                                    { rate: e.target.value },
+                                                                  )
+                                                                }
+                                                                placeholder="0"
+                                                                aria-label={`Item ${idx + 1} rate`}
+                                                                className={`${itemField} text-right font-mono`}
+                                                              />
+                                                            </td>
+                                                            <td className={purchaseTdClass}>
+                                                              <input
+                                                                type="number"
+                                                                inputMode="decimal"
+                                                                min={0}
+                                                                step="any"
+                                                                value={row.total}
+                                                                onChange={(e) =>
+                                                                  patchPurchaseItem(
+                                                                    line.id,
+                                                                    row.key,
+                                                                    { total: e.target.value },
+                                                                  )
+                                                                }
+                                                                placeholder="0"
+                                                                aria-label={`Item ${idx + 1} total`}
+                                                                className={`${itemField} text-right font-mono`}
+                                                              />
+                                                            </td>
+                                                            <td
+                                                              className={purchaseRemoveTdClass}
+                                                            >
+                                                              <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                  removePurchaseItem(
+                                                                    line.id,
+                                                                    row.key,
+                                                                  )
+                                                                }
+                                                                className="inline-flex size-6 items-center justify-center rounded-full text-[var(--pos-text-2)] transition-colors hover:bg-[var(--pos-nav-hover)]/50 hover:text-[var(--pos-text-1)]"
+                                                                aria-label={`Remove item ${idx + 1}`}
+                                                              >
+                                                                <Trash2
+                                                                  className="size-3"
+                                                                  strokeWidth={2.25}
+                                                                />
+                                                              </button>
+                                                            </td>
+                                                          </tr>
+                                                        ))}
+                                                      </tbody>
+                                                    </table>
+                                                  </div>
+                                                  <div className="px-2 py-2">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        addPurchaseItemForVendor(
+                                                          line.id,
+                                                          group.vendor,
+                                                        )
+                                                      }
+                                                      disabled={!hasVendor}
+                                                      title={
+                                                        hasVendor
+                                                          ? undefined
+                                                          : "Select a supplier first"
+                                                      }
+                                                      className={`inline-flex h-8 w-fit shrink-0 items-center gap-0.5 rounded-[7px] px-1.5 font-medium transition-colors hover:bg-[var(--pos-nav-hover)]/40 hover:text-[var(--pos-text-1)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${expenseMetaClass}`}
+                                                    >
+                                                      <Plus
+                                                        className="size-3"
+                                                        strokeWidth={2.5}
+                                                        aria-hidden
+                                                      />
+                                                      Item
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                              ) : null}
+                                              {renderReceiptThumbnails(line, {
+                                                purchaseVendor: group.vendor,
+                                              })}
+                                            </div>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  </div>
                                 );
-                              })()}
-                              {staffSelectEmployees.map((emp) => (
-                                <option key={emp.id} value={emp.id}>
-                                  {emp.name}
-                                </option>
-                              ))}
-                            </select>
-                            <ExpenseFieldErrorBubble message={employeeErr} />
-                          </div>
-                          <div
-                            className="flex w-[8.5rem] shrink-0 flex-col gap-1"
-                            data-field-error-anchor={`${line.id}:amount`}
-                          >
-                            <input
-                              {...amountFieldProps("next")}
-                              value={line.amount}
-                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                              placeholder="0"
-                              className={`${amountInputClass} ${amountErr ? FIELD_ERR_INPUT : ""}`}
-                              aria-label="Staff payout amount"
-                              aria-invalid={amountErr ? true : undefined}
-                            />
-                            <ExpenseFieldErrorBubble message={amountErr} />
-                          </div>
-                          <div className="flex shrink-0 items-start gap-1">
-                            {renderExpenseNoteToggle(line)}
-                            {renderReceiptAddControl(line)}
-                            <button
-                              type="button"
-                              onClick={() => removeExpenseLine(line.id)}
-                              className={expenseRemoveBtnClass}
-                              aria-label="Remove expense line"
-                            >
-                              <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
-                            </button>
-                          </div>
+                              }
+                              if (unit.type === "vendors") {
+                                return (
+                                  <ExpenseCardShell
+                                    key={unit.key}
+                                    kind="vendor"
+                                    actions={
+                                      <button
+                                        type="button"
+                                        onClick={addVendorExpenseLine}
+                                        className={expenseSectionAddBtnClass}
+                                        aria-label="Add supplier payment"
+                                      >
+                                        <Plus className="size-3.5" strokeWidth={2.5} aria-hidden />
+                                      </button>
+                                    }
+                                  >
+                                    {unit.lines.length === 0 ? (
+                                      <p className={expenseSectionEmptyClass}>
+                                        No supplier payments yet — tap + to add
+                                      </p>
+                                    ) : (
+                                      <>
+                                        <div
+                                          className={`mb-0.5 flex min-w-0 flex-wrap items-end gap-1.5 px-0.5 ${expenseCardLabelClass}`}
+                                        >
+                                          <span className="min-w-0 flex-1 basis-44">Supplier</span>
+                                          <span className="w-[8.5rem] shrink-0 text-right">Amount</span>
+                                          <span className="w-[6.5rem] shrink-0" />
+                                        </div>
+                                        <div className="flex flex-col gap-2">
+                                          {unit.lines.map((line) => {
+                                            const trimmed = line.vendor.trim();
+                                            const inList =
+                                              trimmed !== "" && vendorOptions.includes(trimmed);
+                                            const selectValue =
+                                              trimmed === ""
+                                                ? ""
+                                                : inList
+                                                  ? trimmed
+                                                  : VENDOR_OTHER_VALUE;
+                                            const showOtherInput = selectValue === VENDOR_OTHER_VALUE;
+                                            const vendorErr = fieldErrorMessage(
+                                              formNotice,
+                                              line.id,
+                                              "vendor",
+                                            );
+                                            const vendorAmountErr = fieldErrorMessage(
+                                              formNotice,
+                                              line.id,
+                                              "amount",
+                                            );
+                                            const attachErr = fieldErrorMessage(
+                                              formNotice,
+                                              line.id,
+                                              "attach",
+                                            );
+                                            const ledgerNoteErr = fieldErrorMessage(
+                                              formNotice,
+                                              line.id,
+                                              "ledgerNote",
+                                            );
+                                            const ledgerSupplierForLine =
+                                              resolveLedgerSupplierIdByBookName(trimmed);
+                                            const captureDrop = bindExpenseCaptureDrop(line.id);
+                                            return (
+                                              <div
+                                                key={line.id}
+                                                data-expense-line-id={line.id}
+                                                className={`flex min-w-0 flex-col gap-1 rounded-[8px] p-1 -m-1 ${captureDrop.className}`}
+                                                onDragEnter={captureDrop.onDragEnter}
+                                                onDragOver={captureDrop.onDragOver}
+                                                onDragLeave={captureDrop.onDragLeave}
+                                                onDrop={captureDrop.onDrop}
+                                              >
+                                                {captureDrop.isHot ? (
+                                                  <span className="pointer-events-none absolute right-1.5 top-1 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                                    Drop to attach
+                                                  </span>
+                                                ) : null}
+                                                <div className="flex min-w-0 flex-wrap items-start gap-1.5">
+                                                  <div
+                                                    className="min-w-0 flex-1 basis-44"
+                                                    data-field-error-anchor={`${line.id}:vendor`}
+                                                  >
+                                                    <div className="flex min-w-0 items-center gap-1.5">
+                                                      <SearchableSelect
+                                                        className={`${expensePrimarySelectClass} flex-1 ${vendorErr ? FIELD_ERR_INPUT : ""}`}
+                                                        value={selectValue}
+                                                        onChange={(val) => {
+                                                          const ledgerReset = {
+                                                            ledgerKind: "" as const,
+                                                            ledgerEmployeeLineKind: "" as const,
+                                                            ledgerNote: "",
+                                                          };
+                                                          if (val === "") {
+                                                            patchLine(line.id, {
+                                                              vendor: "",
+                                                              ...ledgerReset,
+                                                            });
+                                                          } else if (val === VENDOR_OTHER_VALUE) {
+                                                            if (inList)
+                                                              patchLine(line.id, {
+                                                                vendor: "",
+                                                                ...ledgerReset,
+                                                              });
+                                                          } else {
+                                                            patchLine(line.id, {
+                                                              vendor: val,
+                                                              ledgerKind: "" as const,
+                                                              ledgerEmployeeLineKind: "" as const,
+                                                            });
+                                                          }
+                                                        }}
+                                                        aria-label="Supplier"
+                                                        aria-invalid={vendorErr ? true : undefined}
+                                                        placeholder="Supplier…"
+                                                        options={[
+                                                          { value: "", label: "Supplier…" },
+                                                          ...vendorOptions.map((name) => ({
+                                                            value: name,
+                                                            label: name,
+                                                          })),
+                                                          {
+                                                            value: VENDOR_OTHER_VALUE,
+                                                            label: "Other…",
+                                                          },
+                                                        ]}
+                                                      />
+                                                      {showOtherInput ? (
+                                                        <input
+                                                          type="text"
+                                                          value={line.vendor}
+                                                          onChange={(e) =>
+                                                            patchLine(line.id, {
+                                                              vendor: e.target.value,
+                                                            })
+                                                          }
+                                                          placeholder="Name"
+                                                          className={`${expensePrimaryInputClass} min-w-[4.5rem] shrink-0 flex-1`}
+                                                          autoComplete="off"
+                                                          aria-label="Custom supplier name"
+                                                        />
+                                                      ) : null}
+                                                    </div>
+                                                    <ExpenseFieldErrorBubble message={vendorErr} />
+                                                  </div>
+                                                  <div
+                                                    className="w-[8.5rem] shrink-0"
+                                                    data-field-error-anchor={`${line.id}:amount`}
+                                                  >
+                                                    <input
+                                                      {...amountFieldProps("next")}
+                                                      value={line.amount}
+                                                      onChange={(e) =>
+                                                        patchLine(line.id, {
+                                                          amount: e.target.value,
+                                                        })
+                                                      }
+                                                      placeholder="0"
+                                                      className={`${expenseAmountFieldClass} ${vendorAmountErr ? FIELD_ERR_INPUT : ""}`}
+                                                      aria-label="Expense amount"
+                                                      aria-invalid={
+                                                        vendorAmountErr ? true : undefined
+                                                      }
+                                                    />
+                                                    <ExpenseFieldErrorBubble
+                                                      message={vendorAmountErr}
+                                                    />
+                                                  </div>
+                                                  <div className="flex shrink-0 items-start gap-0.5">
+                                                    {renderExpenseNoteToggle(line)}
+                                                    {renderReceiptAddControl(line)}
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => removeExpenseLine(line.id)}
+                                                      className={expenseRemoveBtnClass}
+                                                      aria-label="Remove expense line"
+                                                    >
+                                                      <Trash2
+                                                        className="size-3.5 shrink-0"
+                                                        strokeWidth={2.25}
+                                                        aria-hidden
+                                                      />
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                                {openExpenseNoteLineIds.has(line.id) ? (
+                                                  <div
+                                                    className="min-w-0"
+                                                    data-field-error-anchor={`${line.id}:ledgerNote`}
+                                                  >
+                                                    <input
+                                                      id={`expense-note-${line.id}`}
+                                                      name="ledger-note"
+                                                      type="text"
+                                                      value={line.ledgerNote}
+                                                      onChange={(e) =>
+                                                        patchLine(line.id, {
+                                                          ledgerNote: e.target.value,
+                                                        })
+                                                      }
+                                                      placeholder="Add a note (optional)"
+                                                      className={expenseQuietInputClass}
+                                                      autoComplete="off"
+                                                      aria-label="Payment note"
+                                                    />
+                                                    <ExpenseFieldErrorBubble
+                                                      message={ledgerNoteErr}
+                                                    />
+                                                  </div>
+                                                ) : null}
+                                                {!ledgerSupplierForLine && trimmed ? (
+                                                  <p className={expenseMetaClass}>
+                                                    Name doesn’t match a supplier — expense only. Add
+                                                    suppliers from{" "}
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => openItemPurchaseSuppliers()}
+                                                      className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
+                                                    >
+                                                      Item Purchases
+                                                    </button>
+                                                    .
+                                                  </p>
+                                                ) : null}
+                                                {attachErr ? (
+                                                  <div data-field-error-anchor={`${line.id}:attach`}>
+                                                    <ExpenseFieldErrorBubble message={attachErr} />
+                                                  </div>
+                                                ) : null}
+                                                {renderReceiptThumbnails(line)}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </>
+                                    )}
+                                  </ExpenseCardShell>
+                                );
+                              }
+                              return null;
+                            });
+                          })()}
                         </div>
-                        {openExpenseNoteLineIds.has(line.id) ? (
+
+                      </div>
+
+
+                    </div>
+
+                    <div className="flex w-full shrink-0 flex-col gap-3 sm:w-[11.5rem]">
+                      <div
+                        className={`${columnShellClass} min-w-0 w-full !bg-sky-50/65 dark:!bg-sky-500/10 ![border-color:rgba(2,132,199,0.28)]`}
+                      >
+                        <p className={`${sectionTitleClass} !text-sky-800 dark:!text-sky-300`}>Withdraw</p>
+                        <label className={salesFieldGroupClass} htmlFor="daily-bank-withdrawn">
+                          <span className={labelClass}>Bank Withdraw</span>
                           <input
-                            id={`expense-note-${line.id}`}
-                            type="text"
-                            value={line.note}
-                            onChange={(e) => patchLine(line.id, { note: e.target.value })}
-                            placeholder="Add a note (optional)"
-                            className={expenseQuietInputClass}
-                            autoComplete="off"
-                            aria-label="Note"
-                            data-field-error-anchor={`${line.id}:note`}
+                            id="daily-bank-withdrawn"
+                            {...amountFieldProps("next")}
+                            value={bankWithdrawn}
+                            onChange={(e) => {
+                              clearSalesFieldNotice();
+                              setBankWithdrawn(sanitizeNonNegativeDecimalInput(e.target.value));
+                            }}
+                            className={`${amountInputClass} ${bankWithdrawnErr ? FIELD_ERR_INPUT : ""}`}
+                            data-field-error-anchor="void:bankWithdrawn"
+                            aria-invalid={bankWithdrawnErr ? true : undefined}
                           />
-                        ) : null}
-                        <label className="flex cursor-pointer items-center gap-2 text-[11px] text-[var(--pos-text-2)]">
-                          <input
-                            type="checkbox"
-                            checked={line.staffLineKind === STAFF_ADVANCE_LINE_KIND}
-                            onChange={(e) =>
-                              patchLine(line.id, {
-                                staffLineKind: e.target.checked
-                                  ? STAFF_ADVANCE_LINE_KIND
-                                  : STAFF_LINE_KIND,
-                              })
-                            }
-                            className="size-3.5 shrink-0 accent-[var(--pos-text-1)]"
-                          />
-                          Advance salary
+                          <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
                         </label>
-                        {attachErr ? (
-                          <div data-field-error-anchor={`${line.id}:attach`}>
-                            <ExpenseFieldErrorBubble message={attachErr} />
-                          </div>
-                        ) : null}
-                        {renderReceiptThumbnails(line)}
                       </div>
-                    );
-                  }
-                  if (line.kind === "regular") {
-                    const labelErr = fieldErrorMessage(formNotice, line.id, "label");
-                    const amountErr = fieldErrorMessage(formNotice, line.id, "amount");
-                    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-                    return (
                       <div
-                        key={line.id}
-                        data-expense-line-id={line.id}
-                        className={expenseCardClass}
+                        className={`${columnShellClass} min-w-0 w-full !bg-emerald-50/65 dark:!bg-emerald-500/10 ![border-color:rgba(5,150,105,0.28)]`}
                       >
-                        <div className={expenseCardRowClass}>
-                          <div
-                            className="flex min-w-0 flex-1 basis-44 flex-col gap-1"
-                            data-field-error-anchor={`${line.id}:label`}
-                          >
-                            <input
-                              type="text"
-                              value={line.label}
-                              onChange={(e) => patchLine(line.id, { label: e.target.value })}
-                              placeholder="Expense title"
-                              className={`${expenseTitleInputClass} ${labelErr ? FIELD_ERR_INPUT : ""}`}
-                              autoComplete="off"
-                              aria-label="Expense title"
-                              aria-invalid={labelErr ? true : undefined}
-                              aria-required
-                            />
-                            <ExpenseFieldErrorBubble message={labelErr} />
-                          </div>
-                          <div
-                            className="flex w-[8.5rem] shrink-0 flex-col gap-1"
-                            data-field-error-anchor={`${line.id}:amount`}
-                          >
-                            <input
-                              {...amountFieldProps("next")}
-                              value={line.amount}
-                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                              placeholder="0"
-                              className={`${amountInputClass} ${amountErr ? FIELD_ERR_INPUT : ""}`}
-                              aria-label="Expense amount"
-                              aria-invalid={amountErr ? true : undefined}
-                            />
-                            <ExpenseFieldErrorBubble message={amountErr} />
-                          </div>
-                          <div className="flex shrink-0 items-start gap-1">
-                            {renderExpenseNoteToggle(line)}
-                            {renderReceiptAddControl(line)}
-                            <button
-                              type="button"
-                              onClick={() => removeExpenseLine(line.id)}
-                              className={expenseRemoveBtnClass}
-                              aria-label="Remove expense line"
-                            >
-                              <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
-                            </button>
-                          </div>
-                        </div>
-                        {openExpenseNoteLineIds.has(line.id) ? (
-                          <input
-                            id={`expense-note-${line.id}`}
-                            type="text"
-                            value={line.note}
-                            onChange={(e) => patchLine(line.id, { note: e.target.value })}
-                            placeholder="Add a note (optional)"
-                            className={expenseQuietInputClass}
-                            autoComplete="off"
-                            aria-label="Note"
-                            data-field-error-anchor={`${line.id}:note`}
-                          />
-                        ) : null}
-                        {attachErr ? (
-                          <div data-field-error-anchor={`${line.id}:attach`}>
-                            <ExpenseFieldErrorBubble message={attachErr} />
-                          </div>
-                        ) : null}
-                        {renderReceiptThumbnails(line)}
-                      </div>
-                    );
-                  }
-                    const trimmed = line.vendor.trim();
-                    const inList = trimmed !== "" && vendorOptions.includes(trimmed);
-                    const selectValue =
-                      trimmed === "" ? "" : inList ? trimmed : VENDOR_OTHER_VALUE;
-                    const showOtherInput = selectValue === VENDOR_OTHER_VALUE;
-                    const vendorErr = fieldErrorMessage(formNotice, line.id, "vendor");
-                    const vendorAmountErr = fieldErrorMessage(
-                      formNotice,
-                      line.id,
-                      "amount",
-                    );
-                    const attachErr = fieldErrorMessage(formNotice, line.id, "attach");
-                    const ledgerNoteErr = fieldErrorMessage(formNotice, line.id, "ledgerNote");
-                    const ledgerSupplierForLine = resolveLedgerSupplierIdByBookName(trimmed);
-
-                    return (
-                      <div
-                        key={line.id}
-                        data-expense-line-id={line.id}
-                        className={expenseCardClass}
-                      >
-                        <div className={expenseCardRowClass}>
-                          <div
-                            className="flex min-w-0 flex-1 basis-44 flex-col gap-1"
-                            data-field-error-anchor={`${line.id}:vendor`}
-                          >
-                            <div className="flex min-w-0 items-center gap-1.5">
-                            <select
-                              className={`${expensePrimarySelectClass} flex-1 ${vendorErr ? FIELD_ERR_INPUT : ""}`}
-                              value={selectValue}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                const ledgerReset = {
-                                  ledgerKind: "" as const,
-                                  ledgerEmployeeLineKind: "" as const,
-                                  ledgerNote: "",
-                                };
-                                if (val === "") {
-                                  patchLine(line.id, { vendor: "", ...ledgerReset });
-                                } else if (val === VENDOR_OTHER_VALUE) {
-                                  if (inList) patchLine(line.id, { vendor: "", ...ledgerReset });
-                                } else {
-                                  patchLine(line.id, {
-                                    vendor: val,
-                                    ledgerKind: "" as const,
-                                    ledgerEmployeeLineKind: "" as const,
-                                  });
-                                }
-                              }}
-                              aria-label="Cashbook"
-                              aria-invalid={vendorErr ? true : undefined}
-                            >
-                              <option value="">Cashbook…</option>
-                              {vendorOptions.map((name) => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
-                              <option value={VENDOR_OTHER_VALUE}>Other…</option>
-                            </select>
-                            {showOtherInput ? (
+                        <p className={`${sectionTitleClass} !text-emerald-800 dark:!text-emerald-300`}>Sales</p>
+                        <div
+                          className="flex min-w-0 flex-col gap-3"
+                          data-void-attachment-anchor
+                        >
+                          <div className={salesChannelGridClass}>
+                            <label className={salesFieldGroupClass} htmlFor="daily-cash">
+                              <span className={labelClass}>Cash</span>
                               <input
-                                type="text"
-                                value={line.vendor}
-                                onChange={(e) => patchLine(line.id, { vendor: e.target.value })}
-                                placeholder="Name"
-                                className={`${expensePrimaryInputClass} min-w-[4.5rem] shrink-0 flex-1`}
-                                autoComplete="off"
-                                aria-label="Custom cashbook name"
+                                id="daily-cash"
+                                {...amountFieldProps("next")}
+                                value={cashSale}
+                                onChange={linkNonNegativeAmount(setCashSale)}
+                                className={amountInputClass}
                               />
-                            ) : null}
+                            </label>
+                            <label className={salesFieldGroupClass} htmlFor="daily-bank">
+                              <span className={labelClass}>Bank</span>
+                              <input
+                                id="daily-bank"
+                                {...amountFieldProps("next")}
+                                value={bankSale}
+                                onChange={linkNonNegativeAmount(setBankSale)}
+                                className={amountInputClass}
+                              />
+                            </label>
+                            <label className={salesFieldGroupClass} htmlFor="daily-bkash">
+                              <span className={labelClass}>bKash</span>
+                              <input
+                                id="daily-bkash"
+                                {...amountFieldProps("next")}
+                                value={bkashSale}
+                                onChange={linkNonNegativeAmount(setBkashSale)}
+                                className={amountInputClass}
+                              />
+                            </label>
+                            <label className={salesFieldGroupClass} htmlFor="daily-nagad">
+                              <span className={labelClass}>Nagad</span>
+                              <input
+                                id="daily-nagad"
+                                {...amountFieldProps("next")}
+                                value={nagadSale}
+                                onChange={linkNonNegativeAmount(setNagadSale)}
+                                className={amountInputClass}
+                              />
+                            </label>
+                            <label className={salesFieldGroupClass} htmlFor="daily-pathao">
+                              <span className={labelClass}>Pathao</span>
+                              <input
+                                id="daily-pathao"
+                                {...amountFieldProps("next")}
+                                value={pathaoSale}
+                                onChange={linkNonNegativeAmount(setPathaoSale)}
+                                className={amountInputClass}
+                              />
+                            </label>
+                            <label className={salesFieldGroupClass} htmlFor="daily-foodi">
+                              <span className={labelClass}>Foodi</span>
+                              <input
+                                id="daily-foodi"
+                                {...amountFieldProps("next")}
+                                value={foodiSale}
+                                onChange={linkNonNegativeAmount(setFoodiSale)}
+                                className={amountInputClass}
+                              />
+                            </label>
+                            <label className={salesFieldGroupClass} htmlFor="daily-foodpanda">
+                              <span className={labelClass}>Foodpanda</span>
+                              <input
+                                id="daily-foodpanda"
+                                {...amountFieldProps("next")}
+                                value={foodpandaSale}
+                                onChange={linkNonNegativeAmount(setFoodpandaSale)}
+                                className={amountInputClass}
+                              />
+                            </label>
+                            <label className={salesFieldGroupClass} htmlFor="daily-void-sale">
+                              <span className={labelClass}>Void sales</span>
+                              <input
+                                id="daily-void-sale"
+                                {...amountFieldProps("next")}
+                                value={voidSale}
+                                onChange={(e) => {
+                                  clearSalesFieldNotice();
+                                  setVoidSale(sanitizeNonNegativeDecimalInput(e.target.value));
+                                }}
+                                className={amountInputClass}
+                              />
+                            </label>
+                          </div>
+                          {parseAmount(voidSale) > 0 ? (
+                            (() => {
+                              const voidDrop = bindVoidCaptureDrop();
+                              return (
+                            <div
+                              className={`space-y-3 p-2 ${voidDrop.className}`}
+                              onDragEnter={voidDrop.onDragEnter}
+                              onDragOver={voidDrop.onDragOver}
+                              onDragLeave={voidDrop.onDragLeave}
+                              onDrop={voidDrop.onDrop}
+                            >
+                              {voidDrop.isHot ? (
+                                <span className="pointer-events-none absolute right-2 top-2 z-[2] rounded-full bg-[var(--pos-sb-base)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                                  Drop to attach
+                                </span>
+                              ) : null}
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                <label className={labelClass} htmlFor="daily-void-remarks">
+                                  Remarks
+                                  <span className="text-red-600/90"> *</span>
+                                </label>
+                                <input
+                                  id="daily-void-remarks"
+                                  type="text"
+                                  value={voidSaleRemarks}
+                                  onChange={(e) => {
+                                    clearSalesFieldNotice();
+                                    setVoidSaleRemarks(e.target.value);
+                                  }}
+                                  placeholder="Describe the voided sale"
+                                  className={`${textInputClass} ${voidRemarksErr ? FIELD_ERR_INPUT : ""}`}
+                                  data-field-error-anchor="void:voidRemarks"
+                                  aria-invalid={voidRemarksErr ? true : undefined}
+                                  aria-required
+                                />
+                                <ExpenseFieldErrorBubble message={voidRemarksErr} />
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {renderVoidAttachmentAddControl()}
+                                <span className="min-w-0 flex-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
+                                  Attach PDF or image. Paste an image with this block focused.
+                                </span>
+                              </div>
+                              {voidAttachErr ? (
+                                <div data-field-error-anchor="void:voidAttach">
+                                  <ExpenseFieldErrorBubble message={voidAttachErr} />
+                                </div>
+                              ) : null}
+                              {renderVoidAttachmentThumbnails()}
                             </div>
-                            <ExpenseFieldErrorBubble message={vendorErr} />
-                          </div>
-                          <div
-                            className="flex w-[8.5rem] shrink-0 flex-col gap-1"
-                            data-field-error-anchor={`${line.id}:amount`}
-                          >
-                            <input
-                              {...amountFieldProps("next")}
-                              value={line.amount}
-                              onChange={(e) => patchLine(line.id, { amount: e.target.value })}
-                              placeholder="0"
-                              className={`${amountInputClass} ${vendorAmountErr ? FIELD_ERR_INPUT : ""}`}
-                              aria-label="Expense amount"
-                              aria-invalid={vendorAmountErr ? true : undefined}
-                            />
-                            <ExpenseFieldErrorBubble message={vendorAmountErr} />
-                          </div>
-                          <div className="flex shrink-0 items-start gap-1">
-                            {renderExpenseNoteToggle(line)}
-                            {renderReceiptAddControl(line)}
-                            <button
-                              type="button"
-                              onClick={() => removeExpenseLine(line.id)}
-                              className={expenseRemoveBtnClass}
-                              aria-label="Remove expense line"
-                            >
-                              <Trash2 className="size-4 shrink-0" strokeWidth={2.25} aria-hidden />
-                            </button>
-                          </div>
+                              );
+                            })()
+                          ) : null}
                         </div>
-                        {openExpenseNoteLineIds.has(line.id) ? (
-                          <div
-                            className="min-w-0"
-                            data-field-error-anchor={`${line.id}:ledgerNote`}
-                          >
-                            <input
-                              id={`expense-note-${line.id}`}
-                              name="ledger-note"
-                              type="text"
-                              value={line.ledgerNote}
-                              onChange={(e) => patchLine(line.id, { ledgerNote: e.target.value })}
-                              placeholder="Add a note (optional)"
-                              className={expenseQuietInputClass}
-                              autoComplete="off"
-                              aria-label="Payment note"
-                            />
-                            <ExpenseFieldErrorBubble message={ledgerNoteErr} />
-                          </div>
-                        ) : null}
-                        {!ledgerSupplierForLine && trimmed ? (
-                          <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">
-                            Name doesn’t match a cashbook — expense only. Add bills from{" "}
-                            <button
-                              type="button"
-                              onClick={() => openCashbooksPanel("books")}
-                              className="font-semibold text-[var(--pos-text-1)] underline decoration-[var(--pos-divider)] underline-offset-2 hover:decoration-[var(--pos-sb-base)]"
-                            >
-                              Cashbooks
-                            </button>
-                            .
-                          </p>
-                        ) : null}
-                        {attachErr ? (
-                          <div data-field-error-anchor={`${line.id}:attach`}>
-                            <ExpenseFieldErrorBubble message={attachErr} />
-                          </div>
-                        ) : null}
-                        {renderReceiptThumbnails(line)}
                       </div>
-                    );
-                })}
-                </div>
-                <div className="flex shrink-0 flex-wrap gap-2 pt-1 sm:flex-nowrap">
-                  <button
-                    type="button"
-                    onClick={addRegularExpenseLine}
-                    className={expenseAddRegularBtnClass}
-                  >
-                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                    Expense
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addStaffExpenseLine}
-                    className={expenseAddStaffBtnClass}
-                  >
-                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                    Staff payout
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addVendorExpenseLine}
-                    className={expenseAddVendorBtnClass}
-                  >
-                    <Plus className="size-3.5 shrink-0" strokeWidth={2.5} aria-hidden />
-                    Vendor Payment
-                  </button>
-                </div>
-
-            </div>
-
-
-            </div>
-
-            <div
-              className={`${columnShellClass} min-w-0 w-full shrink-0 sm:w-[11.5rem] !bg-emerald-50/65 ![border-color:rgba(5,150,105,0.28)]`}
-            >
-                <p className={`${sectionTitleClass} !text-emerald-800`}>Sales</p>
-                <div
-                  className="flex min-w-0 flex-col gap-3"
-                  data-void-attachment-anchor
-                >
-                <div className={salesChannelGridClass}>
-                  <label className={salesFieldGroupClass} htmlFor="daily-cash">
-                    <span className={labelClass}>Cash</span>
-                    <input
-                      id="daily-cash"
-                      {...amountFieldProps("next")}
-                      value={cashSale}
-                      onChange={linkNonNegativeAmount(setCashSale)}
-                      className={amountInputClass}
-                    />
-                  </label>
-                  <label className={salesFieldGroupClass} htmlFor="daily-bank">
-                    <span className={labelClass}>Bank</span>
-                    <input
-                      id="daily-bank"
-                      {...amountFieldProps("next")}
-                      value={bankSale}
-                      onChange={linkNonNegativeAmount(setBankSale)}
-                      className={amountInputClass}
-                    />
-                  </label>
-                  <label className={salesFieldGroupClass} htmlFor="daily-bkash">
-                    <span className={labelClass}>bKash</span>
-                    <input
-                      id="daily-bkash"
-                      {...amountFieldProps("next")}
-                      value={bkashSale}
-                      onChange={linkNonNegativeAmount(setBkashSale)}
-                      className={amountInputClass}
-                    />
-                  </label>
-                  <label className={salesFieldGroupClass} htmlFor="daily-nagad">
-                    <span className={labelClass}>Nagad</span>
-                    <input
-                      id="daily-nagad"
-                      {...amountFieldProps("next")}
-                      value={nagadSale}
-                      onChange={linkNonNegativeAmount(setNagadSale)}
-                      className={amountInputClass}
-                    />
-                  </label>
-                  <label className={salesFieldGroupClass} htmlFor="daily-pathao">
-                    <span className={labelClass}>Pathao</span>
-                    <input
-                      id="daily-pathao"
-                      {...amountFieldProps("next")}
-                      value={pathaoSale}
-                      onChange={linkNonNegativeAmount(setPathaoSale)}
-                      className={amountInputClass}
-                    />
-                  </label>
-                  <label className={salesFieldGroupClass} htmlFor="daily-foodi">
-                    <span className={labelClass}>Foodi</span>
-                    <input
-                      id="daily-foodi"
-                      {...amountFieldProps("next")}
-                      value={foodiSale}
-                      onChange={linkNonNegativeAmount(setFoodiSale)}
-                      className={amountInputClass}
-                    />
-                  </label>
-                  <label className={salesFieldGroupClass} htmlFor="daily-foodpanda">
-                    <span className={labelClass}>Foodpanda</span>
-                    <input
-                      id="daily-foodpanda"
-                      {...amountFieldProps("next")}
-                      value={foodpandaSale}
-                      onChange={linkNonNegativeAmount(setFoodpandaSale)}
-                      className={amountInputClass}
-                    />
-                  </label>
-                  <label className={salesFieldGroupClass} htmlFor="daily-void-sale">
-                    <span className={labelClass}>Void sales</span>
-                    <input
-                      id="daily-void-sale"
-                      {...amountFieldProps("next")}
-                      value={voidSale}
-                      onChange={(e) => {
-                        clearSalesFieldNotice();
-                        setVoidSale(sanitizeNonNegativeDecimalInput(e.target.value));
-                      }}
-                      className={amountInputClass}
-                    />
-                  </label>
-                </div>
-                {parseAmount(voidSale) > 0 ? (
-                  <div className="space-y-3">
-                    <div className="flex min-w-0 flex-col gap-1.5">
-                      <label className={labelClass} htmlFor="daily-void-remarks">
-                        Remarks
-                        <span className="text-red-600/90"> *</span>
-                      </label>
-                      <input
-                        id="daily-void-remarks"
-                        type="text"
-                        value={voidSaleRemarks}
-                        onChange={(e) => {
-                          clearSalesFieldNotice();
-                          setVoidSaleRemarks(e.target.value);
-                        }}
-                        placeholder="Describe the voided sale"
-                        className={`${textInputClass} ${voidRemarksErr ? FIELD_ERR_INPUT : ""}`}
-                        data-field-error-anchor="void:voidRemarks"
-                        aria-invalid={voidRemarksErr ? true : undefined}
-                        aria-required
-                      />
-                      <ExpenseFieldErrorBubble message={voidRemarksErr} />
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {renderVoidAttachmentAddControl()}
-                      <span className="min-w-0 flex-1 text-[10px] leading-snug text-[var(--pos-text-2)]">
-                        Attach PDF or image. Paste an image with this block focused.
-                      </span>
-                    </div>
-                    {voidAttachErr ? (
-                      <div data-field-error-anchor="void:voidAttach">
-                        <ExpenseFieldErrorBubble message={voidAttachErr} />
-                      </div>
-                    ) : null}
-                    {renderVoidAttachmentThumbnails()}
                   </div>
-                ) : null}
-                </div>
-              </div>
-          </div>
 
-        </div>
-        </fieldset>
+                </div>
+              </fieldset>
             </form>
           </div>
         </div>
@@ -4963,9 +6868,9 @@ export function DailyEntryFormView({
                     Locked
                     {historyDetailRow.lockedAt
                       ? ` ${new Date(historyDetailRow.lockedAt).toLocaleString(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })}`
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}`
                       : ""}
                     {historyDetailRow.lockedBy ? ` by ${historyDetailRow.lockedBy}` : ""}
                     {historyDetailRow.updatedAt ? " · " : ""}
@@ -4990,7 +6895,7 @@ export function DailyEntryFormView({
                     ["Net sales", netSalesTotal(historyDetailRow)],
                     ["Expenses total", expenseTotalFromRow(historyDetailRow)],
                     [
-                      "Withdrawn from bank",
+                      "Bank Withdraw",
                       historyDetailRow.bankWithdrawn ?? 0,
                     ],
                     [
@@ -5063,75 +6968,75 @@ export function DailyEntryFormView({
                         {historyDetailRow.expenseLines
                           .filter((line) => !isStaffFineExpenseLine(line))
                           .map((line, idx) => {
-                          const kind = savedLineKind(line);
-                          const title =
-                            kind === "staff"
-                              ? staffExpenseLineTitle(line)
-                              : kind === "vendor"
-                                ? (line.vendor ?? "").trim() || "Cashbook"
-                                : kind === "purchase"
-                                  ? (line.vendor ?? "").trim() || "Purchase"
-                                  : (line.label ?? "").trim() || "Regular expense";
-                          const noteText =
-                            kind === "staff"
-                              ? staffExpenseLineNote(line)
-                              : kind === "vendor" || kind === "purchase"
-                                ? (line.ledgerNote ?? "").trim() ||
+                            const kind = savedLineKind(line);
+                            const title =
+                              kind === "staff"
+                                ? staffExpenseLineTitle(line)
+                                : kind === "vendor"
+                                  ? (line.vendor ?? "").trim() || "Supplier"
+                                  : kind === "purchase"
+                                    ? (line.vendor ?? "").trim() || "Purchase"
+                                    : (line.label ?? "").trim() || "Regular expense";
+                            const noteText =
+                              kind === "staff"
+                                ? staffExpenseLineNote(line)
+                                : kind === "vendor" || kind === "purchase"
+                                  ? (line.ledgerNote ?? "").trim() ||
                                   (kind === "purchase" && line.items?.length
                                     ? `${line.items.length} item${line.items.length === 1 ? "" : "s"}`
                                     : "")
-                                : (line.note ?? "").trim();
-                          const rc = receiptCountForLine(line);
-                          return (
-                            <tr
-                              key={`${title}-${idx}`}
-                              className="border-b border-solid [border-color:var(--pos-divider)] last:border-b-0"
-                            >
-                              <td className="px-2 py-1.5 tabular-nums text-[var(--pos-text-2)]">
-                                {idx + 1}
-                              </td>
-                              <td className="max-w-[14rem] px-2 py-1.5 break-words text-[var(--pos-text-1)]">
-                                {title}
-                              </td>
-                              <td className="whitespace-nowrap px-2 py-1.5 text-[var(--pos-text-2)]">
-                                {kind === "staff"
-                                  ? "Payout"
-                                  : kind === "vendor"
-                                    ? "Cashbook"
-                                    : kind === "purchase"
-                                      ? "Purchase"
-                                      : "Regular"}
-                              </td>
-                              <td className="max-w-[12rem] px-2 py-1.5 break-words text-[var(--pos-text-2)]">
-                                {noteText ? noteText : "—"}
-                              </td>
-                              <td className="px-2 py-1.5 text-right tabular-nums text-[var(--pos-text-1)]">
-                                {formatMoney(line.amount)}
-                              </td>
-                              <td className="px-2 py-1.5 text-[var(--pos-text-2)]">
-                                {rc > 0 ? (
-                                  <div className="flex items-center justify-end gap-1.5">
-                                    <span className="tabular-nums">{rc}</span>
-                                    <button
-                                      type="button"
-                                      className={`${historyActionBtnClass} !p-1`}
-                                      title={`View ${rc} receipt${rc === 1 ? "" : "s"} for this line`}
-                                      aria-label={`View ${rc} receipt${rc === 1 ? "" : "s"} for ${title}`}
-                                      onClick={() => {
-                                        setHistoryReceiptsLineIndex(idx);
-                                        setHistoryReceiptsOpen(true);
-                                      }}
-                                    >
-                                      <Eye className="size-3.5" strokeWidth={2.25} aria-hidden />
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div className="text-right">—</div>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
+                                  : (line.note ?? "").trim();
+                            const rc = receiptCountForLine(line);
+                            return (
+                              <tr
+                                key={`${title}-${idx}`}
+                                className="border-b border-solid [border-color:var(--pos-divider)] last:border-b-0"
+                              >
+                                <td className="px-2 py-1.5 tabular-nums text-[var(--pos-text-2)]">
+                                  {idx + 1}
+                                </td>
+                                <td className="max-w-[14rem] px-2 py-1.5 break-words text-[var(--pos-text-1)]">
+                                  {title}
+                                </td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-[var(--pos-text-2)]">
+                                  {kind === "staff"
+                                    ? "Payout"
+                                    : kind === "vendor"
+                                      ? "Supplier"
+                                      : kind === "purchase"
+                                        ? "Purchase"
+                                        : "Regular"}
+                                </td>
+                                <td className="max-w-[12rem] px-2 py-1.5 break-words text-[var(--pos-text-2)]">
+                                  {noteText ? noteText : "—"}
+                                </td>
+                                <td className="px-2 py-1.5 text-right tabular-nums text-[var(--pos-text-1)]">
+                                  {formatMoney(line.amount)}
+                                </td>
+                                <td className="px-2 py-1.5 text-[var(--pos-text-2)]">
+                                  {rc > 0 ? (
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <span className="tabular-nums">{rc}</span>
+                                      <button
+                                        type="button"
+                                        className={`${historyActionBtnClass} !p-1`}
+                                        title={`View ${rc} receipt${rc === 1 ? "" : "s"} for this line`}
+                                        aria-label={`View ${rc} receipt${rc === 1 ? "" : "s"} for ${title}`}
+                                        onClick={() => {
+                                          setHistoryReceiptsLineIndex(idx);
+                                          setHistoryReceiptsOpen(true);
+                                        }}
+                                      >
+                                        <Eye className="size-3.5" strokeWidth={2.25} aria-hidden />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="text-right">—</div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
                       </tbody>
                       <tfoot>
                         <tr className="bg-[var(--pos-card)]/30">
@@ -5180,7 +7085,7 @@ export function DailyEntryFormView({
                           ["Cash", historyDetailRow.cashSale],
                           ["Bank", bankGross],
                           ...(bankWithdrawnHist > 0
-                            ? ([["Withdrawn from bank (expenses)", -bankWithdrawnHist]] as const)
+                            ? ([["Bank Withdraw", -bankWithdrawnHist]] as const)
                             : ([] as const)),
                           ["bKash", historyDetailRow.bkashSale],
                           ["Nagad", historyDetailRow.nagadSale],
@@ -5189,11 +7094,11 @@ export function DailyEntryFormView({
                           ["Foodpanda", historyDetailRow.foodpandaSale],
                           ...((historyDetailRow.voidSale ?? 0) > 0
                             ? ([
-                                [
-                                  "Void sales",
-                                  -(historyDetailRow.voidSale ?? 0),
-                                ] as const,
-                              ] as const)
+                              [
+                                "Void sales",
+                                -(historyDetailRow.voidSale ?? 0),
+                              ] as const,
+                            ] as const)
                             : ([] as const)),
                         ];
                         return rows;
@@ -5224,8 +7129,8 @@ export function DailyEntryFormView({
               </div>
 
               {(historyDetailRow.voidSale ?? 0) > 0 ||
-              (historyDetailRow.voidSaleRemarks ?? "").trim() ||
-              (historyDetailRow.voidSaleAttachmentDataUrls?.length ?? 0) > 0 ? (
+                (historyDetailRow.voidSaleRemarks ?? "").trim() ||
+                (historyDetailRow.voidSaleAttachmentDataUrls?.length ?? 0) > 0 ? (
                 <div className="rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] p-3">
                   <p className={`mb-2 ${sectionTitleClass}`}>Void sales detail</p>
                   {(historyDetailRow.voidSale ?? 0) > 0 ? (
@@ -5304,7 +7209,7 @@ export function DailyEntryFormView({
                 <button
                   type="button"
                   disabled={isLocking}
-                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-3 text-[12px] font-semibold text-amber-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-amber-500/50 bg-amber-500/10 px-3 text-[12px] font-semibold text-amber-800 dark:text-amber-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => openLockEntryModal(historyDetailRow.date)}
                 >
                   <Lock className="size-3.5" strokeWidth={2.25} />
@@ -5314,7 +7219,7 @@ export function DailyEntryFormView({
                 <button
                   type="button"
                   disabled={isUnlocking}
-                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-800 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-9 min-w-[7rem] items-center justify-center gap-1.5 rounded-[8px] border border-solid border-emerald-500/50 bg-emerald-500/10 px-3 text-[12px] font-semibold text-emerald-800 dark:text-emerald-300 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => openUnlockEntryModal(historyDetailRow.date)}
                 >
                   <LockOpen className="size-3.5" strokeWidth={2.25} />
@@ -5373,57 +7278,57 @@ export function DailyEntryFormView({
               {historyDetailRow.expenseLines
                 ?.filter((line) => !isStaffFineExpenseLine(line))
                 .map((line, idx) => {
-                const urls = line.receiptDataUrls ?? [];
-                if (urls.length === 0) return null;
-                if (historyReceiptsLineIndex !== null && idx !== historyReceiptsLineIndex) {
-                  return null;
-                }
-                const kind = savedLineKind(line);
-                const title =
-                  kind === "staff"
-                    ? staffExpenseLineTitle(line)
-                    : kind === "vendor"
-                      ? (line.vendor ?? "").trim() || "Cashbook"
-                      : kind === "purchase"
-                        ? (line.vendor ?? "").trim() || "Purchase"
-                        : (line.label ?? "").trim() || "Regular expense";
-                const lineNote =
-                  kind === "staff"
-                    ? staffExpenseLineNote(line)
-                    : kind === "vendor" || kind === "purchase"
-                      ? (line.ledgerNote ?? "").trim()
-                      : (line.note ?? "").trim();
-                return (
-                  <section key={`receipt-block-${idx}`} className="space-y-2">
-                    <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
-                      {title}{" "}
-                      <span className="font-normal text-[var(--pos-text-2)]">
-                        · {formatMoney(line.amount)}
-                      </span>
-                    </p>
-                    {lineNote ? (
-                      <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">{lineNote}</p>
-                    ) : null}
-                    <div className="flex flex-wrap gap-2">
-                      {urls.map((url, ri) => (
-                        <button
-                          key={`${idx}-g-${ri}`}
-                          type="button"
-                          className="block overflow-hidden rounded-[8px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
-                          onClick={() => setReceiptPreviewUrl(url)}
-                          aria-label={`View receipt ${ri + 1} for ${title}`}
-                        >
-                          <img
-                            src={url}
-                            alt=""
-                            className="size-[5.5rem] object-cover sm:size-28"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                );
-              })}
+                  const urls = line.receiptDataUrls ?? [];
+                  if (urls.length === 0) return null;
+                  if (historyReceiptsLineIndex !== null && idx !== historyReceiptsLineIndex) {
+                    return null;
+                  }
+                  const kind = savedLineKind(line);
+                  const title =
+                    kind === "staff"
+                      ? staffExpenseLineTitle(line)
+                      : kind === "vendor"
+                        ? (line.vendor ?? "").trim() || "Supplier"
+                        : kind === "purchase"
+                          ? (line.vendor ?? "").trim() || "Purchase"
+                          : (line.label ?? "").trim() || "Regular expense";
+                  const lineNote =
+                    kind === "staff"
+                      ? staffExpenseLineNote(line)
+                      : kind === "vendor" || kind === "purchase"
+                        ? (line.ledgerNote ?? "").trim()
+                        : (line.note ?? "").trim();
+                  return (
+                    <section key={`receipt-block-${idx}`} className="space-y-2">
+                      <p className="text-[11px] font-semibold text-[var(--pos-text-1)]">
+                        {title}{" "}
+                        <span className="font-normal text-[var(--pos-text-2)]">
+                          · {formatMoney(line.amount)}
+                        </span>
+                      </p>
+                      {lineNote ? (
+                        <p className="text-[10px] leading-snug text-[var(--pos-text-2)]">{lineNote}</p>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        {urls.map((url, ri) => (
+                          <button
+                            key={`${idx}-g-${ri}`}
+                            type="button"
+                            className="block overflow-hidden rounded-[8px] border border-solid [border-color:var(--pos-divider)] ring-offset-1 hover:ring-2 hover:ring-[var(--pos-sb-base)]/45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--pos-sb-base)]"
+                            onClick={() => setReceiptPreviewUrl(url)}
+                            aria-label={`View receipt ${ri + 1} for ${title}`}
+                          >
+                            <img
+                              src={url}
+                              alt=""
+                              className="size-[5.5rem] object-cover sm:size-28"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })}
             </div>
             <div className="shrink-0 border-t border-solid [border-color:var(--pos-divider)] px-4 py-3">
               <button
@@ -5508,6 +7413,118 @@ export function DailyEntryFormView({
         </div>
       ) : null}
 
+      {categoryModalLineId ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="new-expense-category-title"
+          className="fixed inset-0 z-[130] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => {
+            if (!categoryModalBusy) {
+              setCategoryModalLineId(null);
+              setCategoryModalName("");
+              setCategoryModalError(null);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="new-expense-category-title"
+              className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
+            >
+              New expense category
+            </h2>
+            <p className="mt-1.5 text-[12px] leading-snug text-[var(--pos-text-2)]">
+              Used for Other Expenses and Daily Entry. You can reuse it anytime.
+            </p>
+            <label className="mt-3 flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-[var(--pos-text-2)]">Name</span>
+              <input
+                type="text"
+                autoFocus
+                value={categoryModalName}
+                onChange={(e) => {
+                  setCategoryModalName(e.target.value);
+                  if (categoryModalError) setCategoryModalError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const btn = document.getElementById("new-expense-category-save");
+                    btn?.click();
+                  }
+                }}
+                placeholder="e.g. Utilities"
+                className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2.5 text-[13px] text-[var(--pos-text-1)] outline-none focus:border-[var(--pos-sb-base)]"
+                aria-label="Category name"
+              />
+            </label>
+            {categoryModalError ? (
+              <p role="alert" className="mt-2 text-[12px] text-red-700">
+                {categoryModalError}
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 sm:flex-none"
+                disabled={categoryModalBusy}
+                onClick={() => {
+                  setCategoryModalLineId(null);
+                  setCategoryModalName("");
+                  setCategoryModalError(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                id="new-expense-category-save"
+                type="button"
+                className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:flex-none"
+                style={{ backgroundColor: "var(--pos-sb-base)" }}
+                disabled={categoryModalBusy || !categoryModalName.trim()}
+                onClick={() => {
+                  const name = categoryModalName.trim();
+                  const lineId = categoryModalLineId;
+                  if (!name || !lineId) return;
+                  void (async () => {
+                    setCategoryModalBusy(true);
+                    setCategoryModalError(null);
+                    try {
+                      const existing = expenseCategories.find(
+                        (c) => c.name.toLowerCase() === name.toLowerCase(),
+                      );
+                      if (existing) {
+                        patchLine(lineId, { expenseCategoryId: existing.id });
+                        setCategoryModalLineId(null);
+                        setCategoryModalName("");
+                        return;
+                      }
+                      const created = await createExpenseCategory(name);
+                      setExpenseCategories((prev) =>
+                        [...prev, created].sort((a, b) => a.name.localeCompare(b.name)),
+                      );
+                      patchLine(lineId, { expenseCategoryId: created.id });
+                      setCategoryModalLineId(null);
+                      setCategoryModalName("");
+                    } catch {
+                      setCategoryModalError("Could not create category. Try again.");
+                    } finally {
+                      setCategoryModalBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {categoryModalBusy ? "Saving…" : "Save category"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {openingEditWarningOpen ? (
         <div
           role="dialog"
@@ -5533,12 +7550,12 @@ export function DailyEntryFormView({
               </span>{" "}
               right now
               {carriedOpening.sourceDate &&
-              parseAmount(openingBalance) === carriedOpeningFromPrevDay ? (
+                parseAmount(openingBalance) === carriedOpeningFromPrevDay ? (
                 <> — from {formatDateKeyAsDisplay(carriedOpening.sourceDate)}</>
               ) : null}
               {!carriedOpening.sourceDate &&
-              !savedRowForDate &&
-              parseAmount(openingBalance) === carriedOpeningFromPrevDay ? (
+                !savedRowForDate &&
+                parseAmount(openingBalance) === carriedOpeningFromPrevDay ? (
                 <> — no earlier day saved</>
               ) : null}
               . Changing it also changes closing balance.
@@ -5590,7 +7607,7 @@ export function DailyEntryFormView({
             </p>
             {lockError ? (
               <p
-                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800"
+                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800 dark:bg-red-500/10 dark:text-red-300"
                 role="alert"
               >
                 {lockError}
@@ -5645,7 +7662,7 @@ export function DailyEntryFormView({
             </p>
             {unlockError ? (
               <p
-                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800"
+                className="mt-3 rounded-[8px] border border-solid border-red-500/40 bg-red-50 px-3 py-2 text-[12px] font-medium leading-snug text-red-800 dark:bg-red-500/10 dark:text-red-300"
                 role="alert"
               >
                 {unlockError}

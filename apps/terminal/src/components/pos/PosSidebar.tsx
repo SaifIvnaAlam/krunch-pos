@@ -10,6 +10,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { ThemeToggle } from "../ThemeToggle";
+import { useSession } from "@/features/auth";
 import {
   getVisibleNavSections,
   branchPathToLeaf,
@@ -390,13 +391,15 @@ export function PosSidebar({
   branchName?: string;
   branchAddress?: string | null;
 }) {
+  const { permissions, userEmail } = useSession();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [openBranches, setOpenBranches] = useState<Record<string, boolean>>({});
   const navRef = useRef<HTMLElement | null>(null);
   const [collapsedCanScrollDown, setCollapsedCanScrollDown] = useState(false);
-  const navSections = getVisibleNavSections();
+  const navSections = getVisibleNavSections(permissions);
   const userInitials = initialsFromName(userName);
   const userDisplayName = userName.trim() || "Signed in";
+  const userEmailDisplay = userEmail.trim() || "—";
 
   const setCollapsed = (next: boolean) => {
     writeSidebarCollapsed(next);
@@ -640,8 +643,11 @@ export function PosSidebar({
               <p className="truncate text-[12px] font-semibold text-[var(--pos-sb-text-1)]">
                 {userDisplayName}
               </p>
-              <p className="truncate text-[10px] text-[var(--pos-sb-text-2)]">
-                Live session
+              <p
+                className="truncate text-[10px] text-[var(--pos-sb-text-2)]"
+                title={userEmailDisplay !== "—" ? userEmailDisplay : undefined}
+              >
+                {userEmailDisplay}
               </p>
             </div>
             <button

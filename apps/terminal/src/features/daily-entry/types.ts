@@ -25,7 +25,12 @@ export type ExpenseLineSaved = {
   employeeName?: string;
   staffLineKind?: StaffLineKind | "fine";
   note?: string;
+  /** Payable total (taka). For regular lines, cash out may be `paidAmount`. */
   amount: number;
+  /** Cash paid now on a regular expense (taka). Omit = fully paid (legacy). */
+  paidAmount?: number;
+  /** Other Expenses category id (regular lines). */
+  expenseCategoryId?: string;
   receiptDataUrls?: string[];
   lineId?: string;
   /** Vendor payment / purchase bill lines when posted to cashbooks. */

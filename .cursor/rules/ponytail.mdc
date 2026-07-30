@@ -1,0 +1,28 @@
+---
+description: Ponytail — lazy senior defaults. Prefer delete/reuse over new code; no dead paths or speculative scaffolding.
+alwaysApply: true
+---
+
+# Ponytail (always on)
+
+Read and follow `.cursor/skills/ponytail/SKILL.md` (or `.agents/skills/ponytail/SKILL.md`) on every coding change. Default intensity: **full**. Off only if the user says "stop ponytail" / "normal mode".
+
+## Decision ladder (stop at first rung that holds)
+
+1. Does this need to exist? (YAGNI — skip speculative work)
+2. Already in this codebase? Reuse it.
+3. Stdlib / platform native?
+4. Already-installed dependency?
+5. One line?
+6. Only then: minimum code that works.
+
+## Dead / retired UI & code (this repo)
+
+- Do **not** keep or wire navigation to retired surfaces (e.g. Cashbooks “Bills & payments” as a destination from Item Purchases).
+- When a feature moves (Cashbook → Item Purchases / Payables), remove the old entry points or hard-redirect; do not leave half-live pages agents/users can land on by accident.
+- Flag dead tables/modules in CONTEXT.md; do not add new callers to flagged-dead code.
+- Deletion over “keep for later” unless CONTEXT.md explicitly names it as the rollback path (legacy JSON blobs during cutover).
+
+## Output
+
+Shortest working diff. Code first. At most a few lines on what was skipped.

@@ -1,4 +1,5 @@
 export {
+  cancelSalaryWorkspacePersist,
   flushSalaryWorkspacePersist,
   getSalaryBundle,
   getSalaryWorkspaceLoadState,

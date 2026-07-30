@@ -16,7 +16,8 @@ const SYSTEM_ROLES = [
   },
   {
     name: 'OWNER',
-    description: 'Global. Full access all branches.',
+    description:
+      'Primary restaurant admin (counts toward Admin seats). Same powers as ADMIN.',
     isSystem: true,
     permissions: [
       'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
@@ -28,7 +29,8 @@ const SYSTEM_ROLES = [
   },
   {
     name: 'ADMIN',
-    description: 'Global. Staff and configuration management.',
+    description:
+      'Admin access (license seat). Full operational write + Users & Access, audit, system config.',
     isSystem: true,
     permissions: [
       'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
@@ -40,11 +42,11 @@ const SYSTEM_ROLES = [
   },
   {
     name: 'BRANCH_MANAGER',
-    description: 'Branch-scoped. Full access own branch.',
+    description:
+      'Managerial input access (license seat). Operational view/edit only — no Users & Access or system config.',
     isSystem: true,
     permissions: [
-      'staff:read', 'staff:create', 'staff:edit', 'staff:deactivate',
-      'staff:assign_role', 'reports:branch', 'audit:read',
+      'reports:branch',
       'daily_entry:read', 'daily_entry:write',
       'storage:read', 'storage:write',
     ],

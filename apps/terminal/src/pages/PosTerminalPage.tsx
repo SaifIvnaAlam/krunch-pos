@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useSession } from "@/features/auth";
+import { hasPermission, PERM_STAFF_READ, useSession } from "@/features/auth";
 import { loadEmployeeDirectory } from "@/features/employees";
 import {
   resolveInitialLeafId,
@@ -22,6 +22,10 @@ import {
   HR_DIRECTORY_LEAF_IDS,
 } from "../components/pos/EmployeeDirectoryView";
 import {
+  UsersAccessView,
+  USERS_ACCESS_LEAF_IDS,
+} from "../components/pos/UsersAccessView";
+import {
   LEDGER_LEAF_IDS,
   LedgerModuleView,
 } from "../components/pos/LedgerModuleView";
@@ -30,13 +34,20 @@ import {
   REPORT_LEAF_IDS,
   ReportsModuleView,
 } from "../components/pos/ReportsModuleView";
+import { ExpensesListView } from "../components/pos/ExpensesListView";
+import { AllExpensesView } from "../components/pos/AllExpensesView";
+import {
+  ITEM_PURCHASE_LEAF_IDS,
+  ItemPurchaseModuleView,
+} from "../components/pos/ItemPurchaseModuleView";
 
 export function PosTerminalPage() {
   const navigate = useNavigate();
-  const { signOut, userName, activeBranch } = useSession();
+  const { signOut, userName, activeBranch, permissions } = useSession();
   const [activeLeafId, setActiveLeafId] = useState(resolveInitialLeafId);
   const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false);
   const [dailyEntryOpenDateKey, setDailyEntryOpenDateKey] = useState<string | null>(null);
+  const [dailyEntryHistoryNavNonce, setDailyEntryHistoryNavNonce] = useState(0);
   const [dailyEntryStaffPayoutEmployeeId, setDailyEntryStaffPayoutEmployeeId] = useState<
     string | null
   >(null);
@@ -48,7 +59,11 @@ export function PosTerminalPage() {
   }, []);
 
   const handleSelectLeaf = useCallback((leafId: string) => {
-    if (leafId === activeLeafId) return;
+    if (leafId === activeLeafId) {
+      // Re-selecting Daily Entry while on the form returns to the history list.
+      if (leafId === "exp-daily") setDailyEntryHistoryNavNonce((n) => n + 1);
+      return;
+    }
     const proceed = () => setActiveLeafId(leafId);
     if (!attemptPosLeave(proceed)) return;
     proceed();
@@ -136,12 +151,30 @@ export function PosTerminalPage() {
   };
 
   const mainContent = () => {
+    if (ITEM_PURCHASE_LEAF_IDS.has(activeLeafId)) {
+      return <ItemPurchaseModuleView />;
+    }
     if (LEDGER_LEAF_IDS.has(activeLeafId)) {
       const ledgerKey = activeLeafId === "lm-items" ? "lm-items" : "lm-cashbooks";
       return <LedgerModuleView key={ledgerKey} leafId={activeLeafId} />;
     }
     if (HR_DIRECTORY_LEAF_IDS.has(activeLeafId)) {
       return <EmployeeDirectoryView />;
+    }
+    if (USERS_ACCESS_LEAF_IDS.has(activeLeafId)) {
+      if (!hasPermission(permissions, PERM_STAFF_READ)) {
+        return (
+          <div className="flex min-h-0 flex-1 flex-col gap-2 p-1">
+            <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">
+              Users &amp; Access
+            </h1>
+            <p className="text-[12px] text-red-600 dark:text-red-400" role="alert">
+              You do not have permission to open this section.
+            </p>
+          </div>
+        );
+      }
+      return <UsersAccessView />;
     }
     if (HR_PAYROLL_LEAF_IDS.has(activeLeafId)) {
       return (
@@ -161,11 +194,18 @@ export function PosTerminalPage() {
       return (
         <DailyEntryFormView
           openDateKey={dailyEntryOpenDateKey}
+          historyNavNonce={dailyEntryHistoryNavNonce}
           openStaffPayoutEmployeeId={dailyEntryStaffPayoutEmployeeId}
           onOpenDateKeyConsumed={() => setDailyEntryOpenDateKey(null)}
           onOpenStaffPayoutEmployeeIdConsumed={() => setDailyEntryStaffPayoutEmployeeId(null)}
         />
       );
+    }
+    if (activeLeafId === "all-expenses") {
+      return <AllExpensesView />;
+    }
+    if (activeLeafId === "oe-home") {
+      return <ExpensesListView lockedKind="other_expense" />;
     }
     if (REPORT_LEAF_IDS.has(activeLeafId)) {
       return <ReportsModuleView leafId={activeLeafId} />;
@@ -173,6 +213,7 @@ export function PosTerminalPage() {
     return (
       <DailyEntryFormView
         openDateKey={dailyEntryOpenDateKey}
+        historyNavNonce={dailyEntryHistoryNavNonce}
         openStaffPayoutEmployeeId={dailyEntryStaffPayoutEmployeeId}
         onOpenDateKeyConsumed={() => setDailyEntryOpenDateKey(null)}
         onOpenStaffPayoutEmployeeIdConsumed={() => setDailyEntryStaffPayoutEmployeeId(null)}

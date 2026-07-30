@@ -32,7 +32,19 @@ import {
   upsertDailyPurchaseFromLedgerInvoice,
 } from "@/features/daily-entry";
 import { useSession } from "@/features/auth";
+import {
+  listExpenses,
+  EXPENSE_STATUS_LABEL,
+  expenseStatusPill,
+  type ExpenseStatus,
+} from "@/features/payables";
+import { SearchableSelect } from "./SearchableSelect";
 import { dispatchPosSelectLeaf } from "../../lib/posNavEvents";
+import {
+  expenseStatLabel,
+  expenseStatTile,
+  expenseStatValue,
+} from "./payablesUi";
 import { MediaThumb } from "./MediaThumb";
 import { ReceiptPreviewBody } from "./ReceiptPreviewBody";
 import {
@@ -60,8 +72,6 @@ const purchaseHead =
   "flex flex-wrap items-center justify-between gap-3 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3";
 const purchaseFilters =
   "flex flex-wrap items-center gap-2 border-b border-solid [border-color:var(--pos-divider)] px-4 py-3";
-const purchaseStats =
-  "grid grid-cols-2 gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2 sm:grid-cols-4";
 const purchaseStatCell =
   "rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2";
 const purchaseSearchInput =
@@ -206,6 +216,21 @@ function supplierBalance(supplierId: string, ledger: LedgerEntry[]): number {
   return ledger
     .filter((e) => e.supplierId === supplierId)
     .reduce((s, e) => s + e.amountCents, 0);
+}
+
+/** Account-level status for a cashbook (supplier) balance in cents. */
+function supplierBalanceLabel(balanceCents: number): string {
+  if (balanceCents > 0) return "Owing";
+  if (balanceCents < 0) return "Advance";
+  return "Settled";
+}
+
+function supplierBalancePill(balanceCents: number): string {
+  if (balanceCents > 0)
+    return "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400";
+  if (balanceCents < 0)
+    return "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400";
+  return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
 }
 
 function purchaseTotalCents(p: PurchaseOrder): number {
@@ -772,7 +797,7 @@ function LedgerEntryDetailContent({
     <>
     <dl className="space-y-3 text-[12px]">
       <div>
-        <dt className={purchaseLabel}>Cashbook</dt>
+        <dt className={purchaseLabel}>Supplier</dt>
         <dd className="mt-0.5 font-medium text-[var(--pos-text-1)]">{supplierLabel}</dd>
       </div>
       <div>
@@ -808,11 +833,11 @@ function LedgerEntryDetailContent({
   );
 }
 
-function ModuleTitle({ title, subtitle }: { title: string; subtitle: string }) {
+function ModuleTitle({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="min-w-0">
       <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">{title}</h1>
-      <p className="text-[12px] text-[var(--pos-text-2)]">{subtitle}</p>
+      {subtitle ? <p className="text-[12px] text-[var(--pos-text-2)]">{subtitle}</p> : null}
     </div>
   );
 }
@@ -1037,7 +1062,7 @@ function CashbookModalPanel({
             activeField={activeField}
             setActiveField={setActiveField}
             onSave={(next) => saveTextField("name", next)}
-            placeholder="Cashbook name"
+            placeholder="Supplier name"
             valueClassName="mt-0.5 text-[14px] font-semibold leading-tight text-[var(--pos-text-1)]"
             inputClassName={cashbookUnderlineInputLg}
           />
@@ -1278,7 +1303,13 @@ function DangerGhostButton({
 }
 
 
-function SupplierListView() {
+function SupplierListView({
+  stayInPlace = false,
+  headerAccessory,
+}: {
+  stayInPlace?: boolean;
+  headerAccessory?: React.ReactNode;
+}) {
   const ws = useWorkspace();
   const [q, setQ] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1288,6 +1319,8 @@ function SupplierListView() {
     null,
   );
   const [deleteBusy, setDeleteBusy] = useState(false);
+  /** When embedded in Item Purchases, host the bill/pay drawer without leaving Suppliers. */
+  const [billPayDrawerHost, setBillPayDrawerHost] = useState(false);
 
   const selectedSupplier = useMemo(
     () => ws.suppliers.find((s) => s.id === selectedSupplierId) ?? null,
@@ -1403,27 +1436,41 @@ function SupplierListView() {
     [ws.suppliers],
   );
 
-  const startNewPurchaseFor = useCallback((supplierId: string) => {
-    setSelectedSupplierId(null);
-    setWorkspace((w) => ({
-      ...w,
-      ledgerSupplierFilter: supplierId,
-      ledgerInvoiceDrawerPrefillSupplierId: supplierId,
-      ledgerPaymentDrawerPrefillSupplierId: null,
-    }));
-    selectLedgerTab("bills");
-  }, []);
+  const startNewPurchaseFor = useCallback(
+    (supplierId: string) => {
+      setSelectedSupplierId(null);
+      setWorkspace((w) => ({
+        ...w,
+        ledgerSupplierFilter: supplierId,
+        ledgerInvoiceDrawerPrefillSupplierId: supplierId,
+        ledgerPaymentDrawerPrefillSupplierId: null,
+      }));
+      if (stayInPlace) {
+        setBillPayDrawerHost(true);
+        return;
+      }
+      selectLedgerTab("bills");
+    },
+    [stayInPlace],
+  );
 
-  const startPaymentFor = useCallback((supplierId: string) => {
-    setSelectedSupplierId(null);
-    setWorkspace((w) => ({
-      ...w,
-      ledgerSupplierFilter: supplierId,
-      ledgerPaymentDrawerPrefillSupplierId: supplierId,
-      ledgerInvoiceDrawerPrefillSupplierId: null,
-    }));
-    selectLedgerTab("bills");
-  }, []);
+  const startPaymentFor = useCallback(
+    (supplierId: string) => {
+      setSelectedSupplierId(null);
+      setWorkspace((w) => ({
+        ...w,
+        ledgerSupplierFilter: supplierId,
+        ledgerPaymentDrawerPrefillSupplierId: supplierId,
+        ledgerInvoiceDrawerPrefillSupplierId: null,
+      }));
+      if (stayInPlace) {
+        setBillPayDrawerHost(true);
+        return;
+      }
+      selectLedgerTab("bills");
+    },
+    [stayInPlace],
+  );
 
   const isCreatingNew =
     editingId !== null && !ws.suppliers.some((s) => s.id === editingId);
@@ -1484,18 +1531,25 @@ function SupplierListView() {
   }, [pendingDeleteSupplierId, deleteBusy]);
 
   return (
+    <>
     <div className={purchaseShell}>
       <div className={purchaseHead}>
-        <ModuleTitle
-          title="Books"
-          subtitle="Cashbooks for vendors. Balances update from bills and payments."
-        />
-        <PrimaryButton type="button" onClick={startCreate}>
-          Add cashbook
-        </PrimaryButton>
+        <ModuleTitle title="Suppliers" />
+        {headerAccessory ? <div className="shrink-0">{headerAccessory}</div> : null}
       </div>
 
-      <div className={`${purchaseFilters} flex-col items-stretch gap-3`}>
+      <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
+        <div className={expenseStatTile}>
+          <div className={expenseStatLabel}>Suppliers on file</div>
+          <div className={expenseStatValue}>{ws.suppliers.length}</div>
+        </div>
+        <div className={expenseStatTile}>
+          <div className={expenseStatLabel}>With open payable</div>
+          <div className={expenseStatValue}>{openPayableCount}</div>
+        </div>
+      </div>
+
+      <div className={purchaseFilters}>
         <div className="flex w-full flex-wrap items-center gap-2">
           <label className="relative min-w-[220px] flex-1">
             <Search
@@ -1509,27 +1563,13 @@ function SupplierListView() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search name, contact, email, phone…"
               className={purchaseSearchInput}
-              aria-label="Filter cashbooks"
+              aria-label="Filter suppliers"
             />
           </label>
-          <p className="text-[11px] text-[var(--pos-text-2)] sm:ml-auto">
-            Showing{" "}
-            <span className="font-semibold text-[var(--pos-text-1)]">{rows.length}</span> cashbooks
-          </p>
-        </div>
-      </div>
-
-      <div className={`${purchaseStats} sm:grid-cols-2`}>
-        <div className={purchaseStatCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Books on file</div>
-          <div className="mt-0.5 text-[20px] font-semibold leading-tight text-[var(--pos-text-1)]">
-            {ws.suppliers.length}
-          </div>
-        </div>
-        <div className={purchaseStatCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">With open payable</div>
-          <div className="mt-0.5 text-[20px] font-semibold leading-tight text-[var(--pos-text-1)]">
-            {openPayableCount}
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <PrimaryButton type="button" onClick={startCreate}>
+              Add supplier
+            </PrimaryButton>
           </div>
         </div>
       </div>
@@ -1541,6 +1581,7 @@ function SupplierListView() {
               <th className={purchaseTh}>Name</th>
               <th className={purchaseTh}>Contact</th>
               <th className={`${purchaseTh} text-right`}>Payable</th>
+              <th className={purchaseTh}>Status</th>
               <th className={`${purchaseTh} text-right`}>Actions</th>
             </tr>
           </thead>
@@ -1548,10 +1589,10 @@ function SupplierListView() {
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                 >
-                  No cashbooks match. Add one or clear the search.
+                  No suppliers match. Add one or clear the search.
                 </td>
               </tr>
             ) : (
@@ -1590,6 +1631,13 @@ function SupplierListView() {
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums text-[var(--pos-text-1)]">
                       {formatMoney(bal)}
+                    </td>
+                    <td className="px-4 py-2">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${supplierBalancePill(bal)}`}
+                      >
+                        {supplierBalanceLabel(bal)}
+                      </span>
                     </td>
                     <td className="px-4 py-2 text-right">
                       <div className="flex flex-wrap justify-end gap-1.5">
@@ -1631,11 +1679,11 @@ function SupplierListView() {
         <LedgerCenterModal
           title={
             isCreatingNew ? (
-              "New cashbook"
+              "New supplier"
             ) : selectedSupplier ? (
               <span className="min-w-0 truncate">{selectedSupplier.name}</span>
             ) : (
-              "Cashbook"
+              "Supplier"
             )
           }
           titleId="cashbook-modal-title"
@@ -1688,7 +1736,7 @@ function SupplierListView() {
                   >
                     <span className="inline-flex items-center gap-1">
                       <Trash2 className="size-3.5" strokeWidth={2} aria-hidden />
-                      Delete cashbook
+                      Delete supplier
                     </span>
                   </DangerGhostButton>
                 </div>
@@ -1731,7 +1779,7 @@ function SupplierListView() {
                   id="delete-cashbook-title"
                   className="text-[15px] font-semibold leading-tight text-[var(--pos-text-1)]"
                 >
-                  Delete cashbook?
+                  Delete supplier?
                 </h2>
                 <p className="mt-2 text-[12px] leading-snug text-[var(--pos-text-2)]">
                   This removes{" "}
@@ -1776,6 +1824,13 @@ function SupplierListView() {
           )
         : null}
     </div>
+    {stayInPlace && billPayDrawerHost ? (
+      <SupplierLedgerView
+        drawerHost
+        onDrawerHostIdle={() => setBillPayDrawerHost(false)}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -2586,18 +2641,17 @@ function LedgerEntryDrawerForm({
         {bookField === "select" ? (
           <label className="col-span-2 block min-w-0">
             <span className={purchaseLabel}>Book</span>
-            <select
+            <SearchableSelect
               value={ledgerDraft.supplierId}
-              onChange={(e) => onBookChange(e.target.value)}
+              onChange={onBookChange}
               className={purchaseField}
-            >
-              <option value="">Select…</option>
-              {ws.suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+              placeholder="Select…"
+              options={[
+                { value: "", label: "Select…" },
+                ...ws.suppliers.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+              aria-label="Book"
+            />
           </label>
         ) : (
           <div className="col-span-2 rounded-[9px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-3 py-2">
@@ -2627,10 +2681,10 @@ function LedgerEntryDrawerForm({
             ) : (
               <label className="min-w-0">
                 <span className={purchaseLabel}>Type</span>
-                <select
+                <SearchableSelect
                   value={ledgerDraft.kind}
-                  onChange={(e) => {
-                    const kind = e.target.value as LedgerEntryDrawerKind;
+                  onChange={(v) => {
+                    const kind = v as LedgerEntryDrawerKind;
                     patchLedgerDraft({
                       kind,
                       items:
@@ -2642,13 +2696,9 @@ function LedgerEntryDrawerForm({
                     });
                   }}
                   className={purchaseField}
-                >
-                  {LEDGER_DRAWER_KINDS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+                  options={LEDGER_DRAWER_KINDS}
+                  aria-label="Type"
+                />
               </label>
             )}
             {dateControl}
@@ -2673,21 +2723,20 @@ function LedgerEntryDrawerForm({
                 </div>
                 <label className="min-w-0">
                   <span className={purchaseLabel}>Via</span>
-                  <select
+                  <SearchableSelect
                     value={ledgerDraft.method}
-                    onChange={(e) =>
+                    onChange={(v) =>
                       patchLedgerDraft({
-                        method: e.target.value as LedgerEntryDraft["method"],
+                        method: v as LedgerEntryDraft["method"],
                       })
                     }
                     className={purchaseField}
-                  >
-                    {LEDGER_PAYMENT_METHODS.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
+                    options={LEDGER_PAYMENT_METHODS.map((m) => ({
+                      value: m,
+                      label: m,
+                    }))}
+                    aria-label="Via"
+                  />
                 </label>
               </>
             ) : (
@@ -2743,18 +2792,16 @@ function LedgerEntryDrawerForm({
                             aria-label={`Item ${idx + 1} quantity`}
                             className={`${itemField} text-right font-mono`}
                           />
-                          <select
+                          <SearchableSelect
                             value={row.unit}
-                            onChange={(e) => patchItem(row.key, { unit: e.target.value })}
+                            onChange={(unit) => patchItem(row.key, { unit })}
                             aria-label={`Item ${idx + 1} unit`}
                             className={itemField}
-                          >
-                            {LEDGER_ITEM_UNITS.map((u) => (
-                              <option key={u} value={u}>
-                                {u}
-                              </option>
-                            ))}
-                          </select>
+                            options={LEDGER_ITEM_UNITS.map((u) => ({
+                              value: u,
+                              label: u,
+                            }))}
+                          />
                           <input
                             type="number"
                             inputMode="decimal"
@@ -2865,10 +2912,19 @@ function LedgerEntryDrawerForm({
   );
 }
 
-function SupplierLedgerView() {
+function SupplierLedgerView({
+  drawerHost = false,
+  onDrawerHostIdle,
+}: {
+  /** Only mount the bill/pay drawer (used from Item Purchases → Suppliers). */
+  drawerHost?: boolean;
+  onDrawerHostIdle?: () => void;
+} = {}) {
   const ws = useWorkspace();
   const { userName } = useSession();
   const filter = ws.ledgerSupplierFilter;
+  const onDrawerHostIdleRef = useRef(onDrawerHostIdle);
+  onDrawerHostIdleRef.current = onDrawerHostIdle;
   const [ledgerDrawerOpen, setLedgerDrawerOpen] = useState(false);
   const [editingLedgerEntryId, setEditingLedgerEntryId] = useState<string | null>(null);
   const [pendingLockEntryId, setPendingLockEntryId] = useState<string | null>(null);
@@ -2882,6 +2938,36 @@ function SupplierLedgerView() {
   const [ledgerDateFrom, setLedgerDateFrom] = useState("");
   const [ledgerDateTo, setLedgerDateTo] = useState("");
   const [selectedLedgerEntryId, setSelectedLedgerEntryId] = useState<string | null>(null);
+
+  // Per-bill paid/due/status from the relational payables projection. Each item
+  // purchase bill maps to a derived Expense keyed `exp_po_<purchaseOrderId>`.
+  const [billStatusByExpenseId, setBillStatusByExpenseId] = useState<
+    Map<string, { status: ExpenseStatus; paid: number; due: number }>
+  >(new Map());
+  useEffect(() => {
+    let alive = true;
+    void listExpenses({ kind: "item_purchase" })
+      .then((list) => {
+        if (!alive) return;
+        const m = new Map<string, { status: ExpenseStatus; paid: number; due: number }>();
+        for (const e of list) m.set(e.id, { status: e.status, paid: e.paid, due: e.due });
+        setBillStatusByExpenseId(m);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [ws.ledger, ws.moves]);
+
+  const billStatusFor = useCallback(
+    (e: LedgerEntry) => {
+      if (e.type !== "invoice") return null;
+      const po = linkedPurchaseForLedgerEntry(e, ws.moves);
+      if (!po) return null;
+      return billStatusByExpenseId.get(`exp_po_${po.id}`) ?? null;
+    },
+    [ws.moves, billStatusByExpenseId],
+  );
 
   const selectedLedgerEntry = useMemo(
     () => ws.ledger.find((e) => e.id === selectedLedgerEntryId) ?? null,
@@ -2908,6 +2994,7 @@ function SupplierLedgerView() {
         ledgerInvoiceDrawerPrefillSupplierId: null,
         ledgerPaymentDrawerPrefillSupplierId: null,
       }));
+      if (drawerHost) onDrawerHostIdleRef.current?.();
       return;
     }
     if (invSid) {
@@ -2923,7 +3010,7 @@ function SupplierLedgerView() {
       ledgerInvoiceDrawerPrefillSupplierId: null,
       ledgerPaymentDrawerPrefillSupplierId: null,
     }));
-  }, [ws.ledgerInvoiceDrawerPrefillSupplierId, ws.ledgerPaymentDrawerPrefillSupplierId]);
+  }, [drawerHost, ws.ledgerInvoiceDrawerPrefillSupplierId, ws.ledgerPaymentDrawerPrefillSupplierId]);
 
   const supplierName = useCallback(
     (id: string) => ws.suppliers.find((s) => s.id === id)?.name ?? id,
@@ -3051,6 +3138,7 @@ function SupplierLedgerView() {
     setLedgerDrawerOpen(false);
     setEditingLedgerEntryId(null);
     setLedgerDraft(defaultLedgerEntryDraft(""));
+    if (drawerHost) onDrawerHostIdleRef.current?.();
   }
 
   const saveLedgerFromDrawer = useCallback(() => {
@@ -3065,6 +3153,7 @@ function SupplierLedgerView() {
       setLedgerDrawerOpen(false);
       setEditingLedgerEntryId(null);
       setLedgerDraft(defaultLedgerEntryDraft(""));
+      if (drawerHost) onDrawerHostIdleRef.current?.();
     };
 
     if (draftSnapshot.kind !== "invoice") {
@@ -3106,7 +3195,7 @@ function SupplierLedgerView() {
       }
       closeDrawer();
     })();
-  }, [editingLedgerEntryId, ledgerDraft, userName]);
+  }, [drawerHost, editingLedgerEntryId, ledgerDraft, userName]);
 
   const removeEntry = useCallback((id: string) => {
     const entry = getWorkspace().ledger.find((e) => e.id === id);
@@ -3148,6 +3237,8 @@ function SupplierLedgerView() {
   const isEditingEntry = Boolean(editingLedgerEntryId);
 
   return (
+    <>
+    {drawerHost ? null : (
     <div className={purchaseShell}>
       <div className={purchaseHead}>
         <ModuleTitle
@@ -3237,36 +3328,38 @@ function SupplierLedgerView() {
         </label>
         <label className="block min-w-[160px] max-w-[240px] flex-1">
           <span className={purchaseLabel}>Book</span>
-          <select
+          <SearchableSelect
             value={filter}
-            onChange={(e) =>
-              setWorkspace((w) => ({ ...w, ledgerSupplierFilter: e.target.value }))
+            onChange={(v) =>
+              setWorkspace((w) => ({ ...w, ledgerSupplierFilter: v }))
             }
             className={purchaseField}
             aria-label="Filter by cashbook"
-          >
-            <option value="">All books</option>
-            {ws.suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} · {formatMoneyWholeTaka(runningBySupplier.get(s.id) ?? 0)}
-              </option>
-            ))}
-          </select>
+            placeholder="All books"
+            options={[
+              { value: "", label: "All books" },
+              ...ws.suppliers.map((s) => ({
+                value: s.id,
+                label: `${s.name} · ${formatMoneyWholeTaka(runningBySupplier.get(s.id) ?? 0)}`,
+              })),
+            ]}
+          />
         </label>
         <label className="block min-w-[120px] max-w-[160px]">
           <span className={purchaseLabel}>Type</span>
-          <select
+          <SearchableSelect
             value={ledgerTypeFilter}
-            onChange={(e) =>
-              setLedgerTypeFilter(e.target.value as "all" | "invoice" | "payment")
+            onChange={(v) =>
+              setLedgerTypeFilter(v as "all" | "invoice" | "payment")
             }
             className={purchaseField}
             aria-label="Filter by entry type"
-          >
-            <option value="all">All</option>
-            <option value="invoice">Bill</option>
-            <option value="payment">Payment</option>
-          </select>
+            options={[
+              { value: "all", label: "All" },
+              { value: "invoice", label: "Bill" },
+              { value: "payment", label: "Payment" },
+            ]}
+          />
         </label>
         <label className="block min-w-[120px] max-w-[140px]">
           <span className={purchaseLabel}>From</span>
@@ -3376,6 +3469,18 @@ function SupplierLedgerView() {
                             Locked
                           </span>
                         ) : null}
+                        {(() => {
+                          const st = billStatusFor(e);
+                          if (!st) return null;
+                          return (
+                            <span
+                              className={`inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${expenseStatusPill(st.status)}`}
+                              title={`Paid ${formatMoneyWholeTaka(Math.round(st.paid * 100))} · Due ${formatMoneyWholeTaka(Math.round(st.due * 100))}`}
+                            >
+                              {EXPENSE_STATUS_LABEL[st.status]}
+                            </span>
+                          );
+                        })()}
                       </span>
                     </td>
                     <td
@@ -3507,6 +3612,8 @@ function SupplierLedgerView() {
           />
         </LedgerDetailSlideOver>
       ) : null}
+    </div>
+    )}
 
       {ledgerDrawerOpen ? (
         <LedgerDrawerFrame
@@ -3642,7 +3749,7 @@ function SupplierLedgerView() {
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -3667,6 +3774,33 @@ function PurchasedItemsView() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [groupByItem, setGroupByItem] = useState(false);
+
+  // Per-bill status from the relational payables projection (exp_po_<poId>).
+  const [billStatusByExpenseId, setBillStatusByExpenseId] = useState<
+    Map<string, ExpenseStatus>
+  >(new Map());
+  useEffect(() => {
+    let alive = true;
+    void listExpenses({ kind: "item_purchase" })
+      .then((list) => {
+        if (!alive) return;
+        setBillStatusByExpenseId(new Map(list.map((e) => [e.id, e.status])));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [ws.ledger, ws.moves]);
+  const statusForRow = useCallback(
+    (supplierId: string, billRef: string): ExpenseStatus | null => {
+      const po = ws.moves.find(
+        (m): m is PurchaseOrder =>
+          m.kind === "purchase" && m.supplierId === supplierId && m.ref === billRef,
+      );
+      return po ? billStatusByExpenseId.get(`exp_po_${po.id}`) ?? null : null;
+    },
+    [ws.moves, billStatusByExpenseId],
+  );
 
   const vendorBooks = useMemo(
     () =>
@@ -3788,7 +3922,7 @@ function PurchasedItemsView() {
       <div className={purchaseHead}>
         <ModuleTitle
           title="Items purchased"
-          subtitle="Every item line from vendor bills across all cashbooks."
+          subtitle="Every item line from supplier bills."
         />
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -3825,27 +3959,25 @@ function PurchasedItemsView() {
               type="search"
               value={searchQ}
               onChange={(e) => setSearchQ(e.target.value)}
-              placeholder="Item, vendor, bill ref…"
+              placeholder="Item, supplier, bill ref…"
               className={purchaseSearchInput}
               aria-label="Search purchased items"
             />
           </div>
         </label>
         <label className="block min-w-[160px] max-w-[240px] flex-1">
-          <span className={purchaseLabel}>Vendor</span>
-          <select
+          <span className={purchaseLabel}>Supplier</span>
+          <SearchableSelect
             value={vendorFilter}
-            onChange={(e) => setVendorFilter(e.target.value)}
+            onChange={setVendorFilter}
             className={purchaseField}
-            aria-label="Filter by vendor"
-          >
-            <option value="">All vendors</option>
-            {vendorBooks.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            aria-label="Filter by supplier"
+            placeholder="All suppliers"
+            options={[
+              { value: "", label: "All suppliers" },
+              ...vendorBooks.map((s) => ({ value: s.id, label: s.name })),
+            ]}
+          />
         </label>
         <label className="block min-w-[120px] max-w-[140px]">
           <span className={purchaseLabel}>From</span>
@@ -3902,7 +4034,7 @@ function PurchasedItemsView() {
           </div>
         </div>
         <div className={`${purchaseStatCell} min-w-[100px] flex-1`}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Vendors</div>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Suppliers</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {stats.vendorCount}
           </div>
@@ -3917,7 +4049,7 @@ function PurchasedItemsView() {
                 <th className={purchaseTh}>Item</th>
                 <th className={`${purchaseTh} text-right`}>Qty</th>
                 <th className={purchaseTh}>Unit</th>
-                <th className={purchaseTh}>Vendors</th>
+                <th className={purchaseTh}>Suppliers</th>
                 <th className={purchaseTh}>Last bought</th>
                 <th className={`${purchaseTh} text-right`}>Total spend</th>
               </tr>
@@ -3969,20 +4101,21 @@ function PurchasedItemsView() {
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)]">
                 <th className={purchaseTh}>Date</th>
-                <th className={purchaseTh}>Vendor</th>
+                <th className={purchaseTh}>Supplier</th>
                 <th className={purchaseTh}>Item</th>
                 <th className={`${purchaseTh} text-right`}>Qty</th>
                 <th className={purchaseTh}>Unit</th>
                 <th className={`${purchaseTh} text-right`}>Rate</th>
                 <th className={`${purchaseTh} text-right`}>Total</th>
                 <th className={purchaseTh}>Bill</th>
+                <th className={purchaseTh}>Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="px-4 py-10 text-center text-[12px] text-[var(--pos-text-2)]"
                   >
                     {allRows.length === 0
@@ -4017,6 +4150,19 @@ function PurchasedItemsView() {
                     </td>
                     <td className="px-4 py-2 font-mono text-[11px] text-[var(--pos-text-2)]">
                       {row.billRef}
+                    </td>
+                    <td className="px-4 py-2">
+                      {(() => {
+                        const st = statusForRow(row.supplierId, row.billRef);
+                        if (!st) return <span className="text-[11px] text-[var(--pos-text-2)]">—</span>;
+                        return (
+                          <span
+                            className={`inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${expenseStatusPill(st)}`}
+                          >
+                            {EXPENSE_STATUS_LABEL[st]}
+                          </span>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))
@@ -4066,13 +4212,22 @@ function CashbooksPanelTabs({
   );
 }
 
-export function LedgerModuleView({ leafId }: { leafId: string }) {
+export function LedgerModuleView({
+  leafId,
+  headerAccessory,
+}: {
+  leafId: string;
+  headerAccessory?: React.ReactNode;
+}) {
   const panel = useSyncExternalStore(
     subscribeCashbooksPanel,
     getCashbooksPanel,
     getCashbooksPanel,
   );
   const showItems = isItemsLedgerLeaf(leafId);
+  // Standalone Suppliers screen (cashbook retired): show only the supplier book,
+  // never the cashbook Books/Bills tab switch.
+  const suppliersOnly = leafId === "lm-suppliers" || leafId === "lm-management";
   const ledgerLoad = useSyncExternalStore(
     subscribeWorkspace,
     getLedgerWorkspaceLoadState,
@@ -4093,21 +4248,23 @@ export function LedgerModuleView({ leafId }: { leafId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
       {ledgerLoad.loading ? (
-        <p className="shrink-0 px-1 text-[12px] text-[var(--pos-text-2)]">Loading cashbooks…</p>
+        <p className="shrink-0 px-1 text-[12px] text-[var(--pos-text-2)]">
+          {suppliersOnly ? "Loading suppliers…" : "Loading cashbooks…"}
+        </p>
       ) : null}
       {ledgerLoad.error ? (
         <p className="shrink-0 rounded-[8px] border border-solid border-[#c45a5a]/40 bg-[#f5e4e4]/50 px-3 py-2 text-[12px] text-[#8a3030]">
           {ledgerLoad.error}
         </p>
       ) : null}
-      {!showItems ? (
+      {!showItems && !suppliersOnly ? (
         <CashbooksPanelTabs panel={panel} onChange={setCashbooksPanel} />
       ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {showItems ? (
           <PurchasedItemsView />
-        ) : panel === "books" ? (
-          <SupplierListView />
+        ) : suppliersOnly || panel === "books" ? (
+          <SupplierListView stayInPlace={suppliersOnly} headerAccessory={headerAccessory} />
         ) : (
           <SupplierLedgerView />
         )}

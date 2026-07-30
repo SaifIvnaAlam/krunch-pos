@@ -12,11 +12,14 @@ export type {
   StockMove,
 } from "./ledgerWorkspaceStore";
 export {
+  cancelLedgerWorkspacePersist,
   flushLedgerWorkspacePersist,
   getLedgerWorkspaceLoadState,
   getWorkspace,
   isLedgerEntryLocked,
   loadLedgerWorkspace,
+  reloadLedgerWorkspace,
+  resetLedgerWorkspace,
   setWorkspace,
   subscribeWorkspace,
 } from "./ledgerWorkspaceStore";

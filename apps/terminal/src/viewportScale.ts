@@ -17,8 +17,13 @@ export function syncPosViewportScale(): void {
   document.documentElement.style.setProperty("--pos-ui-scale", String(scale));
 }
 
-export function usePosViewportScale(): void {
+export function usePosViewportScale(enabled = true): void {
   useLayoutEffect(() => {
+    if (!enabled) {
+      document.documentElement.style.setProperty("--pos-ui-scale", "1");
+      return;
+    }
+
     syncPosViewportScale();
 
     const onResize = () => syncPosViewportScale();
@@ -29,5 +34,5 @@ export function usePosViewportScale(): void {
       window.removeEventListener("resize", onResize);
       window.visualViewport?.removeEventListener("resize", onResize);
     };
-  }, []);
+  }, [enabled]);
 }

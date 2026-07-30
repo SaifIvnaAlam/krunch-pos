@@ -17,6 +17,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequirePermission } from '../rbac/decorators/require-permission.decorator';
 import { DailyEntriesService } from './daily-entries.service';
+import { DailyCommitService } from './daily-commit.service';
+import { CommitDailyEntryDto } from './dto/commit-daily-entry.dto';
 import { LockDailyEntryDto } from './dto/lock-daily-entry.dto';
 import { UnlockDailyEntryDto } from './dto/unlock-daily-entry.dto';
 import { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
@@ -34,7 +36,10 @@ interface JwtPayload {
 @UseGuards(JwtAuthGuard, RbacGuard)
 @ApiBearerAuth('access-token')
 export class DailyEntriesController {
-  constructor(private readonly dailyEntries: DailyEntriesService) {}
+  constructor(
+    private readonly dailyEntries: DailyEntriesService,
+    private readonly dailyCommit: DailyCommitService,
+  ) {}
 
   @Get()
   @RequirePermission('daily_entry:read')
@@ -64,6 +69,24 @@ export class DailyEntriesController {
     return this.dailyEntries.upsert(user.branchId, user.staffId, {
       ...dto,
       date,
+    });
+  }
+
+  @Put(':date/commit')
+  @RequirePermission('daily_entry:write')
+  @ApiOperation({
+    summary:
+      'Atomic cross-module daily save — commits the daily entry with its derived ledger + salary changes in one transaction',
+  })
+  commit(
+    @Param('date') date: string,
+    @Body() dto: CommitDailyEntryDto,
+    @Req() req: Request,
+  ) {
+    const user = req.user as JwtPayload;
+    return this.dailyCommit.commit(user.branchId, user.staffId, {
+      ...dto,
+      entry: { ...dto.entry, date },
     });
   }
 

@@ -2,7 +2,6 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  ForbiddenException,
   BadRequestException,
   Logger,
 } from '@nestjs/common';
@@ -10,6 +9,16 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import {
+  ADMIN_ROLE_IDS,
+  ADMIN_SEAT_LIMIT,
+  MANAGER_ROLE_IDS,
+  MANAGER_SEAT_LIMIT,
+  parsePortalRoleTier,
+  roleIdForTier,
+  tierForRoleIds,
+  type PortalRoleTier,
+} from './portal-access';
 
 const BCRYPT_SALT_ROUNDS = 10;
 const PBKDF2_ITERATIONS = 100000;
@@ -28,10 +37,31 @@ interface CreateStaffDto {
   email?: string;
   /** Portal sign-in password (min 8 chars). Required when email is set. Stored as bcrypt hash only. */
   password?: string;
-  pin: string;
+  /** Optional legacy PIN. Auto-generated when omitted (portal users only need email/password). */
+  pin?: string;
   nfcCardUid?: string;
   primaryBranchId?: string;
+  /** Required for portal users: admin (Users & Access) or manager (input only). */
+  roleTier?: PortalRoleTier;
 }
+
+export type StaffSeatUsage = {
+  admin: { used: number; limit: number };
+  manager: { used: number; limit: number };
+};
+
+export type StaffListResponse = {
+  staff: Array<{
+    id: string;
+    name: string;
+    email: string | null;
+    isActive: boolean;
+    primaryBranchId: string | null;
+    roleTier: PortalRoleTier | null;
+    roles: Array<{ roleId: string; roleName: string; branchId: string | null }>;
+  }>;
+  seats: StaffSeatUsage;
+};
 
 interface UpdateStaffDto {
   name?: string;
@@ -66,19 +96,68 @@ export class StaffService {
     private readonly audit: AuditService,
   ) {}
 
-  async listStaff(branchId: string): Promise<Array<{
-    id: string;
-    name: string;
-    email: string | null;
-    isActive: boolean;
-    primaryBranchId: string | null;
-    roles: Array<{ roleId: string; roleName: string; branchId: string | null }>;
-  }>> {
+  private async countActiveSeats(): Promise<StaffSeatUsage> {
+    const now = new Date();
+    const [adminUsed, managerUsed] = await Promise.all([
+      this.prisma.staff.count({
+        where: {
+          isActive: true,
+          staffRoles: {
+            some: {
+              roleId: { in: [...ADMIN_ROLE_IDS] },
+              OR: [{ validUntil: null }, { validUntil: { gt: now } }],
+            },
+          },
+        },
+      }),
+      this.prisma.staff.count({
+        where: {
+          isActive: true,
+          staffRoles: {
+            some: {
+              roleId: { in: [...MANAGER_ROLE_IDS] },
+              OR: [{ validUntil: null }, { validUntil: { gt: now } }],
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      admin: { used: adminUsed, limit: ADMIN_SEAT_LIMIT },
+      manager: { used: managerUsed, limit: MANAGER_SEAT_LIMIT },
+    };
+  }
+
+  private async assertSeatAvailable(tier: PortalRoleTier): Promise<void> {
+    const seats = await this.countActiveSeats();
+    if (tier === 'admin' && seats.admin.used >= seats.admin.limit) {
+      throw new BadRequestException(
+        `Admin seat limit reached (${seats.admin.limit}). Deactivate an admin before adding another.`,
+      );
+    }
+    if (tier === 'manager' && seats.manager.used >= seats.manager.limit) {
+      throw new BadRequestException(
+        `Manager seat limit reached (${seats.manager.limit}). Deactivate a manager before adding another.`,
+      );
+    }
+  }
+
+  async listStaff(branchId: string): Promise<StaffListResponse> {
     const staff = await this.prisma.staff.findMany({
       where: {
         OR: [
           { primaryBranchId: branchId },
           { staffRoles: { some: { branchId } } },
+          // Global admin/owner roles (branchId null on StaffRole)
+          {
+            staffRoles: {
+              some: {
+                roleId: { in: [...ADMIN_ROLE_IDS] },
+                branchId: null,
+              },
+            },
+          },
         ],
       },
       include: {
@@ -92,20 +171,30 @@ export class StaffService {
           },
         },
       },
+      orderBy: { name: 'asc' },
     });
 
-    return staff.map((s) => ({
-      id: s.id,
-      name: s.name,
-      email: s.email,
-      isActive: s.isActive,
-      primaryBranchId: s.primaryBranchId,
-      roles: s.staffRoles.map((sr) => ({
-        roleId: sr.role.id,
-        roleName: sr.role.name,
-        branchId: sr.branchId,
-      })),
-    }));
+    const seats = await this.countActiveSeats();
+
+    return {
+      staff: staff.map((s) => {
+        const roleIds = s.staffRoles.map((sr) => sr.role.id);
+        return {
+          id: s.id,
+          name: s.name,
+          email: s.email,
+          isActive: s.isActive,
+          primaryBranchId: s.primaryBranchId,
+          roleTier: tierForRoleIds(roleIds),
+          roles: s.staffRoles.map((sr) => ({
+            roleId: sr.role.id,
+            roleName: sr.role.name,
+            branchId: sr.branchId,
+          })),
+        };
+      }),
+      seats,
+    };
   }
 
   async getStaff(staffId: string): Promise<{
@@ -157,9 +246,15 @@ export class StaffService {
     callerStaffId: string,
     callerBranchId: string,
     callerTerminalId: string,
-  ): Promise<{ id: string; name: string }> {
-    if (dto.email) {
-      const existing = await this.prisma.staff.findUnique({ where: { email: dto.email } });
+  ): Promise<{ id: string; name: string; email: string | null; roleTier: PortalRoleTier }> {
+    const name = dto.name?.trim();
+    if (!name) {
+      throw new BadRequestException('Name is required.');
+    }
+
+    const email = dto.email?.toLowerCase().trim() || undefined;
+    if (email) {
+      const existing = await this.prisma.staff.findUnique({ where: { email } });
       if (existing) {
         throw new ConflictException('Email already in use');
       }
@@ -170,28 +265,67 @@ export class StaffService {
       throw new BadRequestException('Email is required when setting a portal password.');
     }
 
+    const roleTier = parsePortalRoleTier(dto.roleTier) ?? (email ? null : 'manager');
+    if (!roleTier) {
+      throw new BadRequestException(
+        "roleTier is required for portal users ('admin' or 'manager').",
+      );
+    }
+
     const portalPassword = dto.password?.trim();
     if (portalPassword) {
       assertPortalPassword(portalPassword);
     }
 
-    const pinHash = await bcrypt.hash(dto.pin, BCRYPT_SALT_ROUNDS);
-    const pbkdf2Salt = crypto.randomBytes(32);
-    const pbkdf2Hash = crypto.pbkdf2Sync(dto.pin, pbkdf2Salt, PBKDF2_ITERATIONS, 64, 'sha256').toString('hex');
+    await this.assertSeatAvailable(roleTier);
 
-    const staff = await this.prisma.staff.create({
-      data: {
-        name: dto.name,
-        email: dto.email,
-        passwordHash: portalPassword
-          ? await bcrypt.hash(portalPassword, BCRYPT_SALT_ROUNDS)
-          : undefined,
-        pinHash,
-        pbkdf2Hash,
-        pbkdf2Salt: pbkdf2Salt.toString('hex'),
-        nfcCardUid: dto.nfcCardUid,
-        primaryBranchId: dto.primaryBranchId,
-      },
+    const pin = dto.pin?.trim() || crypto.randomBytes(4).toString('hex');
+    const pinHash = await bcrypt.hash(pin, BCRYPT_SALT_ROUNDS);
+    const pbkdf2Salt = crypto.randomBytes(32);
+    const pbkdf2Hash = crypto
+      .pbkdf2Sync(pin, pbkdf2Salt, PBKDF2_ITERATIONS, 64, 'sha256')
+      .toString('hex');
+    const primaryBranchId = dto.primaryBranchId ?? callerBranchId;
+    const roleId = roleIdForTier(roleTier);
+
+    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    if (!role) {
+      throw new BadRequestException(
+        `Role '${roleId}' is missing. Run database seed.`,
+      );
+    }
+
+    const passwordHash = portalPassword
+      ? await bcrypt.hash(portalPassword, BCRYPT_SALT_ROUNDS)
+      : undefined;
+
+    // Admins are global (null branch on StaffRole); managers are branch-scoped.
+    const staffRoleBranchId = roleTier === 'admin' ? null : primaryBranchId;
+
+    const staff = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.staff.create({
+        data: {
+          name,
+          email,
+          passwordHash,
+          pinHash,
+          pbkdf2Hash,
+          pbkdf2Salt: pbkdf2Salt.toString('hex'),
+          nfcCardUid: dto.nfcCardUid,
+          primaryBranchId,
+        },
+      });
+
+      await tx.staffRole.create({
+        data: {
+          staffId: created.id,
+          roleId: role.id,
+          branchId: staffRoleBranchId,
+          assignedBy: callerStaffId,
+        },
+      });
+
+      return created;
     });
 
     await this.audit.log({
@@ -201,10 +335,21 @@ export class StaffService {
       branchId: callerBranchId,
       terminalId: callerTerminalId,
       result: 'SUCCESS',
-      metadata: { createdStaffId: staff.id, name: staff.name },
+      metadata: {
+        createdStaffId: staff.id,
+        name: staff.name,
+        email: staff.email,
+        roleId: role.id,
+        roleTier,
+      },
     });
 
-    return { id: staff.id, name: staff.name };
+    return {
+      id: staff.id,
+      name: staff.name,
+      email: staff.email,
+      roleTier,
+    };
   }
 
   async updateStaff(
@@ -219,10 +364,37 @@ export class StaffService {
       throw new NotFoundException('Staff member not found');
     }
 
+    if (dto.isActive === false && staffId === callerStaffId) {
+      throw new BadRequestException('You cannot deactivate your own account.');
+    }
+
+    if (dto.isActive === true && !existing.isActive) {
+      const assignments = await this.prisma.staffRole.findMany({
+        where: {
+          staffId,
+          OR: [{ validUntil: null }, { validUntil: { gt: new Date() } }],
+        },
+        select: { roleId: true },
+      });
+      const tier = tierForRoleIds(assignments.map((a) => a.roleId));
+      if (tier) {
+        await this.assertSeatAvailable(tier);
+      }
+    }
+
     const updateData: Record<string, unknown> = {};
 
-    if (dto.name !== undefined) updateData['name'] = dto.name;
-    if (dto.email !== undefined) updateData['email'] = dto.email;
+    if (dto.name !== undefined) updateData['name'] = dto.name.trim();
+    if (dto.email !== undefined) {
+      const nextEmail = dto.email.trim() ? dto.email.toLowerCase().trim() : null;
+      if (nextEmail && nextEmail !== existing.email) {
+        const conflict = await this.prisma.staff.findUnique({ where: { email: nextEmail } });
+        if (conflict) {
+          throw new ConflictException('Email already in use');
+        }
+      }
+      updateData['email'] = nextEmail;
+    }
     if (dto.nfcCardUid !== undefined) updateData['nfcCardUid'] = dto.nfcCardUid;
     if (dto.isActive !== undefined) updateData['isActive'] = dto.isActive;
 
@@ -275,6 +447,22 @@ export class StaffService {
 
     if (!staff) throw new NotFoundException('Staff member not found');
     if (!role) throw new NotFoundException('Role not found');
+
+    const tier = tierForRoleIds([dto.roleId]);
+    if (tier && staff.isActive) {
+      const alreadyHasTier = await this.prisma.staffRole.findFirst({
+        where: {
+          staffId,
+          roleId: {
+            in: tier === 'admin' ? [...ADMIN_ROLE_IDS] : [...MANAGER_ROLE_IDS],
+          },
+          OR: [{ validUntil: null }, { validUntil: { gt: new Date() } }],
+        },
+      });
+      if (!alreadyHasTier) {
+        await this.assertSeatAvailable(tier);
+      }
+    }
 
     const staffRole = await this.prisma.staffRole.create({
       data: {

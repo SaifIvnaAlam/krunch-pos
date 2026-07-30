@@ -28,7 +28,7 @@ import { oldestOwingMonthForEmployee } from "./employeeSalaryBalance";
 import { STAFF_ADVANCE_LINE_KIND, STAFF_LINE_KIND } from "./staffLineKinds";
 
 export type SyncStaffExpensesResult =
-  | { ok: true; lines: ExpenseLineSaved[] }
+  | { ok: true; lines: ExpenseLineSaved[]; bundle: SalarySheetBundle }
   | { ok: false; message: string };
 
 function monthKeyFromDateKey(dateKey: string): string {
@@ -338,11 +338,20 @@ export async function reconcileSalaryMonthFromDailyEntries(
   return { ok: true };
 }
 
-/** Keeps salary-register payouts in sync with daily-entry staff lines. */
+/**
+ * Keeps salary-register payouts in sync with daily-entry staff lines.
+ *
+ * `persist` (default `true`) controls whether the reconciled bundle is PUT to the
+ * API here. The atomic daily commit (I3) passes `persist: false` and instead
+ * sends the returned `bundle` in one cross-module transaction, so it must NOT be
+ * saved separately. The reconciled bundle is always returned and mirrored to the
+ * in-memory store either way.
+ */
 export async function syncStaffExpensesToSalaryRegister(params: {
   dateKey: string;
   nextLines: ExpenseLineSaved[];
   priorLines?: ExpenseLineSaved[];
+  persist?: boolean;
 }): Promise<SyncStaffExpensesResult> {
   void params.priorLines;
   await loadSalaryWorkspace();
@@ -362,12 +371,15 @@ export async function syncStaffExpensesToSalaryRegister(params: {
 
   const paymentIdByLineId = paymentIdByLineIdAcrossBundle(bundleForLines);
   const mergedLines = attachSalaryPaymentIds(params.nextLines, paymentIdByLineId);
-  try {
-    await flushSalaryWorkspacePersist();
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Could not save salary register.";
-    return { ok: false, message };
+
+  if (params.persist !== false) {
+    try {
+      await flushSalaryWorkspacePersist();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not save salary register.";
+      return { ok: false, message };
+    }
   }
 
-  return { ok: true, lines: mergedLines };
+  return { ok: true, lines: mergedLines, bundle: bundleForLines };
 }

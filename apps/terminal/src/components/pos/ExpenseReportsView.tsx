@@ -11,6 +11,11 @@ import {
 import { isStaffFineExpenseLine } from "@/features/daily-entry/staffExpenseLine";
 import { formatDateKeyAsDisplay } from "../../lib/dateDisplay";
 import { expenseSavedLineLedgerReportLabel } from "../../lib/ledgerLineReportLabels";
+import {
+  expenseStatLabel,
+  expenseStatTile,
+  expenseStatValue,
+} from "./payablesUi";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-BD", {
@@ -22,8 +27,6 @@ function formatMoney(value: number) {
 const fieldClass =
   "mt-1 h-9 w-full rounded-[9px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-3 text-[12px] text-[var(--pos-text-1)] focus:outline-none";
 const labelClass = "text-[11px] text-[var(--pos-text-2)]";
-const statCell =
-  "min-w-[120px] flex-1 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2";
 
 type FlatLine = {
   kind: "vendor" | "regular" | "staff" | "purchase";
@@ -44,7 +47,7 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
         kind === "staff"
           ? staffExpenseLineTitle(line)
           : kind === "vendor"
-            ? (line.vendor ?? "").trim() || "Cashbook"
+            ? (line.vendor ?? "").trim() || "Supplier"
             : kind === "purchase"
               ? (line.vendor ?? "").trim() || "Purchase"
               : (line.label ?? "").trim() || "Regular expense";
@@ -61,7 +64,7 @@ function expenseLinesFromDailyRow(r: DailyEntryRow): FlatLine[] {
         kind === "staff"
           ? "Payout"
           : kind === "vendor"
-            ? "Cashbook"
+            ? "Supplier"
             : kind === "purchase"
               ? "Items purchased"
               : "Regular expense";
@@ -331,51 +334,39 @@ export function ExpenseReportsView() {
         <div>
           <h1 className="text-[16px] font-semibold text-[var(--pos-text-1)]">Expense reports</h1>
           <p className="text-[12px] text-[var(--pos-text-2)]">
-            Purchase bills show a Paid column for same-day cashbook payments — those payments are
+            Purchase bills show a Paid column for same-day supplier payments — those payments are
             not listed again as separate rows.
           </p>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2 border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-2.5">
-        <div className={statCell} title="Cash out: cashbook payments, regular, and payouts">
-          <div className="text-[11px] text-[var(--pos-text-2)]">Cash total</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(stats.total)}
-          </div>
+        <div className={expenseStatTile} title="Cash out: supplier payments, regular, and payouts">
+          <div className={expenseStatLabel}>Cash total</div>
+          <div className={expenseStatValue}>{formatMoney(stats.total)}</div>
         </div>
-        <div className={statCell} title="Includes paid amounts on purchase bills">
-          <div className="text-[11px] text-[var(--pos-text-2)]">Cashbook</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(stats.cashbook)}
-          </div>
+        <div className={expenseStatTile} title="Includes paid amounts on purchase bills">
+          <div className={expenseStatLabel}>Supplier</div>
+          <div className={expenseStatValue}>{formatMoney(stats.cashbook)}</div>
         </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Regular</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(stats.regular)}
-          </div>
+        <div className={expenseStatTile}>
+          <div className={expenseStatLabel}>Regular</div>
+          <div className={expenseStatValue}>{formatMoney(stats.regular)}</div>
         </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Payout</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(stats.payout)}
-          </div>
+        <div className={expenseStatTile}>
+          <div className={expenseStatLabel}>Payout</div>
+          <div className={expenseStatValue}>{formatMoney(stats.payout)}</div>
         </div>
         <div
-          className={statCell}
-          title="Purchase bill amounts (payables) — cash paid is in Cashbook / Paid"
+          className={expenseStatTile}
+          title="Purchase bill amounts (payables) — cash paid is in Supplier / Paid"
         >
-          <div className="text-[11px] text-[var(--pos-text-2)]">Purchase bills</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {formatMoney(stats.purchase)}
-          </div>
+          <div className={expenseStatLabel}>Purchase bills</div>
+          <div className={expenseStatValue}>{formatMoney(stats.purchase)}</div>
         </div>
-        <div className={statCell}>
-          <div className="text-[11px] text-[var(--pos-text-2)]">Days</div>
-          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
-            {stats.days}
-          </div>
+        <div className={expenseStatTile}>
+          <div className={expenseStatLabel}>Days</div>
+          <div className={expenseStatValue}>{stats.days}</div>
         </div>
       </div>
 
@@ -468,7 +459,7 @@ export function ExpenseReportsView() {
                 </th>
                 <th
                   className={thBase}
-                  title="Cash paid: same-day payment on purchase bills; full amount for payouts, regular, and cashbook"
+                  title="Cash paid: same-day payment on purchase bills; full amount for payouts, regular, and supplier"
                 >
                   Paid
                 </th>

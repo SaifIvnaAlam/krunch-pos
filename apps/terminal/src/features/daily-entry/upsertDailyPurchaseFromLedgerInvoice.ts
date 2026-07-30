@@ -194,7 +194,7 @@ export async function upsertDailyPurchaseFromLedgerInvoice(
     return { ok: false, message: "Ledger entry is required." };
   }
   if (!vendorName) {
-    return { ok: false, message: "Vendor cashbook is required." };
+    return { ok: false, message: "Supplier is required." };
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
     return { ok: false, message: "Bill date is required." };

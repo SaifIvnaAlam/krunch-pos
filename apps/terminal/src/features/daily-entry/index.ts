@@ -14,15 +14,18 @@ export {
   roundTaka,
   expenseTotalFromExpenseLines,
   listDailyEntriesDescendingFromMap,
+  listDailyEntryHistorySlots,
   savedLineKind,
   suggestedNewEntryDateKey,
   type CarriedOpeningBalance,
+  type DailyEntryHistorySlot,
 } from "./calculations";
 export {
   DAILY_ENTRY_STORAGE_KEY,
   DAILY_ENTRY_STORAGE_UPDATE_EVENT,
 } from "./localDailyEntryStorage";
 export {
+  commitDailyEntry,
   deleteDailyEntry,
   getCachedDailyEntryMap,
   invalidateDailyEntryMapCache,
@@ -32,6 +35,10 @@ export {
   saveDailyEntry,
   unlockDailyEntry,
 } from "./dailyEntryRepository";
+export type {
+  LedgerCommitPayload,
+  SalaryCommitPayload,
+} from "./dailyEntryApi";
 export { useDailyEntryMap } from "./useDailyEntryMap";
 export { unlinkDailyExpenseLinesForLedgerEntry } from "./unlinkDailyExpenseLinesForLedgerEntry";
 export type { UnlinkDailyLedgerResult } from "./unlinkDailyExpenseLinesForLedgerEntry";

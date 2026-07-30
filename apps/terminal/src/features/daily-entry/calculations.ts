@@ -25,6 +25,34 @@ export function listDailyEntriesDescendingFromMap(
   return Object.values(map).sort((a, b) => b.date.localeCompare(a.date));
 }
 
+export type DailyEntryHistorySlot = {
+  date: string;
+  row: DailyEntryRow | null;
+};
+
+/**
+ * One slot per calendar day from the earliest saved entry through today
+ * (newest first). Days without a saved row have `row: null` (missing).
+ * With no saves yet, returns today only.
+ */
+export function listDailyEntryHistorySlots(
+  map: DailyEntryMap,
+  today: string,
+): DailyEntryHistorySlot[] {
+  const dates = Object.keys(map).sort();
+  const start = dates[0] ?? today;
+  const latest = dates[dates.length - 1] ?? today;
+  const end = latest > today ? latest : today;
+  if (end < start) return [{ date: today, row: map[today] ?? null }];
+
+  const slots: DailyEntryHistorySlot[] = [];
+  for (let d = end; ; d = dateAddDays(d, -1)) {
+    slots.push({ date: d, row: map[d] ?? null });
+    if (d <= start) break;
+  }
+  return slots;
+}
+
 export function dateAddDays(dateKey: string, days: number): string {
   const parts = dateKey.split("-").map((x) => Number.parseInt(x, 10));
   const [y, m, d] = parts;
@@ -57,11 +85,14 @@ export function carriedOpeningBalanceForDate(
   };
 }
 
-/** First empty calendar day after the latest saved entry, or `today` when none exist. */
+/**
+ * Date for Add Entry: prefer today when it has no saved row; otherwise the next
+ * empty calendar day after today (never jumps to “day after latest” when older
+ * gaps exist — those are opened by editing a date or picking one).
+ */
 export function suggestedNewEntryDateKey(map: DailyEntryMap, today: string): string {
-  const dates = Object.keys(map).sort();
-  if (dates.length === 0) return today;
-  let next = dateAddDays(dates[dates.length - 1]!, 1);
+  if (!map[today]) return today;
+  let next = dateAddDays(today, 1);
   while (map[next]) {
     next = dateAddDays(next, 1);
   }
@@ -75,6 +106,14 @@ export function expenseTotalFromExpenseLines(
     // Fines live on the salary sheet; purchase bills are payables, not cash out.
     if (line.kind === "staff" && line.staffLineKind === "fine") return sum;
     if (line.kind === "purchase") return sum;
+    // Regular: only cash paid now hits the daily register (due stays on the payable).
+    if (line.kind === "regular") {
+      const paid =
+        typeof line.paidAmount === "number" && Number.isFinite(line.paidAmount)
+          ? line.paidAmount
+          : line.amount;
+      return sum + paid;
+    }
     return sum + line.amount;
   }, 0);
 }

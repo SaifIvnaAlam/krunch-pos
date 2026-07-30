@@ -19,6 +19,12 @@ describe('StaffService', () => {
             role: { findUnique: jest.fn() },
             staffRole: { create: jest.fn(), findUnique: jest.fn(), delete: jest.fn() },
             tempPermission: { create: jest.fn() },
+            $transaction: jest.fn((fn: (tx: unknown) => unknown) =>
+              fn({
+                staff: { create: jest.fn() },
+                staffRole: { create: jest.fn() },
+              }),
+            ),
           },
         },
         {

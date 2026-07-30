@@ -1,0 +1,55 @@
+# Local database sandbox for schema work: a faithful copy of production.
+#
+# Postgres mirrors prod (user/db "krunch", PG16) so the prod dump restores
+# cleanly and future migrations match. pgAdmin is a web GUI for it.
+# PRODUCTION IS NEVER TOUCHED by this stack.
+#
+# Start:   docker compose -f docker-compose.localdb.yml up -d
+# Restore: see scripts/restore-prod-dump-local.sh (or README)
+# pgAdmin: http://localhost:5051   Postgres (host tools): localhost:5434
+name: krunch-localdb
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: krunch-localdb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: krunch
+      POSTGRES_PASSWORD: krunch
+      POSTGRES_DB: krunch
+    ports:
+      # Host tools (Prisma, psql) connect at localhost:5434 -> container 5432.
+      - "5434:5432"
+    volumes:
+      - krunch-localdb-pgdata:/var/lib/postgresql/data
+      - ./db-dumps:/dumps:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U krunch -d krunch"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: krunch-localdb-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5051:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+      # Desktop mode: no login/master-password prompts for local use.
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+    volumes:
+      - krunch-localdb-pgadmin:/var/lib/pgadmin
+      - ./local-db/pgadmin-servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  krunch-localdb-pgdata:
+  krunch-localdb-pgadmin:

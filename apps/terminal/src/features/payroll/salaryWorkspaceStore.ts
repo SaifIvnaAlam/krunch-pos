@@ -265,6 +265,23 @@ export function syncLoadedSalaryBundleToEmployees(): void {
   emit();
 }
 
+/**
+ * Cancel the debounced auto-persist WITHOUT writing, and clear the dirty flag so
+ * a subsequent `reloadSalaryWorkspace()` isn't skipped. Used by the atomic daily
+ * commit (I3): the reconciled bundle is sent in one cross-module transaction, so
+ * the store's own PUT must be suppressed. The bundle is re-pulled from the server
+ * after the commit, which is the committed source of truth.
+ */
+export function cancelSalaryWorkspacePersist(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  localDirty = false;
+  saveStateSnapshot = { saving: false, error: null, dirty: false };
+  emit();
+}
+
 export async function flushSalaryWorkspacePersist(): Promise<void> {
   if (persistTimer) {
     clearTimeout(persistTimer);

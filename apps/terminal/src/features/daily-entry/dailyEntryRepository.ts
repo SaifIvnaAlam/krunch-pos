@@ -1,9 +1,12 @@
 import {
+  commitDailyEntryOnApi,
   deleteDailyEntryOnApi,
   fetchDailyEntriesFromApi,
   lockDailyEntryOnApi,
   unlockDailyEntryOnApi,
   upsertDailyEntryOnApi,
+  type LedgerCommitPayload,
+  type SalaryCommitPayload,
 } from "./dailyEntryApi";
 import type { DailyEntryMap, DailyEntryRow, PersistResult } from "./types";
 
@@ -58,6 +61,27 @@ export async function loadDailyEntryMap(options?: { force?: boolean }): Promise<
 export async function saveDailyEntry(row: DailyEntryRow): Promise<PersistResult> {
   try {
     const saved = await upsertDailyEntryOnApi(row);
+    patchDailyEntryMapCache(saved);
+    return { ok: true };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Could not save daily entry.";
+    return { ok: false, message };
+  }
+}
+
+/**
+ * Atomic cross-module save (I3): commit the daily entry together with its derived
+ * ledger workspace + salary bundle in one server transaction. On success the
+ * daily cache is patched; callers should reload the ledger/salary stores from the
+ * server afterward so their in-memory copies match the committed truth.
+ */
+export async function commitDailyEntry(
+  row: DailyEntryRow,
+  ledger?: LedgerCommitPayload,
+  salary?: SalaryCommitPayload,
+): Promise<PersistResult> {
+  try {
+    const saved = await commitDailyEntryOnApi(row, ledger, salary);
     patchDailyEntryMapCache(saved);
     return { ok: true };
   } catch (e) {

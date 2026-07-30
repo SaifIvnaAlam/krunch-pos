@@ -50,7 +50,19 @@ export class StaffController {
   @RequirePermission('staff:create')
   @ApiOperation({ summary: 'Create staff member' })
   @ApiResponse({ status: 201, description: 'Staff created' })
-  async createStaff(@Body() dto: { name: string; email?: string; password?: string; pin: string; nfcCardUid?: string; primaryBranchId?: string }, @Req() req: Request) {
+  async createStaff(
+    @Body()
+    dto: {
+      name: string;
+      email?: string;
+      password?: string;
+      pin?: string;
+      nfcCardUid?: string;
+      primaryBranchId?: string;
+      roleTier?: 'admin' | 'manager';
+    },
+    @Req() req: Request,
+  ) {
     const user = req.user as JwtPayload;
     return this.staffService.createStaff(dto, user.staffId, user.branchId, user.terminalId);
   }

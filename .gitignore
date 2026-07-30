@@ -43,6 +43,11 @@ openapi.json
 *.db-journal
 *.db-wal
 
+# Production database dumps (contain real user data — never commit)
+db-dumps/
+*.dump
+*.sql.gz
+
 # Test coverage
 coverage/
 .nyc_output/
@@ -58,3 +63,8 @@ npm-debug.log*
 # Secrets
 *.pem
 *.key
+
+# Local smoke-test output
+.smoke-relational-results.json
+.v1-v2-parity.json
+deploy/.env.v2

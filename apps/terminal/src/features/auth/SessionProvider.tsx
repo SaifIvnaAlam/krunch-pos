@@ -15,13 +15,20 @@ import {
   clearApiTokens,
   readAccessToken,
   readActiveBranch,
+  readApiProfileEmail,
   readApiProfileName,
   writeActiveBranch,
+  writeApiProfileEmail,
   writeApiProfileName,
   writeTokens,
 } from "./tokenStorage";
 import { fetchStaffMe } from "@/features/staff/staffApi";
 import { getDefaultBranchId, getDefaultTerminalId } from "@/shared/config/env";
+import {
+  getLedgerWorkspaceLoadState,
+  reloadLedgerWorkspace,
+  resetLedgerWorkspace,
+} from "@/features/ledger";
 
 const FALLBACK_BRANCH: ActiveBranch = {
   id: getDefaultBranchId(),
@@ -33,6 +40,13 @@ export type SessionContextValue = {
   mode: "api";
   isSignedIn: boolean;
   userName: string;
+  /** Signed-in staff email when known. */
+  userEmail: string;
+  /** Current portal staff id when known (from login /me). */
+  staffId: string | null;
+  /** Effective permissions from roles (server is still the hard edge). */
+  permissions: string[];
+  roleNames: string[];
   activeBranch: ActiveBranch;
   accessToken: string | null;
   /** @deprecated No-op — use signInWithCredentials. */
@@ -59,6 +73,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const t = initialAccessToken();
     return t ? readApiProfileName() : "";
   });
+  const [apiUserEmail, setApiUserEmail] = useState(() => {
+    const t = initialAccessToken();
+    return t ? readApiProfileEmail() : "";
+  });
+  const [staffId, setStaffId] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
+  const [roleNames, setRoleNames] = useState<string[]>([]);
   const [activeBranch, setActiveBranch] = useState<ActiveBranch>(() => {
     const t = initialAccessToken();
     return t ? (readActiveBranch() ?? FALLBACK_BRANCH) : FALLBACK_BRANCH;
@@ -66,8 +87,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onExpired = () => {
+      resetLedgerWorkspace();
       setApiAccessToken(null);
       setApiUserName("");
+      setApiUserEmail("");
+      setStaffId(null);
+      setPermissions([]);
+      setRoleNames([]);
       setActiveBranch(FALLBACK_BRANCH);
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
@@ -83,9 +109,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         writeApiProfileName(me.name);
         setApiUserName(me.name);
+        const email = (me.email ?? "").trim().toLowerCase();
+        writeApiProfileEmail(email);
+        setApiUserEmail(email);
+        setStaffId(me.id);
+        const nextPerms = [...new Set(me.roles.flatMap((r) => r.permissions))];
+        setPermissions(nextPerms);
+        setRoleNames(me.roles.map((r) => r.roleName));
         if (me.activeBranch) {
           writeActiveBranch(me.activeBranch);
           setActiveBranch(me.activeBranch);
+        }
+        const ledgerState = getLedgerWorkspaceLoadState();
+        if (ledgerState.error || !ledgerState.loaded) {
+          void reloadLedgerWorkspace().catch(() => {});
         }
       })
       .catch(() => {
@@ -110,10 +147,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
       writeTokens(result.accessToken, result.refreshToken);
       writeApiProfileName(result.staffProfile.name);
+      const profileEmail = (
+        result.staffProfile.email ?? email
+      )
+        .trim()
+        .toLowerCase();
+      writeApiProfileEmail(profileEmail);
       writeActiveBranch(result.activeBranch);
       setApiAccessToken(result.accessToken);
       setApiUserName(result.staffProfile.name);
+      setApiUserEmail(profileEmail);
+      setStaffId(result.staffProfile.id);
+      setPermissions(result.permissions ?? []);
+      setRoleNames(result.roles ?? []);
       setActiveBranch(result.activeBranch);
+      void reloadLedgerWorkspace().catch(() => {});
     },
     [],
   );
@@ -129,8 +177,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     clearApiTokens();
     clearActiveBranch();
+    resetLedgerWorkspace();
     setApiAccessToken(null);
     setApiUserName("");
+    setApiUserEmail("");
+    setStaffId(null);
+    setPermissions([]);
+    setRoleNames([]);
     setActiveBranch(FALLBACK_BRANCH);
   }, []);
 
@@ -139,13 +192,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       mode: "api",
       isSignedIn: Boolean(apiAccessToken),
       userName: apiUserName,
+      userEmail: apiUserEmail,
+      staffId,
+      permissions,
+      roleNames,
       activeBranch,
       accessToken: apiAccessToken,
       signIn,
       signInWithCredentials,
       signOut,
     }),
-    [apiAccessToken, apiUserName, activeBranch, signIn, signInWithCredentials, signOut],
+    [
+      apiAccessToken,
+      apiUserName,
+      apiUserEmail,
+      staffId,
+      permissions,
+      roleNames,
+      activeBranch,
+      signIn,
+      signInWithCredentials,
+      signOut,
+    ],
   );
 
   return (

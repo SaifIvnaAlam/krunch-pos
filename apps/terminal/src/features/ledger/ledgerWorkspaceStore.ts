@@ -2,8 +2,8 @@ import { apiFetch } from "@/features/api-client";
 import { readValidAccessToken } from "@/features/auth/authSession";
 import { isDemoDataMode } from "@/shared/config/env";
 
-/** Kept for persisted workspace shape; all cashbooks are vendor books. */
-export type LedgerBookPurpose = "vendor";
+/** Cashbook class: kitchen vendors vs ops/other payables. */
+export type LedgerBookPurpose = "vendor" | "item_purchase" | "other_expense";
 
 export type LedgerAttachment = {
   fileName: string;
@@ -191,9 +191,13 @@ function stripEmployeeCashbooks(data: LedgerWorkspaceData): {
     .map((s) => {
       const prior = (s as { bookPurpose?: string }).bookPurpose;
       if (prior === "owners") convertedOwners = true;
+      const bookPurpose: LedgerBookPurpose =
+        prior === "item_purchase" || prior === "other_expense"
+          ? prior
+          : "vendor";
       return {
         ...s,
-        bookPurpose: "vendor" as LedgerBookPurpose,
+        bookPurpose,
       };
     });
   const moves = data.moves.filter((m) => !employeeIds.has(m.supplierId));
@@ -301,40 +305,104 @@ export function loadLedgerWorkspace(): Promise<void> {
     loadedFromApi = true;
     return Promise.resolve();
   }
-  if (loadPromise) return loadPromise;
+  // Retry after a failed attempt — otherwise a 403 at boot sticks forever.
+  if (loadPromise && !loadError) return loadPromise;
 
   loading = true;
   loadError = null;
   emit();
 
-  loadPromise = (async () => {
+  let attempt!: Promise<void>;
+  attempt = (async () => {
     try {
-      const { data, strippedEmployees } = await fetchWorkspaceFromApi();
-      const filterStillValid = data.suppliers.some(
-        (s) => s.id === workspaceSnapshot.ledgerSupplierFilter,
-      );
-      workspaceSnapshot = {
-        ...workspaceSnapshot,
-        suppliers: data.suppliers,
-        moves: data.moves,
-        ledger: data.ledger,
-        ledgerSupplierFilter: filterStillValid
-          ? workspaceSnapshot.ledgerSupplierFilter
-          : "",
-      };
-      loadedFromApi = true;
-      loadError = null;
-      if (strippedEmployees) schedulePersist();
+      await applyFetchedWorkspace();
     } catch (e) {
       loadError =
         e instanceof Error ? e.message : "Could not load ledger workspace.";
+      if (loadPromise === attempt) loadPromise = null;
     } finally {
       loading = false;
       emit();
     }
   })();
+  loadPromise = attempt;
 
-  return loadPromise;
+  return attempt;
+}
+
+/** Clear in-memory cashbooks (e.g. on sign-out) so the next session reloads. */
+export function resetLedgerWorkspace(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  loadPromise = null;
+  loadedFromApi = false;
+  loadError = null;
+  loading = false;
+  workspaceSnapshot = structuredClone(initialWorkspace);
+  refreshLoadStateSnapshot();
+  emit();
+}
+
+/** Fetch the workspace from the API and replace the local snapshot with it. */
+async function applyFetchedWorkspace(): Promise<void> {
+  const { data, strippedEmployees } = await fetchWorkspaceFromApi();
+  const filterStillValid = data.suppliers.some(
+    (s) => s.id === workspaceSnapshot.ledgerSupplierFilter,
+  );
+  workspaceSnapshot = {
+    ...workspaceSnapshot,
+    suppliers: data.suppliers,
+    moves: data.moves,
+    ledger: data.ledger,
+    ledgerSupplierFilter: filterStillValid
+      ? workspaceSnapshot.ledgerSupplierFilter
+      : "",
+  };
+  loadedFromApi = true;
+  loadError = null;
+  if (strippedEmployees) schedulePersist();
+}
+
+/**
+ * Force a re-fetch from the API, discarding any debounced local write. Used
+ * after a cross-module mutation elsewhere (e.g. deleting a whole daily entry
+ * server-side removes that day's bills) so the store doesn't hold — or re-save —
+ * stale rows. Caller should flush legitimate pending edits before mutating.
+ */
+export async function reloadLedgerWorkspace(): Promise<void> {
+  if (isDemoDataMode()) return;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  loading = true;
+  loadError = null;
+  emit();
+  try {
+    await applyFetchedWorkspace();
+    loadPromise = Promise.resolve();
+  } catch (e) {
+    loadError =
+      e instanceof Error ? e.message : "Could not reload ledger workspace.";
+  } finally {
+    loading = false;
+    emit();
+  }
+}
+
+/**
+ * Cancel the debounced auto-persist WITHOUT writing. Used by the atomic daily
+ * commit (I3): after reading the in-memory workspace to send in one cross-module
+ * transaction, the store's own PUT must be suppressed so it can't race or write
+ * a second (non-atomic) copy. Follow the commit with `reloadLedgerWorkspace()`.
+ */
+export function cancelLedgerWorkspacePersist(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
 }
 
 export async function flushLedgerWorkspacePersist(): Promise<void> {

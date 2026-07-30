@@ -17,6 +17,11 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Prisma } from '@prisma/client';
 import { Readable } from 'stream';
 import {
+  DAILY_ENTRY_MEDIA_SCOPES,
+  collectDailyEntryAttachmentRefs,
+  mediaIdsFromAttachmentRefs,
+} from '../../common/daily-entry-attachments';
+import {
   assertBranchStorageKey,
   isMediaRef,
   mediaIdFromRef,
@@ -227,6 +232,73 @@ export class StorageService implements OnModuleInit {
         Key: key,
       }),
     );
+  }
+
+  /**
+   * Delete `receipts` / `void-attachments` MediaAssets (and S3 objects) that are
+   * not referenced by any persisted daily entry. `protectMediaIds` keeps tray /
+   * in-progress capture refs alive until the session closes.
+   */
+  async purgeOrphanDailyEntryMedia(opts?: {
+    branchId?: string;
+    protectMediaIds?: readonly string[];
+  }): Promise<number> {
+    const branchId = opts?.branchId?.trim() || undefined;
+    const protect = new Set(opts?.protectMediaIds ?? []);
+
+    const entries = await this.prisma.dailyEntry.findMany({
+      where: branchId ? { branchId } : undefined,
+      select: {
+        voidSaleAttachmentDataUrls: true,
+        expenseLineRows: { select: { receiptDataUrls: true } },
+      },
+    });
+
+    const referenced = new Set<string>();
+    for (const entry of entries) {
+      const refs = collectDailyEntryAttachmentRefs({
+        voidSaleAttachmentDataUrls: entry.voidSaleAttachmentDataUrls,
+        expenseLines: entry.expenseLineRows,
+      });
+      for (const id of mediaIdsFromAttachmentRefs(refs)) {
+        referenced.add(id);
+      }
+    }
+
+    const orphans = await this.prisma.mediaAsset.findMany({
+      where: {
+        ...(branchId ? { branchId } : {}),
+        scope: { in: [...DAILY_ENTRY_MEDIA_SCOPES] },
+        ...(referenced.size > 0 || protect.size > 0
+          ? {
+              id: {
+                notIn: [...new Set([...referenced, ...protect])],
+              },
+            }
+          : {}),
+      },
+      select: { id: true, branchId: true },
+    });
+
+    let deleted = 0;
+    for (const asset of orphans) {
+      if (protect.has(asset.id) || referenced.has(asset.id)) continue;
+      try {
+        await this.deletePersistedRef(asset.branchId, `media:${asset.id}`);
+        deleted += 1;
+      } catch (error) {
+        this.logger.warn(
+          `Orphan media purge failed for ${asset.id}: ${error}`,
+        );
+      }
+    }
+    if (deleted > 0) {
+      this.logger.log(
+        `Purged ${deleted} orphan daily-entry media asset(s)` +
+          (branchId ? ` for branch ${branchId}` : ''),
+      );
+    }
+    return deleted;
   }
 
   /** Remove a persisted `media:` or `storage:` ref from object storage (and MediaAsset when applicable). */
