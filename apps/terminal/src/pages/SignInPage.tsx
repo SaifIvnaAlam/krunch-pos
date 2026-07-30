@@ -175,15 +175,15 @@ export function SignInPage() {
   const showRestaurantPicker = restaurants.length > 1;
 
   return (
-    <div className="relative flex h-full w-full bg-[var(--pos-page)] text-[var(--pos-text-3)]">
-      <div className="absolute right-4 top-4 z-20 lg:right-6 lg:top-6">
+    <div className="relative flex h-full min-h-0 w-full overflow-y-auto bg-[var(--pos-page)] text-[var(--pos-text-3)]">
+      <div className="absolute right-[max(1rem,env(safe-area-inset-right,0px))] top-[max(1rem,env(safe-area-inset-top,0px))] z-20 lg:right-6 lg:top-6">
         <ThemeToggle />
       </div>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.35 }}
-        className={`relative z-10 m-6 hidden w-[420px] shrink-0 flex-col justify-between rounded-[14px] bg-[var(--pos-sidebar)] p-10 lg:flex ${borderRest}`}
+        className={`relative z-10 m-6 hidden w-[min(420px,36vw)] shrink-0 flex-col justify-between rounded-[14px] bg-[var(--pos-sidebar)] p-10 lg:flex ${borderRest}`}
       >
         <div>
           <div className="mb-16 flex items-center gap-3">
@@ -236,27 +236,32 @@ export function SignInPage() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.35, delay: 0.05 }}
-        className="relative z-10 flex flex-1 items-center justify-center px-6 py-8"
+        className="relative z-10 flex min-h-full min-w-0 flex-1 items-center justify-center px-4 py-6 pt-[max(1.5rem,env(safe-area-inset-top,0px))] pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-8"
       >
         <div className="w-full max-w-[400px]">
-          <div className="mb-10 flex items-center gap-3 lg:hidden">
+          <div className="mb-8 flex items-center gap-3 pr-12 sm:mb-10 lg:hidden">
             <div
               className={`flex size-10 shrink-0 items-center justify-center rounded-[14px] bg-[#1a1a18] ${borderRest}`}
             >
               <UtensilsCrossed className="size-5 text-white" strokeWidth={2} />
             </div>
-            <p className="text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]">
-              Steak & Marrow
-            </p>
+            <div className="min-w-0">
+              <p className="truncate text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]">
+                Steak & Marrow
+              </p>
+              <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
+                Terminal
+              </p>
+            </div>
           </div>
 
           <div
-            className={`rounded-[14px] bg-[var(--pos-card)] p-8 ${borderRest} ${borderHover} transition-[border-color] duration-150`}
+            className={`rounded-[14px] bg-[var(--pos-card)] p-5 sm:p-8 ${borderRest} ${borderHover} transition-[border-color] duration-150`}
           >
             <p className="text-[18px] font-medium tracking-[-0.01em] text-[var(--pos-text-1)]">
               Welcome back
             </p>
-            <p className="mb-8 mt-1 text-[13px] text-[var(--pos-text-2)]">
+            <p className="mb-6 mt-1 text-[13px] text-[var(--pos-text-2)] sm:mb-8">
               Sign in to your restaurant
             </p>
 
@@ -282,7 +287,7 @@ export function SignInPage() {
                   value={email}
                   onChange={(e) => handleEmailChange(e.target.value)}
                   autoComplete="email"
-                  className={`h-9 w-full rounded-[9px] border border-solid py-[9px] pl-10 pr-3 text-[13px] [border-color:var(--pos-input-border)] bg-[var(--pos-sidebar)] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] ${borderFocus} transition-[border-color] duration-150`}
+                  className={`h-11 w-full rounded-[9px] border border-solid py-[9px] pl-10 pr-3 text-base [border-color:var(--pos-input-border)] bg-[var(--pos-sidebar)] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] sm:h-9 sm:text-[13px] ${borderFocus} transition-[border-color] duration-150`}
                 />
               </div>
 
@@ -299,7 +304,7 @@ export function SignInPage() {
                     value={selectedBranchId}
                     onChange={setSelectedBranchId}
                     placeholder="Select a restaurant"
-                    className={`h-9 w-full rounded-[9px] border border-solid px-3 text-[13px] [border-color:var(--pos-input-border)] bg-[var(--pos-sidebar)] text-[var(--pos-text-1)] ${borderFocus}`}
+                    className={`h-11 w-full rounded-[9px] border border-solid px-3 text-base [border-color:var(--pos-input-border)] bg-[var(--pos-sidebar)] text-[var(--pos-text-1)] sm:h-9 sm:text-[13px] ${borderFocus}`}
                     options={[
                       { value: "", label: "Select a restaurant" },
                       ...restaurants.map((r) => ({ value: r.id, label: r.name })),
@@ -321,12 +326,12 @@ export function SignInPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
-                  className={`h-9 w-full rounded-[9px] border border-solid py-[9px] pl-10 pr-10 text-[13px] [border-color:var(--pos-input-border)] bg-[var(--pos-sidebar)] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] ${borderFocus} transition-[border-color] duration-150`}
+                  className={`h-11 w-full rounded-[9px] border border-solid py-[9px] pl-10 pr-10 text-base [border-color:var(--pos-input-border)] bg-[var(--pos-sidebar)] text-[var(--pos-text-1)] placeholder:text-[var(--pos-icon-muted)] sm:h-9 sm:text-[13px] ${borderFocus} transition-[border-color] duration-150`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--pos-icon-muted)] transition-colors duration-150 hover:text-[var(--pos-text-2)]"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--pos-icon-muted)] transition-colors duration-150 hover:text-[var(--pos-text-2)]"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? (
@@ -340,7 +345,7 @@ export function SignInPage() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="flex h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[var(--pos-primary-bg)] px-5 text-[13px] font-medium text-[var(--pos-primary-fg)] transition-[opacity,background-color] duration-150 hover:bg-[var(--pos-primary-hover)] disabled:opacity-60"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-[var(--pos-primary-bg)] px-5 text-[13px] font-medium text-[var(--pos-primary-fg)] transition-[opacity,background-color] duration-150 hover:bg-[var(--pos-primary-hover)] disabled:opacity-60 sm:h-10"
               >
                 {submitting ? "Signing in…" : "Sign in"}
                 <ArrowRight className="size-4 shrink-0" strokeWidth={2} />
@@ -348,7 +353,21 @@ export function SignInPage() {
             </form>
           </div>
 
-          <p className="mt-6 text-center text-[11px] text-[var(--pos-icon-muted)]">
+          <div className="mt-4 flex items-center justify-center gap-2 text-[11px] text-[var(--pos-text-2)] lg:hidden">
+            {isOnline ? (
+              <span className="inline-flex items-center gap-2 rounded-full bg-[#c8efd8] px-[10px] py-[3px] text-[11px] font-medium text-[#2e9b65]">
+                <span className="size-[5px] shrink-0 rounded-full bg-[#2e9b65]" />
+                Connected
+              </span>
+            ) : (
+              <>
+                <WifiOff className="size-3.5 text-[#e8472a]" strokeWidth={2} />
+                <span className="text-[#e8472a]">Offline</span>
+              </>
+            )}
+          </div>
+
+          <p className="mt-4 text-center text-[11px] text-[var(--pos-icon-muted)] sm:mt-6">
             By signing in, you agree to the terms of service.
           </p>
         </div>

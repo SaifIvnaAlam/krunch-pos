@@ -6,13 +6,13 @@ const borderRest =
 
 export function SplashScreen() {
   return (
-    <div className="relative flex h-full w-full flex-col bg-[var(--pos-page)] text-[var(--pos-text-3)]">
-      <div className="flex flex-1 items-center justify-center px-6">
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-y-auto bg-[var(--pos-page)] text-[var(--pos-text-3)]">
+      <div className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
-          className={`flex w-full max-w-[400px] flex-col items-center rounded-[20px] bg-[var(--pos-card)] px-8 py-12 ${borderRest}`}
+          className={`flex w-full max-w-[400px] flex-col items-center rounded-[20px] bg-[var(--pos-card)] px-6 py-10 sm:px-8 sm:py-12 ${borderRest}`}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
@@ -29,7 +29,7 @@ export function SplashScreen() {
             transition={{ delay: 0.15, duration: 0.35 }}
             className="text-center"
           >
-            <h1 className="text-[32px] font-semibold leading-none tracking-[-0.03em] text-[var(--pos-text-1)]">
+            <h1 className="text-[28px] font-semibold leading-none tracking-[-0.03em] text-[var(--pos-text-1)] sm:text-[32px]">
               Steak & Marrow
             </h1>
             <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--pos-text-2)]">
@@ -64,7 +64,7 @@ export function SplashScreen() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.4, duration: 0.3 }}
-        className="pb-8 text-center font-mono text-[11px] text-[var(--pos-icon-muted)]"
+        className="pb-[max(2rem,env(safe-area-inset-bottom,0px))] text-center font-mono text-[11px] text-[var(--pos-icon-muted)]"
       >
         v0.1.0
       </motion.p>

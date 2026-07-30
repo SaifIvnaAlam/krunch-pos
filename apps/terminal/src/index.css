@@ -119,8 +119,10 @@ html, body, #root {
 }
 
 /*
- * Scale the POS UI to fill the viewport while keeping the 1280×800 design ratio.
- * Layout size is pre-scaled down, then transform scale() brings it back to 100%.
+ * Desktop (≥1024px): scale the POS UI to fill the viewport while keeping the
+ * 1280×800 design ratio. Layout size is pre-scaled, then transform scale()
+ * brings it back to 100%. Below lg, --pos-ui-scale stays 1 so real responsive
+ * CSS (mobile nav, Tailwind breakpoints) can work at native device pixels.
  */
 .pos-viewport {
   position: relative;
