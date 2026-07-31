@@ -6,9 +6,6 @@ export {
 export type { AuthResultDto, RefreshTokensDto, StaffProfile } from "./types";
 export {
   hasPermission,
-  hasAnyPermission,
-  PERM_OPS_READ,
-  PERM_OPS_WRITE,
   PERM_STAFF_READ,
   PERM_STAFF_CREATE,
   PERM_STAFF_EDIT,

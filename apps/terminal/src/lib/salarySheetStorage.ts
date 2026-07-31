@@ -104,44 +104,8 @@ export function sumPaymentsForRow(r: SalarySheetRow): number {
   return r.payments.reduce((s, p) => s + (Number.isFinite(p.amount) ? p.amount : 0), 0);
 }
 
-export function stillOwedForRow(r: SalarySheetRow): number {
-  return Math.max(0, totalPayableForRow(r) - sumPaymentsForRow(r));
-}
-
-/** Paid ahead of earned salary for the month (whole BDT). */
-export function advanceBalanceForRow(r: SalarySheetRow): number {
-  return Math.max(0, sumPaymentsForRow(r) - totalPayableForRow(r));
-}
-
 export function isSalaryPaymentPosted(p: SalaryPayment): boolean {
   return Boolean(p.dailyEntryLineId && p.dailyEntryDate);
-}
-
-function docUpdatedAtMs(doc: SalarySheetDoc): number {
-  const t = Date.parse(doc.updatedAt);
-  return Number.isFinite(t) ? t : 0;
-}
-
-/** Prefer the sheet with the latest `updatedAt` when both exist for a month. */
-export function mergeSalarySheetBundles(
-  remote: SalarySheetBundle,
-  local: SalarySheetBundle,
-): SalarySheetBundle {
-  const months: Record<string, SalarySheetDoc> = { ...remote.months };
-  for (const [monthKey, localDoc] of Object.entries(local.months)) {
-    if (!localDoc) continue;
-    const remoteDoc = months[monthKey];
-    if (!remoteDoc) {
-      months[monthKey] = localDoc;
-      continue;
-    }
-    months[monthKey] =
-      docUpdatedAtMs(localDoc) > docUpdatedAtMs(remoteDoc) ? localDoc : remoteDoc;
-  }
-  return {
-    selectedMonthKey: remote.selectedMonthKey || local.selectedMonthKey,
-    months,
-  };
 }
 
 export function summarizeSalaryDoc(doc: SalarySheetDoc): {
@@ -211,14 +175,6 @@ export function createSalaryPayment(amount: number, date: string, note?: string)
   };
 }
 
-/** Sum of SC % values on rows that have a positive weight. */
-export function serviceChargeWeightSum(rows: SalarySheetRow[]): number {
-  return rows.reduce(
-    (s, r) => s + (r.pct != null && r.pct > 0 ? r.pct : 0),
-    0,
-  );
-}
-
 /** Total BDT that should be distributed: each row gets pool × (SC % ÷ 100). */
 export function serviceChargePoolTargetTotal(rows: SalarySheetRow[], pool: number): number {
   if (pool <= 0 || !Number.isFinite(pool)) return 0;
@@ -261,21 +217,6 @@ export function distributeServiceChargePool(
 
   for (const p of parts) out.set(p.id, p.floor);
   return out;
-}
-
-export function emptySalaryRow(): SalarySheetRow {
-  return {
-    id: newRowId(),
-    employeeId: "",
-    name: "",
-    basic: 0,
-    pct: null,
-    serviceCharge: 0,
-    overtime: 0,
-    eidBonus: 0,
-    fines: 0,
-    payments: [],
-  };
 }
 
 export function salaryRowForEmployeeRecord(emp: Employee): SalarySheetRow {
@@ -650,10 +591,6 @@ export function readLegacyLocalSalaryBundle(): SalarySheetBundle | null {
   }
 
   return null;
-}
-
-export function readSalarySheetBundle(): SalarySheetBundle {
-  return readLegacyLocalSalaryBundle() ?? emptySalarySheetBundle();
 }
 
 export function clearLegacyLocalSalaryStorage(): void {

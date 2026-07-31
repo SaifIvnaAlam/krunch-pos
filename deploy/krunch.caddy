@@ -1,10 +1,11 @@
-# Krunch POS site config for the SHARED host Caddy.
+# Legacy v1 JSON stack — parked off the production hostname.
 # Installed to /etc/caddy/conf.d/krunch.caddy by the deploy script and pulled in
-# via `import /etc/caddy/conf.d/*.caddy` in /etc/caddy/Caddyfile. This lives
-# alongside the existing OneSign + n8n site blocks — nothing here evicts them.
+# via `import /etc/caddy/conf.d/*.caddy` in /etc/caddy/Caddyfile.
+#
+# Park hostnames: v1-steakandmarrow + v2-steakandmarrow.
+# Production relational app is krunch-v2.caddy → steakandmarrow.inventivelab.bd.
 
-# POS terminal (static build) + API reverse proxy.
-steakandmarrow.inventivelab.bd {
+v1-steakandmarrow.inventivelab.bd, v2-steakandmarrow.inventivelab.bd {
 	encode gzip zstd
 
 	handle /api/* {
@@ -27,7 +28,8 @@ steakandmarrow.inventivelab.bd {
 }
 
 # Krunch object storage on the shared MinIO (S3 API on :9000).
-# `/media/*` is served by the Krunch API (stable public URLs); everything else goes to MinIO.
+# `/media/*` stays on v1 API (legacy MediaAsset rows); production media is served
+# from https://steakandmarrow.inventivelab.bd/api/v1/media.
 s3.storage.inventivelab.bd {
 	handle /media/* {
 		rewrite * /api/v1{uri}

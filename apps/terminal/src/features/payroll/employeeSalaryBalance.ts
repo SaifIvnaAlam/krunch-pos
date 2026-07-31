@@ -1,6 +1,5 @@
 import {
   isMonthKey,
-  sumPaymentsForRow,
   totalPayableForRow,
   type SalarySheetBundle,
   type SalarySheetRow,
@@ -181,23 +180,4 @@ export function remainingAdvanceCreditForEmployee(
   const balances = computeEmployeeMonthBalances(bundle, employeeId);
   const values = [...balances.values()];
   return values.length > 0 ? values[values.length - 1]!.advanceCarriedOut : 0;
-}
-
-/** Paid amount for one row, optionally excluding one line/payment (for validation). */
-export function sumPaymentsForRowExcluding(
-  row: SalarySheetRow,
-  options?: Pick<EmployeeMonthBalanceOptions, "excludeLineId" | "excludePaymentId">,
-): number {
-  let paid = 0;
-  for (const payment of row.payments) {
-    if (options?.excludePaymentId && payment.id === options.excludePaymentId) continue;
-    if (options?.excludeLineId && payment.dailyEntryLineId === options.excludeLineId) continue;
-    paid += payment.amount;
-  }
-  return paid;
-}
-
-/** @deprecated Use rolling balance helpers — kept for simple in-month gross checks. */
-export function grossAdvanceInMonth(row: SalarySheetRow): number {
-  return Math.max(0, sumPaymentsForRow(row) - totalPayableForRow(row));
 }

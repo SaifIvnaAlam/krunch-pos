@@ -73,14 +73,7 @@ export function PosMobileNav({
                 >
                   {section.label}
                 </p>
-              ) : (
-                <p
-                  className="flex w-[2.75rem] shrink-0 flex-col justify-center text-center text-[8px] font-semibold uppercase leading-tight tracking-wide text-[var(--pos-sb-section-label)]"
-                  title="Office"
-                >
-                  Office
-                </p>
-              )}
+              ) : null}
               <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto [-webkit-overflow-scrolling:touch]">
                 {leaves.map((leaf) => (
                   <MobileNavButton

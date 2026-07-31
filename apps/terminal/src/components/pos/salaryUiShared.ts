@@ -23,8 +23,6 @@ export const salaryStatCell =
   "rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2.5";
 
 /** Spreadsheet-style grid (Google Sheets-like). */
-export const sheetBorder = "border border-solid [border-color:var(--pos-divider)]";
-
 export const sheetTableWrap =
   "w-fit min-w-full overflow-hidden rounded-[10px] border border-solid [border-color:var(--pos-divider)]";
 
@@ -45,9 +43,6 @@ export const sheetTdNumTotal = `${sheetTdNum} bg-[var(--pos-sidebar)]`;
 
 export const sheetCellLink =
   "block max-w-full cursor-pointer truncate text-left underline-offset-2 hover:underline";
-
-export const sheetCellLinkNum =
-  "block w-full max-w-full cursor-pointer truncate text-right font-mono font-semibold tabular-nums underline-offset-2 hover:underline";
 
 export const sheetInput =
   "box-border block h-[36px] w-full min-w-0 border-0 bg-transparent px-1 text-right font-mono text-[16px] font-semibold tabular-nums text-[var(--pos-text-1)] outline-none focus:bg-[var(--pos-sidebar)]/80";

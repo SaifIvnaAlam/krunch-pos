@@ -2,9 +2,6 @@ const ACCESS = "universal_pos_terminal_access";
 const REFRESH = "universal_pos_terminal_refresh";
 const REMEMBERED_EMAIL = "universal_pos_terminal_remembered_email";
 const REMEMBERED_BRANCH = "universal_pos_terminal_remembered_branch";
-const DEMO_FLAG = "remi_pos_demo_auth";
-const DEMO_NAME = "remi_pos_user_name";
-
 /** In-memory copy so API calls work when sessionStorage is blocked but sign-in succeeded. */
 let memoryAccessToken: string | null = null;
 let memoryRefreshToken: string | null = null;
@@ -61,14 +58,6 @@ export function readApiProfileName(): string {
 export function writeApiProfileName(name: string): void {
   try {
     sessionStorage.setItem(API_PROFILE, name);
-  } catch {
-    /* ignore */
-  }
-}
-
-export function clearApiProfileName(): void {
-  try {
-    sessionStorage.removeItem(API_PROFILE);
   } catch {
     /* ignore */
   }
@@ -131,40 +120,6 @@ export function clearApiTokens(): void {
     sessionStorage.removeItem(ACTIVE_BRANCH);
   } catch {
     /* ignore */
-  }
-}
-
-export function readDemoSignedIn(): boolean {
-  try {
-    return sessionStorage.getItem(DEMO_FLAG) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function writeDemoSession(userName: string): void {
-  try {
-    sessionStorage.setItem(DEMO_FLAG, "1");
-    sessionStorage.setItem(DEMO_NAME, userName);
-  } catch {
-    /* ignore */
-  }
-}
-
-export function clearDemoSession(): void {
-  try {
-    sessionStorage.removeItem(DEMO_FLAG);
-    sessionStorage.removeItem(DEMO_NAME);
-  } catch {
-    /* ignore */
-  }
-}
-
-export function readDemoUserName(): string {
-  try {
-    return sessionStorage.getItem(DEMO_NAME) ?? "";
-  } catch {
-    return "";
   }
 }
 

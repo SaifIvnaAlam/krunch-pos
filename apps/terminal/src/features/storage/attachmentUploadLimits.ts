@@ -4,7 +4,7 @@ const MAX_PDF_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** Images are compressed client-side; this blocks only pathological inputs. */
 const MAX_RAW_IMAGE_BYTES = 50 * 1024 * 1024;
 
-export function isPdfAttachmentFile(file: File): boolean {
+function isPdfAttachmentFile(file: File): boolean {
   return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
 }
 

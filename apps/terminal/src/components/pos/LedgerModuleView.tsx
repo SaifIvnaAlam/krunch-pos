@@ -89,8 +89,8 @@ export const LEDGER_LEAF_IDS = new Set([
   "lm-items",
 ]);
 
-export type LedgerPanelTab = "books" | "bills" | "items";
-export type CashbooksPanel = "books" | "bills";
+type LedgerPanelTab = "books" | "bills" | "items";
+type CashbooksPanel = "books" | "bills";
 
 const CASHBOOKS_PANEL_OPTIONS: { value: CashbooksPanel; label: string }[] = [
   { value: "books", label: "Books" },
@@ -125,11 +125,6 @@ function selectLedgerTab(tab: LedgerPanelTab) {
   }
   setCashbooksPanel(tab);
   dispatchPosSelectLeaf("lm-cashbooks");
-}
-
-/** Open Cashbooks on a specific in-page panel (Books or Bills & payments). */
-export function openCashbooksPanel(panel: CashbooksPanel) {
-  selectLedgerTab(panel);
 }
 
 function isItemsLedgerLeaf(leafId: string): boolean {
@@ -1895,9 +1890,9 @@ const LEDGER_ITEM_UNITS = [
 ] as const;
 
 /** Kinds exposed when adding a line (vendor books). Return / adjustment stay in data & detail views only. */
-export type LedgerEntryDrawerKind = Extract<LedgerEntry["type"], "invoice" | "payment">;
+type LedgerEntryDrawerKind = Extract<LedgerEntry["type"], "invoice" | "payment">;
 
-export const LEDGER_DRAWER_KINDS: { value: LedgerEntryDrawerKind; label: string }[] = [
+const LEDGER_DRAWER_KINDS: { value: LedgerEntryDrawerKind; label: string }[] = [
   { value: "invoice", label: "Bill" },
   { value: "payment", label: "Payment" },
 ];
@@ -2376,7 +2371,7 @@ function removeCashbookById(supplierId: string): RemoveCashbookResult {
 }
 
 /** Same rules as the ledger drawer amount field — used to validate before daily save posts a line. */
-export function validateLedgerAmountForKind(
+function validateLedgerAmountForKind(
   kind: LedgerEntry["type"],
   amountStr: string,
 ): string | null {
@@ -2445,14 +2440,6 @@ export function isDailyLedgerLinkLocked(link: {
 }): boolean {
   const entry = getWorkspace().ledger.find((e) => e.id === link.ledgerEntryId);
   return isLedgerEntryLocked(entry);
-}
-
-/** True when the linked cashbook row still has file attachments. */
-export function dailyLedgerLinkHasAttachments(link: {
-  ledgerEntryId: string;
-}): boolean {
-  const entry = getWorkspace().ledger.find((e) => e.id === link.ledgerEntryId);
-  return (entry?.attachments?.length ?? 0) > 0;
 }
 
 /** Removes ledger (and draft PO for bills) created from Daily Entry so edits stay in sync. */

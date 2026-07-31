@@ -9,8 +9,6 @@ import type {
   ExpenseSummary,
   ListExpensesQuery,
   Payment,
-  QuickExpenseInput,
-  UpdateExpenseInput,
 } from "./types";
 
 function requireToken(): string {
@@ -55,15 +53,6 @@ export function createExpense(body: CreateExpenseInput): Promise<ExpenseDetail> 
   });
 }
 
-export function updateExpense(id: string, body: UpdateExpenseInput): Promise<ExpenseDetail> {
-  const token = requireToken();
-  return apiFetch<ExpenseDetail>(`/expenses/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    token,
-    body: JSON.stringify(body),
-  });
-}
-
 export function deleteExpense(id: string): Promise<void> {
   const token = requireToken();
   return apiFetch<void>(`/expenses/${encodeURIComponent(id)}`, {
@@ -72,29 +61,7 @@ export function deleteExpense(id: string): Promise<void> {
   });
 }
 
-export function quickExpense(body: QuickExpenseInput): Promise<ExpenseDetail> {
-  const token = requireToken();
-  return apiFetch<ExpenseDetail>("/expenses/quick", {
-    method: "POST",
-    token,
-    body: JSON.stringify(body),
-  });
-}
-
 // ---------- payments ----------
-
-export function listPayments(
-  query: {
-    from?: string;
-    to?: string;
-    method?: string;
-    expenseId?: string;
-    salaryLineId?: string;
-  } = {},
-): Promise<Payment[]> {
-  const token = requireToken();
-  return apiFetch<Payment[]>(`/payments${toQuery(query)}`, { method: "GET", token });
-}
 
 export function createPayment(body: CreatePaymentInput): Promise<Payment> {
   const token = requireToken();
@@ -126,26 +93,6 @@ export function createExpenseCategory(name: string): Promise<ExpenseCategory> {
     method: "POST",
     token,
     body: JSON.stringify({ name }),
-  });
-}
-
-export function updateExpenseCategory(
-  id: string,
-  body: { name?: string; active?: boolean; sortIndex?: number },
-): Promise<ExpenseCategory> {
-  const token = requireToken();
-  return apiFetch<ExpenseCategory>(`/expense-categories/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    token,
-    body: JSON.stringify(body),
-  });
-}
-
-export function deleteExpenseCategory(id: string): Promise<void> {
-  const token = requireToken();
-  return apiFetch<void>(`/expense-categories/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    token,
   });
 }
 

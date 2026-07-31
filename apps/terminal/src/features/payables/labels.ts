@@ -30,13 +30,6 @@ export const EXPENSE_STATUS_LABEL: Record<ExpenseStatus, string> = {
   paid: "Paid",
 };
 
-/** Tailwind text tone for a status. */
-export function expenseStatusTone(status: ExpenseStatus): string {
-  if (status === "paid") return "text-emerald-700 dark:text-emerald-400";
-  if (status === "partially_paid") return "text-amber-700 dark:text-amber-400";
-  return "text-red-600 dark:text-red-400";
-}
-
 /** Small pill classes for a status badge. */
 export function expenseStatusPill(status: ExpenseStatus): string {
   if (status === "paid")

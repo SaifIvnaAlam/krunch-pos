@@ -134,23 +134,6 @@ export type CreateExpenseInput = {
   transactionId?: string;
 };
 
-export type UpdateExpenseInput = Partial<
-  Omit<CreateExpenseInput, "kind" | "paidAmount" | "method" | "transactionId">
->;
-
-export type QuickExpenseInput = {
-  kind?: ExpenseKind;
-  date: string;
-  description?: string;
-  expenseCategoryId?: string;
-  supplierId?: string;
-  total: number;
-  paidAmount?: number;
-  method: PaymentMethod;
-  transactionId?: string;
-  note?: string;
-};
-
 export type ListExpensesQuery = {
   kind?: ExpenseKind;
   expenseCategoryId?: string;

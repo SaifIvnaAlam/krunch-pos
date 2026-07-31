@@ -56,7 +56,7 @@ services:
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
       S3_PRESIGN_EXPIRY_SECONDS: ${S3_PRESIGN_EXPIRY_SECONDS:-900}
       # Must hit this stack's API — s3.storage…/media proxies to prod :3001 only.
-      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://v2-steakandmarrow.inventivelab.bd/api/v1/media}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://steakandmarrow.inventivelab.bd/api/v1/media}
     depends_on:
       postgres:
         condition: service_healthy

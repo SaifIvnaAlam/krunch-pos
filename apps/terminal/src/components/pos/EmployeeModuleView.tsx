@@ -37,7 +37,7 @@ import {
   salaryTitle,
   stillOwedTone,
 } from "./salaryUiShared";
-import { useSession } from "@/features/auth";
+import { useSession, verifySessionPassword } from "@/features/auth";
 import {
   getEmployeeDirectoryLoadState,
   loadEmployeeDirectory,
@@ -152,7 +152,7 @@ function PayrollSalaries({
   onEmployeeHistoryConsumed?: () => void;
   onProfileReturn?: (leafId: string) => void;
 }) {
-  const { isSignedIn, userName } = useSession();
+  const { isSignedIn, userName, activeBranch } = useSession();
   const employees = useActiveEmployees();
   const employeeSyncKey = employees
     .map(
@@ -188,12 +188,15 @@ function PayrollSalaries({
   const [generateMonthDraft, setGenerateMonthDraft] = useState(monthKeyFromDate());
   const [deleteMonthTarget, setDeleteMonthTarget] = useState<string | null>(null);
   const [deleteMonthBusy, setDeleteMonthBusy] = useState(false);
+  const [deleteMonthPassword, setDeleteMonthPassword] = useState("");
+  const [deleteMonthError, setDeleteMonthError] = useState<string | null>(null);
   const [salaryLockModalOpen, setSalaryLockModalOpen] = useState(false);
   const [salaryUnlockModalOpen, setSalaryUnlockModalOpen] = useState(false);
   const [salaryLockBusy, setSalaryLockBusy] = useState(false);
   const [salarySheetNotice, setSalarySheetNotice] = useState<string | null>(null);
   const wasSignedInRef = useRef(isSignedIn);
   const monthPickerRef = useRef<HTMLDivElement>(null);
+  const deleteMonthPasswordRef = useRef<HTMLInputElement>(null);
 
   const activeKey = bundle.selectedMonthKey;
   const doc = bundle.months[activeKey] ?? ensureMonthDoc(activeKey, undefined, employees);
@@ -400,14 +403,31 @@ function PayrollSalaries({
   function openDeleteMonthModal(monthKey: string) {
     if (!isMonthKey(monthKey) || !bundle.months[monthKey]) return;
     setMonthPickerOpen(false);
+    setDeleteMonthPassword("");
+    setDeleteMonthError(null);
     setDeleteMonthTarget(monthKey);
+    requestAnimationFrame(() => deleteMonthPasswordRef.current?.focus());
+  }
+
+  function closeDeleteMonthModal() {
+    if (deleteMonthBusy) return;
+    setDeleteMonthTarget(null);
+    setDeleteMonthPassword("");
+    setDeleteMonthError(null);
   }
 
   async function executeDeleteMonth() {
     const monthKey = deleteMonthTarget;
     if (!monthKey || !isMonthKey(monthKey) || deleteMonthBusy) return;
     setDeleteMonthBusy(true);
+    setDeleteMonthError(null);
     try {
+      const verified = await verifySessionPassword(deleteMonthPassword, activeBranch.id);
+      if (!verified.ok) {
+        setDeleteMonthError(verified.message);
+        deleteMonthPasswordRef.current?.focus();
+        return;
+      }
       const label = labelFromMonthKey(monthKey);
       setSalaryBundle((b) => {
         if (!b.months[monthKey]) return b;
@@ -428,6 +448,7 @@ function PayrollSalaries({
       });
       await flushSalaryWorkspacePersist();
       setDeleteMonthTarget(null);
+      setDeleteMonthPassword("");
       setSalarySheetNotice(`Deleted salary sheet for ${label}.`);
     } catch {
       setSalarySheetNotice("Could not delete month. Try again.");
@@ -1012,7 +1033,7 @@ function PayrollSalaries({
           aria-modal="true"
           aria-labelledby="delete-salary-month-title"
           className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
-          onClick={() => !deleteMonthBusy && setDeleteMonthTarget(null)}
+          onClick={closeDeleteMonthModal}
         >
           <div
             className="w-full max-w-md rounded-t-[14px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] p-4 shadow-lg sm:rounded-[14px]"
@@ -1039,18 +1060,46 @@ function PayrollSalaries({
                 lines are not deleted, but salary history for this month will be gone.
               </p>
             ) : null}
+            <label className="mt-3 flex flex-col gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]">
+                Your password
+              </span>
+              <input
+                ref={deleteMonthPasswordRef}
+                type="password"
+                value={deleteMonthPassword}
+                onChange={(e) => {
+                  setDeleteMonthPassword(e.target.value);
+                  if (deleteMonthError) setDeleteMonthError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void executeDeleteMonth();
+                }}
+                autoComplete="current-password"
+                disabled={deleteMonthBusy}
+                className="h-9 w-full rounded-[8px] border border-solid [border-color:var(--pos-input-border)] bg-[var(--pos-input-bg)] px-2 text-[12px] text-[var(--pos-text-1)] focus:border-[var(--pos-text-1)] focus:outline-none disabled:opacity-50"
+                placeholder="Enter password to confirm"
+              />
+            </label>
+            {deleteMonthError ? (
+              <p className="mt-2 text-[12px] text-red-600 dark:text-red-400" role="alert">
+                {deleteMonthError}
+              </p>
+            ) : null}
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={deleteMonthBusy}
                 className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center rounded-[8px] border border-solid [border-color:var(--pos-divider)] px-3 text-[12px] font-semibold text-[var(--pos-text-1)] hover:bg-[var(--pos-nav-hover)]/30 disabled:opacity-40 sm:flex-none"
-                onClick={() => setDeleteMonthTarget(null)}
+                onClick={closeDeleteMonthModal}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={deleteMonthBusy}
+                disabled={deleteMonthBusy || !deleteMonthPassword.trim()}
                 className="inline-flex h-9 min-w-[6.5rem] flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-red-500/55 bg-red-600 px-3 text-[12px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:flex-none"
                 onClick={() => void executeDeleteMonth()}
               >

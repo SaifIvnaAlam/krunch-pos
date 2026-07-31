@@ -16,10 +16,6 @@ export const pageH1 =
 export const brandBtn =
   "inline-flex h-9 items-center justify-center gap-1.5 rounded-[10px] bg-[var(--pos-sb-base)] px-3.5 text-[13px] font-semibold text-white shadow-[0_1px_1px_rgba(0,0,0,0.04),0_6px_16px_color-mix(in_srgb,var(--pos-sb-base)_22%,transparent)] transition-[opacity,transform] hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100";
 
-/** Hero card wash used by settlement summary bands. */
-export const heroCard =
-  `${floatingCard} relative overflow-hidden before:pointer-events-none before:absolute before:inset-0 before:bg-[radial-gradient(ellipse_at_top_left,color-mix(in_srgb,var(--pos-sb-base)_9%,transparent),transparent_58%)]`;
-
 /** Same chrome as Expense Reports `statCell` — fixed tile size across pages. */
 export const expenseStatTile =
   "w-[180px] max-w-full shrink-0 rounded-[8px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-3 py-2";
@@ -56,15 +52,6 @@ export const secondaryBtn =
 
 export const dangerBtn =
   "inline-flex h-8 items-center justify-center gap-1 rounded-[8px] border border-solid border-red-500/50 px-2.5 text-[12px] font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-400";
-
-export const statCard =
-  "rounded-[10px] border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)] px-4 py-3";
-
-export const statLabel =
-  "text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--pos-text-2)]";
-
-export const statValue =
-  "mt-1 font-mono text-[24px] font-semibold leading-none text-[var(--pos-text-1)]";
 
 /** Whole-currency money with the branch symbol (frontend is BDT today). Ceils fractions. */
 export function formatMoney(n: number): string {

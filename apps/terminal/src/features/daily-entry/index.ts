@@ -20,10 +20,7 @@ export {
   type CarriedOpeningBalance,
   type DailyEntryHistorySlot,
 } from "./calculations";
-export {
-  DAILY_ENTRY_STORAGE_KEY,
-  DAILY_ENTRY_STORAGE_UPDATE_EVENT,
-} from "./localDailyEntryStorage";
+export { DAILY_ENTRY_STORAGE_UPDATE_EVENT } from "./localDailyEntryStorage";
 export {
   commitDailyEntry,
   deleteDailyEntry,

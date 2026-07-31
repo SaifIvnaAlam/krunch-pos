@@ -15,4 +15,3 @@ export {
 export { uploadFileToStorage, type UploadScope } from "./uploadFile";
 export { deleteStoredMediaRef, purgeStoredMediaRef } from "./storageApi";
 export { resolveMediaUrl } from "./resolveMediaUrl";
-export { StorageImage } from "./StorageImage";

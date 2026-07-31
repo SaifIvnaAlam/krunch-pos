@@ -16,13 +16,8 @@ export {
   type PostSalaryPayoutResult,
 } from "./postSalaryPayoutToDailyEntry";
 export {
-  postAllUnpostedSalaryPayouts,
-  type PostAllUnpostedResult,
-} from "./postAllUnpostedSalaryPayouts";
-export {
   STAFF_ADVANCE_LINE_KIND,
   STAFF_LINE_KIND,
-  isStaffAdvanceLineKind,
   normalizeStaffLineKind,
   staffLineKindLabel,
   type StaffLineKind,

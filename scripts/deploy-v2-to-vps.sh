@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Deploy the SHADOW relational app to /opt/krunch-pos-v2.
-# HARD GUARDS: never writes to /opt/krunch-pos, never touches docker-compose.prod.yml
-# or /etc/caddy/conf.d/krunch.caddy (production).
+# Deploy the relational production app to /opt/krunch-pos-v2.
+# HARD GUARDS: never writes to /opt/krunch-pos (legacy JSON park), never touches
+# docker-compose.prod.yml or /etc/caddy/conf.d/krunch.caddy (legacy park).
 #
 # Usage:
 #   ./scripts/deploy-v2-to-vps.sh
@@ -15,9 +15,10 @@ COMPOSE_FILE="docker-compose.v2.yml"
 CADDY_FILE="krunch-v2.caddy"
 REQUIRED_REMOTE="/opt/krunch-pos-v2"
 FORBIDDEN_REMOTE="/opt/krunch-pos"
+REQUIRED_DOMAIN="steakandmarrow.inventivelab.bd"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing deploy/.env.v2 — create it from deploy/.env with v2 domain/secrets."
+  echo "Missing deploy/.env.v2 — create it from deploy/.env with v2 path + prod domain."
   exit 1
 fi
 
@@ -34,15 +35,11 @@ if [[ "$REMOTE_DIR" != "$REQUIRED_REMOTE" ]]; then
   exit 1
 fi
 if [[ "$REMOTE_DIR" == "$FORBIDDEN_REMOTE" ]]; then
-  echo "REFUSING: would overwrite production path ${FORBIDDEN_REMOTE}."
+  echo "REFUSING: would overwrite legacy park path ${FORBIDDEN_REMOTE}."
   exit 1
 fi
-if [[ "$POS_DOMAIN" == "steakandmarrow.inventivelab.bd" ]]; then
-  echo "REFUSING: POS_DOMAIN is production."
-  exit 1
-fi
-if [[ "$POS_DOMAIN" != "v2-steakandmarrow.inventivelab.bd" ]]; then
-  echo "REFUSING: unexpected POS_DOMAIN=${POS_DOMAIN}"
+if [[ "$POS_DOMAIN" != "$REQUIRED_DOMAIN" ]]; then
+  echo "REFUSING: POS_DOMAIN must be ${REQUIRED_DOMAIN} (got ${POS_DOMAIN})."
   exit 1
 fi
 
@@ -138,7 +135,7 @@ vps_rsync "${ENV_FILE}" "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/deploy/.env"
 echo "==> Starting SHADOW stack (compose project krunch-pos-v2)"
 vps_ssh "cd ${REMOTE_DIR}/deploy && docker compose -f ${COMPOSE_FILE} --env-file .env up -d --build --remove-orphans"
 
-echo "==> Publishing ONLY krunch-v2.caddy (prod krunch.caddy untouched)"
+echo "==> Publishing ONLY krunch-v2.caddy (legacy park krunch.caddy untouched)"
 vps_ssh "test -f /etc/caddy/conf.d/krunch.caddy && install -D -m 0644 ${REMOTE_DIR}/deploy/${CADDY_FILE} /etc/caddy/conf.d/${CADDY_FILE} && caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy"
 
 echo "==> Waiting for v2 API health on :3002"
@@ -159,8 +156,8 @@ echo "==> Postflight: prod still up"
 vps_ssh 'curl -fsS http://127.0.0.1:3001/api/v1/health | grep -q ok && docker ps --format "{{.Names}}" | grep -q "^krunch-pos-api-1$"'
 
 echo ""
-echo "=== Shadow v2 deployed (production untouched) ==="
-echo "  POS:   https://${POS_DOMAIN}"
-echo "  API:   https://${POS_DOMAIN}/api/v1/health"
-echo "  Prod:  https://steakandmarrow.inventivelab.bd (unchanged)"
+echo "=== Relational production deployed (legacy park untouched) ==="
+echo "  POS:    https://${POS_DOMAIN}"
+echo "  API:    https://${POS_DOMAIN}/api/v1/health"
+echo "  Legacy: https://v2-steakandmarrow.inventivelab.bd (park, unchanged)"
 echo ""

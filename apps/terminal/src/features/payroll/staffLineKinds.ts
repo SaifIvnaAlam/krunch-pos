@@ -22,7 +22,3 @@ export function normalizeStaffLineKind(raw: string | undefined): StaffLineKind {
 export function staffLineKindLabel(kind?: string): string {
   return normalizeStaffLineKind(kind) === STAFF_ADVANCE_LINE_KIND ? "Advance" : "Payout";
 }
-
-export function isStaffAdvanceLineKind(kind?: string): boolean {
-  return normalizeStaffLineKind(kind) === STAFF_ADVANCE_LINE_KIND;
-}
