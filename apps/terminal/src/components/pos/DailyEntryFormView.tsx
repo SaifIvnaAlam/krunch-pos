@@ -1198,12 +1198,13 @@ function amountStringFromPurchaseTotal(total: number): string {
 }
 
 /**
- * Keep a vendor expense row for each purchase vendor: create if missing, update
- * amount while still synced, drop synced rows when that vendor’s purchases go away.
+ * Keep a purchase-card "Paid" vendor row per purchase supplier. Extra supplier
+ * payment rows (e.g. clearing older dues) stay untouched beside it.
  */
 function syncVendorExpensesFromPurchases(
   lines: readonly ExpenseLineDraft[],
   dismissedVendors: ReadonlySet<string>,
+  prevTotals: ReadonlyMap<string, number> = new Map(),
 ): ExpenseLineDraft[] {
   const totals = purchaseVendorTotalsFromLines(lines);
   const next: ExpenseLineDraft[] = [];
@@ -1222,16 +1223,32 @@ function syncVendorExpensesFromPurchases(
         continue;
       }
       claimedVendors.add(syncedVendor);
-      const amount = amountStringFromPurchaseTotal(total);
-      if (line.vendor === syncedVendor && line.amount === amount) {
-        next.push(line);
-      } else {
+      const autoAmount = amountStringFromPurchaseTotal(total);
+      const prevTotal = prevTotals.get(syncedVendor);
+      const prevAutoAmount =
+        prevTotal != null && prevTotal > 0
+          ? amountStringFromPurchaseTotal(prevTotal)
+          : null;
+      // Track the bill total until the user pins a different Paid amount.
+      const stillTracking =
+        line.amount === autoAmount ||
+        (prevAutoAmount != null && line.amount === prevAutoAmount);
+
+      if (line.vendor !== syncedVendor) {
         next.push({
           ...line,
           vendor: syncedVendor,
-          amount,
+          amount: autoAmount,
           syncedFromPurchaseVendor: syncedVendor,
         });
+      } else if (stillTracking) {
+        next.push({
+          ...line,
+          amount: autoAmount,
+          syncedFromPurchaseVendor: syncedVendor,
+        });
+      } else {
+        next.push(line);
       }
       continue;
     }
@@ -1242,14 +1259,46 @@ function syncVendorExpensesFromPurchases(
   for (const [vendor, total] of totals) {
     if (claimedVendors.has(vendor)) continue;
     if (dismissedVendors.has(vendor)) continue;
-    const hasManualVendorExpense = next.some(
-      (line) => line.kind === "vendor" && line.vendor.trim() === vendor,
-    );
-    if (hasManualVendorExpense) continue;
+    const autoAmount = amountStringFromPurchaseTotal(total);
+    const candidateIdxs: number[] = [];
+    for (let i = 0; i < next.length; i++) {
+      const line = next[i];
+      if (
+        line.kind === "vendor" &&
+        line.vendor.trim() === vendor &&
+        !line.syncedFromPurchaseVendor
+      ) {
+        candidateIdxs.push(i);
+      }
+    }
+    const amountMatchIdx = candidateIdxs.find((i) => next[i].amount === autoAmount);
+    // Reclaim an untagged row only when it matches the bill, or when this
+    // purchase vendor was already tracked (reload + bill edit). Never absorb a
+    // pre-existing supplier payment when the purchase first appears.
+    const reclaimIdx =
+      amountMatchIdx ??
+      (prevTotals.has(vendor) && candidateIdxs.length > 0 ? candidateIdxs[0] : undefined);
+    if (reclaimIdx != null) {
+      const row = next[reclaimIdx];
+      const prevTotal = prevTotals.get(vendor);
+      const prevAutoAmount =
+        prevTotal != null && prevTotal > 0
+          ? amountStringFromPurchaseTotal(prevTotal)
+          : null;
+      const stillTracking =
+        row.amount === autoAmount ||
+        (prevAutoAmount != null && row.amount === prevAutoAmount);
+      next[reclaimIdx] = {
+        ...row,
+        syncedFromPurchaseVendor: vendor,
+        ...(stillTracking ? { amount: autoAmount } : {}),
+      };
+      continue;
+    }
     next.push({
       ...newVendorExpenseLine(),
       vendor,
-      amount: amountStringFromPurchaseTotal(total),
+      amount: autoAmount,
       syncedFromPurchaseVendor: vendor,
     });
   }
@@ -2712,32 +2761,36 @@ export function DailyEntryFormView({
     return set;
   }, [expenseLines]);
 
-  /**
-   * Expenses list: purchase cards + cash lines. Hide auto "Paid now" vendor
-   * rows when that supplier already has a purchase card (Paid now lives there).
-   */
-  const visibleExpenseLines = useMemo(
-    () =>
-      expenseLines.filter((l) => {
-        if (l.kind === "purchase") return true;
-        if (l.kind !== "vendor") return true;
-        if (l.syncedFromPurchaseVendor) return false;
-        const v = l.vendor.trim();
-        return !v || !purchaseVendorsOnDay.has(v);
-      }),
-    [expenseLines, purchaseVendorsOnDay],
-  );
-
-  /** First vendor-payment line for each vendor name (the "paid" side of a purchase). */
+  /** Purchase-card "Paid" row per supplier (prefer still-tagged sync rows). */
   const vendorPaymentLineByVendor = useMemo(() => {
     const map = new Map<string, ExpenseLineDraft>();
     for (const l of expenseLines) {
       if (l.kind !== "vendor") continue;
+      const synced = l.syncedFromPurchaseVendor?.trim();
+      if (synced && !map.has(synced)) map.set(synced, l);
+    }
+    for (const l of expenseLines) {
+      if (l.kind !== "vendor") continue;
       const v = l.vendor.trim();
-      if (v && !map.has(v)) map.set(v, l);
+      if (v && purchaseVendorsOnDay.has(v) && !map.has(v)) map.set(v, l);
     }
     return map;
-  }, [expenseLines]);
+  }, [expenseLines, purchaseVendorsOnDay]);
+
+  /**
+   * Hide only the purchase-card "Paid" row. Other supplier payments for the
+   * same name stay visible (e.g. clearing older dues beside today's bill).
+   */
+  const visibleExpenseLines = useMemo(() => {
+    const purchasePaidIds = new Set(
+      [...vendorPaymentLineByVendor.values()].map((l) => l.id),
+    );
+    return expenseLines.filter((l) => {
+      if (l.kind !== "vendor") return true;
+      if (l.syncedFromPurchaseVendor) return false;
+      return !purchasePaidIds.has(l.id);
+    });
+  }, [expenseLines, vendorPaymentLineByVendor]);
 
   const expenseSum = useMemo(
     () => expenseLines.reduce((s, line) => s + draftLineCashAmount(line), 0),
@@ -3139,11 +3192,13 @@ export function DailyEntryFormView({
         dismissedPurchaseExpenseVendorsRef.current.delete(vendor);
       }
     }
-    lastPurchaseVendorTotalsRef.current = totals;
-    return syncVendorExpensesFromPurchases(
+    const synced = syncVendorExpensesFromPurchases(
       lines,
       dismissedPurchaseExpenseVendorsRef.current,
+      prev,
     );
+    lastPurchaseVendorTotalsRef.current = totals;
+    return synced;
   }
 
   function patchLine(
@@ -3207,11 +3262,14 @@ export function DailyEntryFormView({
       const updated = lines.map((line) => {
         if (line.id !== id) return line;
         const next: ExpenseLineDraft = { ...line, ...nextPatch };
+        // Keep syncedFromPurchaseVendor so this row stays the purchase-card
+        // Paid line (and stays hidden from Supplier payments) even after the
+        // user pins a custom amount. Amount tracking is handled in sync.
         if (
           line.kind === "vendor" &&
           line.syncedFromPurchaseVendor &&
-          (("amount" in nextPatch && nextPatch.amount !== line.amount) ||
-            ("vendor" in nextPatch && nextPatch.vendor !== line.vendor))
+          "vendor" in nextPatch &&
+          nextPatch.vendor !== line.vendor
         ) {
           const syncedVendor = line.syncedFromPurchaseVendor;
           dismissedPurchaseExpenseVendorsRef.current.add(syncedVendor);
@@ -3591,17 +3649,24 @@ export function DailyEntryFormView({
     const v = vendor.trim();
     if (!v) return;
     const existing = expenseLinesRef.current.find(
-      (l) => l.kind === "vendor" && l.vendor.trim() === v,
+      (l) => l.kind === "vendor" && l.syncedFromPurchaseVendor?.trim() === v,
     );
     if (existing) {
       patchLine(existing.id, { amount: value });
       return;
     }
     dismissedPurchaseExpenseVendorsRef.current.delete(v);
-    setExpenseLines((lines) => [
-      ...lines,
-      { ...newVendorExpenseLine(), vendor: v, amount: value },
-    ]);
+    setExpenseLines((lines) =>
+      applyPurchaseVendorExpenseSync([
+        ...lines,
+        {
+          ...newVendorExpenseLine(),
+          vendor: v,
+          amount: value,
+          syncedFromPurchaseVendor: v,
+        },
+      ]),
+    );
   }
 
   function removeExpenseLine(id: string) {
