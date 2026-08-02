@@ -60,6 +60,7 @@ function emptyDailyEntryRow(
     foodpandaSale: 0,
     expenses: 0,
     bankWithdrawn: 0,
+    cashIn: 0,
     expenseLines: [],
     remainingBalance: openingBalance,
     updatedAt: new Date().toISOString(),

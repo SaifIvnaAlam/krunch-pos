@@ -80,12 +80,20 @@ export class UpsertDailyEntryDto {
   expenses!: number;
 
   @ApiPropertyOptional({
-    description: 'Expenses paid by withdrawing from the bank account',
+    description: 'Cash brought from the bank into the cash counter (not sales)',
   })
   @IsOptional()
   @IsNumber()
   @Min(0)
   bankWithdrawn?: number;
+
+  @ApiPropertyOptional({
+    description: 'Owner top-up into the cash counter (not sales)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  cashIn?: number;
 
   @ApiPropertyOptional()
   @IsOptional()

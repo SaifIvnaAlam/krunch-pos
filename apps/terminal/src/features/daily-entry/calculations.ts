@@ -7,7 +7,7 @@ export function roundTaka(amount: number): number {
   return Math.round(n);
 }
 
-/** Bank sales minus expenses withdrawn from the bank. */
+/** Bank sales minus cash withdrawn from bank into the counter. */
 export function bankNetAfterWithdrawals(
   bankSale: number,
   bankWithdrawn: number,
@@ -120,7 +120,8 @@ export function expenseTotalFromExpenseLines(
 
 /**
  * Closing cash from a saved daily entry row (matches Daily Entry Form).
- * Bank sales are omitted — they deposit to the bank, not cash on hand.
+ * Bank sales omitted (deposit to bank). Bank withdraw + cash in add to the
+ * counter; neither is sales.
  */
 export function computeRemainingBalanceForRow(row: DailyEntryRow): number {
   const salesSum =
@@ -132,5 +133,7 @@ export function computeRemainingBalanceForRow(row: DailyEntryRow): number {
     row.foodpandaSale;
   const voidAmt = Math.max(0, row.voidSale ?? 0);
   const expenseSum = expenseTotalFromExpenseLines(row.expenseLines);
-  return roundTaka(row.openingBalance + salesSum - voidAmt - expenseSum);
+  const cashAdded =
+    Math.max(0, row.bankWithdrawn ?? 0) + Math.max(0, row.cashIn ?? 0);
+  return roundTaka(row.openingBalance + salesSum - voidAmt - expenseSum + cashAdded);
 }

@@ -38,6 +38,7 @@ type SalesRow = {
   cash: number;
   bank: number;
   bankWithdrawn: number;
+  cashIn: number;
   bankBalance: number;
   bkash: number;
   nagad: number;
@@ -55,6 +56,7 @@ type SalesRow = {
 
 function rowFromEntry(r: DailyEntryRow): SalesRow {
   const bankWithdrawn = r.bankWithdrawn ?? 0;
+  const cashIn = r.cashIn ?? 0;
   return {
     dateKey: r.date,
     displayDate: formatDateKeyAsDisplay(r.date),
@@ -62,6 +64,7 @@ function rowFromEntry(r: DailyEntryRow): SalesRow {
     cash: r.cashSale,
     bank: r.bankSale,
     bankWithdrawn,
+    cashIn,
     bankBalance: bankNetAfterWithdrawals(r.bankSale, bankWithdrawn),
     bkash: r.bkashSale,
     nagad: r.nagadSale,
@@ -93,6 +96,7 @@ type SalesFooterTotals = {
   cash: number;
   bank: number;
   bankWithdrawn: number;
+  cashIn: number;
   bankBalance: number;
   bkash: number;
   nagad: number;
@@ -111,6 +115,7 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
       cash: acc.cash + row.cash,
       bank: acc.bank + row.bank,
       bankWithdrawn: acc.bankWithdrawn + row.bankWithdrawn,
+      cashIn: acc.cashIn + row.cashIn,
       bankBalance: acc.bankBalance + row.bankBalance,
       bkash: acc.bkash + row.bkash,
       nagad: acc.nagad + row.nagad,
@@ -126,6 +131,7 @@ function sumFooter(rows: SalesRow[]): SalesFooterTotals {
       cash: 0,
       bank: 0,
       bankWithdrawn: 0,
+      cashIn: 0,
       bankBalance: 0,
       bkash: 0,
       nagad: 0,
@@ -224,6 +230,12 @@ export function SalesReportView() {
           </div>
         </div>
         <div className={statCell}>
+          <div className="text-[11px] text-[var(--pos-text-2)]">Cash In</div>
+          <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
+            {formatMoney(footerTotals.cashIn)}
+          </div>
+        </div>
+        <div className={statCell}>
           <div className="text-[11px] text-[var(--pos-text-2)]">Days</div>
           <div className="mt-0.5 text-[20px] font-semibold tabular-nums leading-tight text-[var(--pos-text-1)]">
             {filteredRows.length}
@@ -302,7 +314,7 @@ export function SalesReportView() {
               : "No rows match your filters."}
           </div>
         ) : (
-          <table className="w-full min-w-[1560px] border-collapse text-center">
+          <table className="w-full min-w-[1680px] border-collapse text-center">
             <thead className="sticky top-0 z-10 bg-[var(--pos-card)]">
               <tr className="border-b border-solid [border-color:var(--pos-divider)]">
                 <th className={thClass}>Date</th>
@@ -313,9 +325,15 @@ export function SalesReportView() {
                 <th className={thClass}>Bank</th>
                 <th
                   className={thClass}
-                  title="Portion of the day's expenses paid by withdrawing from the bank account"
+                  title="Cash brought from bank into the cash counter (not sales)"
                 >
                   Bank withdrawn
+                </th>
+                <th
+                  className={thClass}
+                  title="Owner top-up into the cash counter (not sales)"
+                >
+                  Cash In
                 </th>
                 <th
                   className={thClass}
@@ -336,7 +354,10 @@ export function SalesReportView() {
                 <th className={thClass} title="Total expenses saved for the day">
                   Expenses
                 </th>
-                <th className={thClass} title="Remaining balance after sales, void, and expenses">
+                <th
+                  className={thClass}
+                  title="Closing cash: opening + cash channels − void − expenses + bank withdraw + cash in"
+                >
                   Remaining
                 </th>
                 <th className={`${thClass} min-w-[100px]`}>Void note</th>
@@ -356,6 +377,7 @@ export function SalesReportView() {
                   <td className={tdNum}>{formatMoney(row.cash)}</td>
                   <td className={tdNum}>{formatMoney(row.bank)}</td>
                   <td className={tdNum}>{formatMoney(row.bankWithdrawn)}</td>
+                  <td className={tdNum}>{formatMoney(row.cashIn)}</td>
                   <td className={tdNum}>{formatMoney(row.bankBalance)}</td>
                   <td className={tdNum}>{formatMoney(row.bkash)}</td>
                   <td className={tdNum}>{formatMoney(row.nagad)}</td>
@@ -387,6 +409,7 @@ export function SalesReportView() {
                 <td className={footTd}>{formatMoney(footerTotals.cash)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bank)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bankWithdrawn)}</td>
+                <td className={footTd}>{formatMoney(footerTotals.cashIn)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bankBalance)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.bkash)}</td>
                 <td className={footTd}>{formatMoney(footerTotals.nagad)}</td>

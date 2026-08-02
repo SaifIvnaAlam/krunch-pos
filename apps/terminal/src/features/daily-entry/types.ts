@@ -58,8 +58,10 @@ export type DailyEntryRow = {
   voidSaleRemarks?: string;
   voidSaleAttachmentDataUrls?: string[];
   expenses: number;
-  /** Expenses paid by withdrawing from the bank (≤ `expenses`). Bank deposits use `bankSale`. */
+  /** Cash brought from bank into the counter (not sales). */
   bankWithdrawn: number;
+  /** Owner top-up into the cash counter (not sales). */
+  cashIn: number;
   expenseLines?: ExpenseLineSaved[];
   remainingBalance: number;
   updatedAt: string;

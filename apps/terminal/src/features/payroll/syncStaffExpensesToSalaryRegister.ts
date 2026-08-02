@@ -286,6 +286,7 @@ function overlayExpenseLinesOnMap(
     foodpandaSale: 0,
     expenses: expenseLines.reduce((sum, line) => sum + line.amount, 0),
     bankWithdrawn: 0,
+    cashIn: 0,
     expenseLines,
     remainingBalance: 0,
     updatedAt: new Date().toISOString(),

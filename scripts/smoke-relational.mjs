@@ -267,6 +267,7 @@ async function main() {
     foodpandaSale: 0,
     expenses: 350,
     bankWithdrawn: 0,
+    cashIn: 0,
     remainingBalance: 1650,
     enteredBy: 'Smoke Tester',
     expenseLines: [
@@ -307,6 +308,7 @@ async function main() {
     foodpandaSale: deGet.json.foodpandaSale,
     expenses: 350,
     bankWithdrawn: deGet.json.bankWithdrawn ?? 0,
+    cashIn: deGet.json.cashIn ?? 0,
     remainingBalance: 1750,
     enteredBy: 'Smoke Tester',
     expenseLines: deGet.json.expenseLines,

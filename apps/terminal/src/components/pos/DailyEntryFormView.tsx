@@ -563,6 +563,7 @@ function buildDailyEntryCandidateFromForm(args: {
   voidSaleAttachmentUrls: readonly string[];
   expenseLines: readonly ExpenseLineDraft[];
   bankWithdrawn: string;
+  cashIn: string;
   remaining: number;
   enteredBy: string;
 }): DailyEntryRow {
@@ -576,6 +577,7 @@ function buildDailyEntryCandidateFromForm(args: {
   const linesToSave = buildExpenseLinesToSaveFromDrafts(args.expenseLines);
   const expenseTotal = expenseTotalFromExpenseLines(linesToSave);
   const bankWithdrawnToSave = Math.max(0, parseAmount(args.bankWithdrawn));
+  const cashInToSave = Math.max(0, parseAmount(args.cashIn));
 
   return {
     date: args.dateKey,
@@ -593,6 +595,7 @@ function buildDailyEntryCandidateFromForm(args: {
     voidSaleAttachmentDataUrls: voidAttachmentsToSave,
     expenses: expenseTotal,
     bankWithdrawn: bankWithdrawnToSave,
+    cashIn: cashInToSave,
     expenseLines: linesToSave,
     remainingBalance: args.remaining,
     updatedAt: new Date().toISOString(),
@@ -617,6 +620,7 @@ function emptyDailyEntryBaseline(
     foodpandaSale: 0,
     expenses: 0,
     bankWithdrawn: 0,
+    cashIn: 0,
     expenseLines: [],
     remainingBalance: openingBalance,
     updatedAt: new Date(0).toISOString(),
@@ -1961,6 +1965,7 @@ function savedEntryBodyEquals(prior: DailyEntryRow, next: DailyEntryRow): boolea
     normalizeVoidSaleAttachments(next.voidSaleAttachmentDataUrls) &&
     prior.remainingBalance === next.remainingBalance &&
     (prior.bankWithdrawn ?? 0) === (next.bankWithdrawn ?? 0) &&
+    (prior.cashIn ?? 0) === (next.cashIn ?? 0) &&
     normalizeExpenseLinesForCompare(prior.expenseLines) ===
     normalizeExpenseLinesForCompare(next.expenseLines) &&
     (prior.enteredBy ?? "") === (next.enteredBy ?? "")
@@ -2120,8 +2125,10 @@ function computeRemainingFromParts(
     voidSale: string;
   },
   expenseLineDrafts: ExpenseLineDraft[],
+  cashAdded: { bankWithdrawn: string; cashIn: string },
 ): number {
   // Bank sales go straight to the bank — exclude from closing cash.
+  // Bank withdraw + cash in add to the counter (not sales).
   const salesSum =
     parseAmount(sales.cashSale) +
     parseAmount(sales.bkashSale) +
@@ -2131,7 +2138,10 @@ function computeRemainingFromParts(
     parseAmount(sales.foodpandaSale);
   const voidAmt = Math.max(0, parseAmount(sales.voidSale));
   const expenseSum = expenseLineDrafts.reduce((s, line) => s + draftLineCashAmount(line), 0);
-  return roundTaka(parseAmount(openingBalance) + salesSum - voidAmt - expenseSum);
+  const added =
+    Math.max(0, parseAmount(cashAdded.bankWithdrawn)) +
+    Math.max(0, parseAmount(cashAdded.cashIn));
+  return roundTaka(parseAmount(openingBalance) + salesSum - voidAmt - expenseSum + added);
 }
 
 function buildVendorOptions(
@@ -2185,6 +2195,7 @@ type DailyEntrySearchSegments = {
   sales: string;
   expenses: string;
   bankWithdrawn: string;
+  cashIn: string;
   remaining: string;
   cash: string;
   bank: string;
@@ -2233,6 +2244,9 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
     bankWithdrawnAmt > 0
       ? `bank withdrawn ${amountSearchText(bankWithdrawnAmt)}`
       : "";
+  const cashInAmt = r.cashIn ?? 0;
+  const cashInS =
+    cashInAmt > 0 ? `cash in ${amountSearchText(cashInAmt)}` : "";
   let legacyStr = "";
   if (!(r.expenseLines && r.expenseLines.length > 0) && (r.expenses ?? 0) > 0) {
     legacyStr = `legacy total ${amountSearchText(r.expenses ?? 0)}`;
@@ -2267,6 +2281,7 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
     amountSearchText(st),
     amountSearchText(ex),
     bankWithdrawnS,
+    cashInS,
     amountSearchText(r.remainingBalance),
     cashS,
     bankS,
@@ -2292,6 +2307,7 @@ function buildDailyEntrySearchSegments(r: DailyEntryRow): DailyEntrySearchSegmen
     sales: `${amountSearchText(st)} sales total`,
     expenses: `${amountSearchText(ex)} expenses`,
     bankWithdrawn: bankWithdrawnS.toLowerCase(),
+    cashIn: cashInS.toLowerCase(),
     remaining: amountSearchText(r.remainingBalance),
     cash: cashS.toLowerCase(),
     bank: bankS.toLowerCase(),
@@ -2324,6 +2340,8 @@ const DAILY_ENTRY_SEARCH_FIELD_ALIASES: Record<string, keyof DailyEntrySearchSeg
   expenses: "expenses",
   withdrawn: "bankWithdrawn",
   "bank-withdrawn": "bankWithdrawn",
+  "cash-in": "cashIn",
+  cashin: "cashIn",
   opening: "opening",
   sales: "sales",
   remaining: "remaining",
@@ -2499,6 +2517,7 @@ export function DailyEntryFormView({
   const [categoryModalBusy, setCategoryModalBusy] = useState(false);
   const [categoryModalError, setCategoryModalError] = useState<string | null>(null);
   const [bankWithdrawn, setBankWithdrawn] = useState("");
+  const [cashIn, setCashIn] = useState("");
   const [formNotice, setFormNotice] = useState<FormNotice>({ kind: "none" });
 
   useEffect(() => {
@@ -2836,6 +2855,7 @@ export function DailyEntryFormView({
           voidSale,
         },
         expenseLines,
+        { bankWithdrawn, cashIn },
       ),
     [
       openingBalance,
@@ -2847,6 +2867,8 @@ export function DailyEntryFormView({
       foodpandaSale,
       voidSale,
       expenseLines,
+      bankWithdrawn,
+      cashIn,
     ],
   );
 
@@ -2869,6 +2891,7 @@ export function DailyEntryFormView({
         voidSaleAttachmentUrls,
         expenseLines,
         bankWithdrawn,
+        cashIn,
         remaining,
         enteredBy: enteredByName,
       }),
@@ -2887,6 +2910,7 @@ export function DailyEntryFormView({
       voidSaleAttachmentUrls,
       expenseLines,
       bankWithdrawn,
+      cashIn,
       remaining,
       enteredByName,
     ],
@@ -2946,6 +2970,7 @@ export function DailyEntryFormView({
       lastPurchaseVendorTotalsRef.current = purchaseVendorTotalsFromLines(loadedDrafts);
       setExpenseLines(loadedDrafts);
       setBankWithdrawn(amountFieldText(existing.bankWithdrawn));
+      setCashIn(amountFieldText(existing.cashIn));
       setFormNotice({ kind: "none" });
       return;
     }
@@ -2965,6 +2990,7 @@ export function DailyEntryFormView({
     lastPurchaseVendorTotalsRef.current = new Map();
     setExpenseLines([]);
     setBankWithdrawn("");
+    setCashIn("");
     setFormNotice({ kind: "none" });
   }, [dateKey, entryMap, savedListVersion]);
 
@@ -4609,6 +4635,7 @@ export function DailyEntryFormView({
       const linesToSave = buildExpenseLinesToSaveFromDrafts(expenseLines);
       const expenseTotal = expenseTotalFromExpenseLines(linesToSave);
       const bankWithdrawnToSave = dailyEntryCandidate.bankWithdrawn ?? 0;
+      const cashInToSave = dailyEntryCandidate.cashIn ?? 0;
 
       const prior = entryMap[dateKey];
       const nextCandidate: DailyEntryRow = {
@@ -4616,6 +4643,7 @@ export function DailyEntryFormView({
         voidSaleAttachmentDataUrls: voidAttachmentsToSave,
         expenses: expenseTotal,
         bankWithdrawn: bankWithdrawnToSave,
+        cashIn: cashInToSave,
         expenseLines: linesToSave,
         enteredBy: enteredByName,
       };
@@ -6714,7 +6742,9 @@ export function DailyEntryFormView({
                       <div
                         className={`${columnShellClass} min-w-0 w-full !bg-sky-50/65 dark:!bg-sky-500/10 ![border-color:rgba(2,132,199,0.28)]`}
                       >
-                        <p className={`${sectionTitleClass} !text-sky-800 dark:!text-sky-300`}>Withdraw</p>
+                        <p className={`${sectionTitleClass} !text-sky-800 dark:!text-sky-300`}>
+                          Add to cash
+                        </p>
                         <label className={salesFieldGroupClass} htmlFor="daily-bank-withdrawn">
                           <span className={labelClass}>Bank Withdraw</span>
                           <input
@@ -6730,6 +6760,19 @@ export function DailyEntryFormView({
                             aria-invalid={bankWithdrawnErr ? true : undefined}
                           />
                           <ExpenseFieldErrorBubble message={bankWithdrawnErr} />
+                        </label>
+                        <label className={salesFieldGroupClass} htmlFor="daily-cash-in">
+                          <span className={labelClass}>Cash In</span>
+                          <input
+                            id="daily-cash-in"
+                            {...amountFieldProps("next")}
+                            value={cashIn}
+                            onChange={(e) => {
+                              clearSalesFieldNotice();
+                              setCashIn(sanitizeNonNegativeDecimalInput(e.target.value));
+                            }}
+                            className={amountInputClass}
+                          />
                         </label>
                       </div>
                       <div
@@ -6963,6 +7006,7 @@ export function DailyEntryFormView({
                       "Bank Withdraw",
                       historyDetailRow.bankWithdrawn ?? 0,
                     ],
+                    ["Cash In", historyDetailRow.cashIn ?? 0],
                     [
                       "Bank balance (net − withdrawn)",
                       bankNetAfterWithdrawals(
@@ -7146,12 +7190,11 @@ export function DailyEntryFormView({
                       {(() => {
                         const bankGross = historyDetailRow.bankSale;
                         const bankWithdrawnHist = historyDetailRow.bankWithdrawn ?? 0;
+                        const cashInHist = historyDetailRow.cashIn ?? 0;
+                        // Sales channels only — bank withdraw / cash in are not sales.
                         const rows: readonly (readonly [string, number])[] = [
                           ["Cash", historyDetailRow.cashSale],
                           ["Bank", bankGross],
-                          ...(bankWithdrawnHist > 0
-                            ? ([["Bank Withdraw", -bankWithdrawnHist]] as const)
-                            : ([] as const)),
                           ["bKash", historyDetailRow.bkashSale],
                           ["Nagad", historyDetailRow.nagadSale],
                           ["Pathao", historyDetailRow.pathaoSale],
@@ -7164,6 +7207,12 @@ export function DailyEntryFormView({
                                 -(historyDetailRow.voidSale ?? 0),
                               ] as const,
                             ] as const)
+                            : ([] as const)),
+                          ...(bankWithdrawnHist > 0
+                            ? ([["Bank Withdraw → cash", bankWithdrawnHist]] as const)
+                            : ([] as const)),
+                          ...(cashInHist > 0
+                            ? ([["Cash In", cashInHist]] as const)
                             : ([] as const)),
                         ];
                         return rows;

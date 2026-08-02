@@ -159,8 +159,10 @@ model DailyEntry {
   voidSaleRemarks            String?
   voidSaleAttachmentDataUrls Json?
   expenses                   Decimal   @db.Decimal(14, 2)
-  /// Portion of expenses paid by withdrawing from the bank account (subset of `expenses`).
+  /// Cash brought from the bank into the cash counter (not sales). Raises closing cash; lowers bank net.
   bankWithdrawn              Decimal   @default(0) @db.Decimal(14, 2)
+  /// Owner top-up into the cash counter (not sales). Raises closing cash.
+  cashIn                     Decimal   @default(0) @db.Decimal(14, 2)
   remainingBalance           Decimal   @db.Decimal(14, 2)
   enteredByStaffId           String?
   enteredByName              String?

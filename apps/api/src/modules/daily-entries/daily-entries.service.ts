@@ -31,6 +31,7 @@ export type DailyEntryDto = {
   voidSaleAttachmentDataUrls?: string[];
   expenses: number;
   bankWithdrawn: number;
+  cashIn: number;
   expenseLines?: unknown[];
   remainingBalance: number;
   updatedAt: string;
@@ -65,6 +66,7 @@ function mapRow(row: DailyEntry, expenseLines: unknown[] = []): DailyEntryDto {
       : {}),
     expenses: decimalToNumber(row.expenses),
     bankWithdrawn: decimalToNumber(row.bankWithdrawn),
+    cashIn: decimalToNumber(row.cashIn),
     expenseLines,
     remainingBalance: decimalToNumber(row.remainingBalance),
     updatedAt: row.updatedAt.toISOString(),
@@ -321,6 +323,7 @@ export class DailyEntriesService {
         []) as Prisma.InputJsonValue,
       expenses: new Prisma.Decimal(dto.expenses),
       bankWithdrawn: new Prisma.Decimal(dto.bankWithdrawn ?? 0),
+      cashIn: new Prisma.Decimal(dto.cashIn ?? 0),
       remainingBalance: new Prisma.Decimal(dto.remainingBalance),
       enteredByStaffId: staffId,
       enteredByName: dto.enteredBy?.trim() || null,

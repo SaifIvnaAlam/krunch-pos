@@ -13,7 +13,11 @@ import type { DailyEntryMap, DailyEntryRow, PersistResult } from "./types";
 export function rowsToMap(rows: DailyEntryRow[]): DailyEntryMap {
   const map: DailyEntryMap = {};
   for (const row of rows) {
-    map[row.date] = row;
+    map[row.date] = {
+      ...row,
+      bankWithdrawn: row.bankWithdrawn ?? 0,
+      cashIn: row.cashIn ?? 0,
+    };
   }
   return map;
 }
