@@ -5235,15 +5235,21 @@ export function DailyEntryFormView({
                 <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-solid [border-color:var(--pos-divider)]">
                   <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
                     <table className="w-full min-w-[820px] border-collapse text-left text-[12px]">
-                      <thead>
-                        <tr className="border-b border-solid [border-color:var(--pos-divider)] bg-[var(--pos-page)]">
-                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Date</th>
-                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Opening</th>
-                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Net sales</th>
-                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Expenses Σ</th>
-                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Remaining</th>
-                          <th className="px-3 py-2 font-semibold text-[var(--pos-text-2)]">Entered by</th>
-                          <th className="px-3 py-2 text-right font-semibold text-[var(--pos-text-2)]">
+                      <thead className="sticky top-0 z-10 bg-[var(--pos-page)]">
+                        <tr className="border-b border-solid [border-color:var(--pos-divider)]">
+                          <th className="bg-[var(--pos-page)] px-3 py-2 font-semibold text-[var(--pos-text-2)]">Date</th>
+                          <th className="bg-[var(--pos-page)] px-3 py-2 font-semibold text-[var(--pos-text-2)]">Opening</th>
+                          <th className="bg-[var(--pos-page)] px-3 py-2 font-semibold text-[var(--pos-text-2)]">Net sales</th>
+                          <th className="bg-[var(--pos-page)] px-3 py-2 font-semibold text-[var(--pos-text-2)]">Expenses Σ</th>
+                          <th
+                            className="bg-[var(--pos-page)] px-3 py-2 font-semibold text-[var(--pos-text-2)]"
+                            title="Bank Withdraw + Cash In"
+                          >
+                            Add to cash
+                          </th>
+                          <th className="bg-[var(--pos-page)] px-3 py-2 font-semibold text-[var(--pos-text-2)]">Remaining</th>
+                          <th className="bg-[var(--pos-page)] px-3 py-2 font-semibold text-[var(--pos-text-2)]">Entered by</th>
+                          <th className="bg-[var(--pos-page)] px-3 py-2 text-right font-semibold text-[var(--pos-text-2)]">
                             Actions
                           </th>
                         </tr>
@@ -5252,7 +5258,7 @@ export function DailyEntryFormView({
                         {filteredHistorySlots.length === 0 ? (
                           <tr>
                             <td
-                              colSpan={7}
+                              colSpan={8}
                               className="px-4 py-10 text-center text-[13px] text-[var(--pos-text-2)]"
                             >
                               <p className="m-0 font-medium text-[var(--pos-text-1)]">
@@ -5292,7 +5298,7 @@ export function DailyEntryFormView({
                                   {formatDateKeyAsDisplay(slot.date)}
                                 </td>
                                 <td
-                                  colSpan={5}
+                                  colSpan={6}
                                   className="px-3 py-2 text-[var(--pos-text-2)]"
                                 >
                                   <span
@@ -5349,6 +5355,23 @@ export function DailyEntryFormView({
                               </td>
                               <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
                                 {formatSummaryMoney(expenseTotalFromRow(r))}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--pos-text-1)]">
+                                <span className="group relative inline-block cursor-default">
+                                  {formatSummaryMoney(
+                                    Math.max(0, r.bankWithdrawn ?? 0) +
+                                      Math.max(0, r.cashIn ?? 0),
+                                  )}
+                                  <span
+                                    role="tooltip"
+                                    className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-solid [border-color:var(--pos-divider)] bg-[var(--pos-card)] px-2 py-1.5 text-left text-[11px] font-normal leading-snug text-[var(--pos-text-1)] shadow-md group-hover:block"
+                                  >
+                                    Bank Withdraw{" "}
+                                    {formatSummaryMoney(r.bankWithdrawn ?? 0)}
+                                    <br />
+                                    Cash In {formatSummaryMoney(r.cashIn ?? 0)}
+                                  </span>
+                                </span>
                               </td>
                               <td className="px-3 py-2 font-semibold tabular-nums text-[var(--pos-text-1)]">
                                 {formatSummaryMoney(r.remainingBalance)}
